@@ -1,0 +1,38 @@
+services:
+  - type: web
+    name: vozeb-pro
+    runtime: docker
+    plan: free
+    autoDeployTrigger: off
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
+      - key: UV_THREADPOOL_SIZE
+        value: "2"
+      - key: VOZEB_PRO_DATA_DIR
+        value: /app/web/.data
+      - key: VOZEB_PRO_INTERNAL_ORIGIN
+        value: http://127.0.0.1:3000
+      - key: VOZEB_PRO_DATABASE_PROVIDER
+        value: postgres
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vozeb-pro-postgres
+          property: connectionString
+      - key: VOZEB_PRO_DATABASE_POOL_MAX
+        value: "5"
+      - key: VOZEB_PRO_DATABASE_SSL
+        value: "1"
+      - key: VOZEB_PRO_ENCRYPTION_KEY
+        generateValue: true
+      - key: NEXT_PUBLIC_SITE_URL
+        sync: false
+
+databases:
+  - name: vozeb-pro-postgres
+    plan: free
+    databaseName: vozeb_pro
+    user: vozeb_pro

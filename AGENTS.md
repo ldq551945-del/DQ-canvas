@@ -1,0 +1,121 @@
+# AGENTS.md
+
+本文档用于约束本项目中的 AI / 自动化开发行为。开发时优先遵循本文件，其次遵循用户当前消息。
+
+## 基本原则
+
+- 先读现有代码，再动手修改，优先沿用项目已有结构和写法。
+- 写代码保持最少行数，能简单实现就不要引入复杂抽象。
+- 标准格式、协议、解析、压缩、加密、日期等通用能力优先使用成熟稳定的库，不要手写底层实现，除非用户明确要求或项目已有实现必须沿用。
+- 不要为了“兼容更多场景”写大量分支，只实现当前明确需要的功能。
+- 项目尚未上线，不需要兼容旧数据；表结构或字段调整时直接按新设计修改，不写旧字段兼容、数据迁移兜底或删除旧表的清理逻辑，除非用户明确要求。
+- 每次写完代码必须运行与改动相关的测试和类型检查；任务收尾按“Mandatory Testing”执行全量质量门禁与浏览器回归。
+- 不要改无关文件，不要顺手重构。
+- 如果工作区已有用户改动，不要回滚，不要覆盖；只在必要范围内追加修改。
+
+## 反复提醒沉淀
+
+- 如果开发过程中总是遇到某个问题，或者用户反复提醒同一个注意事项，需要把该注意事项补充到本文件。
+- 补充时写成明确、可执行的规则，避免只写模糊描述。
+- 新规则应放到最相关的章节；找不到合适章节时放到“项目注意事项”。
+
+## 后端规范
+
+- 后端使用 Next.js Route Handler + TypeScript，服务端代码位于 `web/src/app/api/` 与 `web/src/lib/server/`。
+- Route Handler 只处理 HTTP 入参、鉴权、调用服务和响应映射，不堆业务规则或数据库细节。
+- `web/src/lib/server/` 放业务服务、领域校验、任务编排和 provider 适配。
+- 数据库访问统一沿用 `web/src/lib/server/database/` repository 与参数化查询；文件 Provider 只作为项目既有的服务端回退实现。
+- 业务不变量在 service/helper 层校验，数据库唯一性、事务和并发约束在持久层保证。
+- 业务接口保持 `{ code, data, msg }` 的响应结构。
+- 新增数据表时同步更新 `docs/backend-database.md`。
+
+## 前端规范
+
+- 前端使用 Next.js App Router、React、TypeScript、Ant Design、Tailwind、Zustand。
+- 编写 Ant Design 相关代码时，参考 https://ant.design/llms-full.txt 理解组件 API、示例和设计规范，并优先结合项目当前 antd 版本与既有写法。
+- API 请求统一放在 `web/src/services/api/`。
+- 图片、视频和 Canvas Agent 必须先由后台默认文本模型完成规划，主动替用户选择能力匹配的逻辑模型与参数；规划结果只用于内部执行，不要求用户自行猜选模型。
+- 图片、视频、Canvas、短剧和统一 Agent 的平台规划提示词、改写提示词、模型选择理由、创作简报、视觉方向、物料计划与复盘详情只能用于内部执行，不得显示或持久化到生成型对话；Agent 应先自然确认用户需求再调用生成模型，结果返回后只给简洁完成说明，普通非生成问答可保留自然语言回复。
+- `/create` 历史抽屉必须把新建操作区与可滚动记录区分开；记录支持桌面悬停/移动端可见的管理入口、行内改名、单选、全选和批量删除确认。用户消息使用无气泡纯文本并在右侧显示服务端会话用户头像，助手消息使用站点 Logo。
+- 全局或跨页面状态优先放在 `web/src/stores/`。
+- 已经放在全局 store 或全局 hook 中的状态/动作，组件需要时直接使用对应 store/hook，不要为了“纯组件”层层透传 props；避免一个组件传递过多参数。
+- 全局组件、全局常量、全局配置等全局性质的内容不要作为 props 或参数层层传递；哪里需要就在哪里直接从对应全局入口获取。
+- 多个页面重复出现的 UI 副作用动作，例如复制文本并提示、下载并提示、统一确认弹窗，优先抽成 `web/src/hooks/` 下的全局 hook；不要放进 store，除非它确实是需要共享/订阅的状态。
+- 画布相关状态和组件放在 `web/src/app/(user)/canvas/` 内部。
+- 页面里只有一个主业务组件时直接写在 `page.tsx`，不要单独拆 `Manager` 组件再传一堆 props。
+- 不要新增只做简单转发的组件，例如只 `return <X>{children}</X>` 或只换个名字透传 props；直接在使用处使用真实组件或把逻辑写进当前文件。
+- 页面私有 hook 放在对应页面目录下，例如 `admin/assets/use-admin-assets.ts`；只有多个页面真实复用的 hook 才放到外层 `hooks/`。
+- 管理后台页面私有组件放到各自页面目录的 `components/` 下，例如 `admin/assets/components/`、`admin/prompts/components/`；不要为了单页面使用放到 `admin/components/` 共享目录。
+- 管理后台主题、背景、卡片阴影、表格配色等统一在 `web/src/lib/app-theme.ts`、`AppProviders` 或必要的全局 CSS 作用域中配置；页面私有组件不要自己写 `dark ? ...` 主题分支。
+- 管理后台侧边栏按商业 SaaS 职责分组和排序：经营分析、商品运营、财务管理、上游配置、系统管理、内容运营；支付渠道、CDK 兑换和财务流水必须归入财务管理，模型渠道和 Agent Skills 必须归入上游配置，本地媒体、外部存储和数据备份必须作为系统管理下的独立页面；菜单文案使用清晰业务名词，避免模糊短语。
+- 后台列表管理页默认采用“列表/卡片 + 创建按钮 + Modal/Drawer 表单”的 SaaS 工作流；新增或编辑商品、公告、用户、配置项等操作不要把大表单常驻铺在页面主体里，除非该页面本身就是专门的配置向导。
+- 后台配置类表单要像商业 SaaS 设置页：短字段必须用自适应紧凑网格铺满当前行，长文本/密钥/证书字段单独通栏；不要让一个短输入单独占一行形成大面积空白。
+- 后台支付配置等密集设置页的普通单行输入框必须保持紧凑高度，字段卡片不能被同一行的长文本字段拉伸；但字段标题、状态标签和输入框之间必须保留清晰垂直间距，不要贴在一起；只有私钥、证书、模板、额外请求头等长内容允许使用较高文本域。
+- 后台手机端和平板窄屏顶部不重复显示当前分区标题和副标题；标题已在主内容卡片中展示时，顶部只保留菜单按钮、常用操作和初始化入口，常用操作应与菜单按钮同一行，初始化入口在下一行。
+- 后台移动端抽屉关闭按钮必须和当前浅色/深色主题融合，不要在深色抽屉里使用突兀的大白色圆形按钮。
+- 用户侧手机端不得直接沿用桌面的固定大高度、大封面比例、大卡片内边距或 Ant Design 默认大插画空态；列表卡、加载态和空数据提示必须在 `sm` 以下使用紧凑尺寸，保证 390px/430px 首屏能看到下一层核心内容，同时保持可读间距。每次相关改动都要检查页面与内部滚动容器无横向溢出。
+- 所有按钮、图标按钮、侧边栏菜单项和自定义可点击项必须显式提供浅色/深色/hover/disabled 可读状态；主按钮深色底时文字必须是白色，深色主题反转为浅底时文字必须是深色，不允许出现黑字黑底、灰字深底或图标与背景对比不足。
+- 后台深色信息卡片里的链接按钮必须显式设置背景、边框、文字和 hover 对比，并使用足够优先级覆盖全局链接/按钮样式；浅色主题黑底卡片用白字白边，深色主题反转白底卡片用深色文字和深色边框。
+- 全局 `html, body` 固定为 `height: 100%; overflow: hidden;`，所有不在 `(user)` 工作区布局内的独立页面必须用 `.app-scroll-page` 作为整页滚动容器；`(user)` 工作区子页面内容可能超过视口时，页面根节点必须提供 `h-full min-h-0 overflow-y-auto` 或同等内部滚动容器。
+- 组件优先使用函数组件和现有 hooks，不新增大型状态管理方案。
+- UI 图标优先使用 `lucide-react` 或项目已经使用的 Ant Design 图标。
+- 后续通用 UI 可以参考 https://uiverse.io/elements 或用户提供参考图/HTML 的交互和视觉方向，但必须改造成项目现有 Next.js / React / Tailwind / Ant Design 写法；不要直接复制第三方源码、图片、字体、图标、素材、专有 token 命名或受限资源，确需引入第三方资源时必须先确认授权许可证。
+- 页面文案保持中文。
+- 不要在组件里堆太多无关逻辑；复杂逻辑优先抽成同目录工具函数或小组件。
+- 样式优先由组件自己管理；组件私有样式优先使用 Tailwind className 或少量内联 style，不要为单个组件新增大量全局 CSS。
+- 全局 CSS 只放基础变量、全局重置、跨页面通用样式和少量第三方组件必要覆盖；不要在 `globals.css` 堆页面私有样式。
+- 代码尽量短小直接，少拆不必要组件，少做多层 props 传递，避免为了抽象堆出更多代码。
+- 创作会话、工作台记录、Canvas、素材库、短剧和媒体等业务数据必须保存到服务器，并按登录用户恢复；浏览器只保留页面瞬时状态和主题等极小偏好，不得使用 localforage、IndexedDB 或 localStorage 持久化业务列表、生成记录、图片、base64 或大 JSON。
+- 服务器本地媒体写入必须登记用户归属、来源、原文件名及可用的会话/Run/任务/项目关联；用户读取必须校验归属，外部上游只能使用短期签名 URL。删除媒体前必须检查创作会话、素材库、Canvas、短剧和生成记录引用，禁止删除文件后留下静默失效记录；管理员批量删除和临时文件过期清理也不得使用 `force` 绕过引用保护。
+- 创作会话与消息列表必须使用服务端分页；打开长会话时默认加载最新消息，并支持向前加载历史，禁止固定读取最早 N 条导致新消息在刷新后消失。
+
+## 画布 UI 规范
+
+- 做 canvas 前端 UI 时必须遵循当前画布主题。
+- 优先使用 `canvasThemes`、`useThemeStore` 或 Ant Design `ConfigProvider` token。
+- 不要硬编码黑白、stone、slate 等颜色导致浅色/深色主题不一致。
+- 新增画布按钮、弹窗、浮层时，尽量复用已有工具栏、节点面板、Modal 的视觉风格。
+- 画布顶部工具栏和状态信息优先采用极简扁平风格：无边框、无阴影、无胶囊背景，融入整体背景，弱化按钮感，仅保留轻微 hover 反馈，保持简洁现代、低视觉重量。
+- 图片节点尺寸逻辑要尊重原始比例，除非功能明确要求自由变形。
+- 批量生成、多图展示、助手面板等画布交互要尽量简洁，不要占用过多画布空间。
+
+## 文档规范
+
+- README 保持简洁，只放项目介绍、核心功能、快速开始和文档入口。
+- `docs/index.md` 放给 AI 使用的文档索引，不要再放到 `docs/content/docs/` 内容目录里。
+- 详细功能介绍写到 `docs/content/docs/overview/features.mdx`。
+- 后续待办写到 `docs/content/docs/progress/todo.mdx`。
+- 已实现但还需要用户测试确认的事项写到 `docs/content/docs/progress/pending-test.mdx`。
+- `docs/content/docs/progress/pending-test.mdx` 用来记录这个版本实际做了哪些可测试变更；`CHANGELOG.md` 的 `Unreleased` 只保留对这些变更的版本级归纳，避免逐条照搬实现细节。
+- 每次 todo 事项完成后，先从 `docs/content/docs/progress/todo.mdx` 移到 `docs/content/docs/progress/pending-test.mdx`，不要直接写进正式功能说明；用户确认测试通过后再更新 `docs/content/docs/overview/features.mdx`。
+- 每次任务完成前，都要根据实际变更检查并更新 `docs/content/docs/progress/todo.mdx` 和 `docs/content/docs/progress/pending-test.mdx`；如果功能或待办没有变化，也要确认无需修改。
+- 涉及商业能力、用户权利、支付、合规、运营、监控、灾备或版本收尾时，必须重新核对根目录 `商业落地和用户体验评估报告.md` 与 `docs/content/docs/overview/production-readiness.mdx`，并同步 todo/pending-test/CHANGELOG 的真实状态；依赖支付商、法务、监控平台或运营制度的事项不得因为代码存在基础能力就标记为已完成。
+- 接口响应规则写到 `docs/content/docs/backend/api-response.mdx`。
+- 数据库结构写到 `docs/content/docs/backend/backend-database.mdx`。
+- 文档不要写过期日期；除非用户明确要求记录具体时间。
+
+## 发版本流程
+
+- 发版本时，先把 `CHANGELOG.md` 的 `Unreleased` 变更整理成新的版本记录，并保留空的 `Unreleased` 标题。
+- 按当前版本号提升一个版本，更新根目录 `VERSION`。
+- 将当前未提交的代码全部提交到 Git。
+- 提交完成后，给当前提交打最新版本号对应的 tag，例如 `v0.0.5`。
+- 发版本流程中不要执行编译、测试或构建，除非用户明确要求。
+
+## 项目注意事项
+
+- 宝塔只是受支持的部署拓扑之一；宝塔专用的宿主机网络、反向代理层数和数据库地址默认值只能放在宝塔 Compose、安装向导或部署文档中，不得写入公共业务服务或全局默认配置。每次相关改动必须同时确认本机开发、默认 Docker、外部/云 PostgreSQL、文件/PostgreSQL Provider 以及本地/S3 存储的既有行为不变。
+- 当前 Canvas、“我的素材”、短剧、工作台记录和 Agent 对话均由 PostgreSQL/JSON Provider 服务端保存；文档和实现不得重新引入浏览器业务缓存兜底。
+- 外部存储开关只决定新媒体的写入位置：开启时新上传和新生成的图片、视频、音频只写 S3 兼容对象存储，不保留本地持久副本；关闭时新媒体只写服务器本地目录。历史媒体必须按登记的 `storage_provider` 读取，不能因当前开关变化而切换位置；业务记录只保存稳定站内 `storageKey` 和媒体 API URL，不保存对象 Key 或临时签名 URL。
+- 视频任务必须持久化用户请求的目标时长；上游返回时长不一致时，在登记资产前由服务器规范化到目标时长，无法规范化则明确失败，禁止把错误时长的媒体登记为成功。
+- Agent 子任务一旦发起过上游创建请求，不得自动再次创建同类上游任务；创建、查询、超时或上游终态失败都必须保留失败记录，只有用户显式点击重试后才能清除旧子任务并发起新的上游请求。
+- 普通“生成图片/短视频”请求只能在当前对话返回媒体；只有用户原文同时明确项目目标与创建动作时，才允许创建 Canvas 或短剧项目。
+- AI API Key 只保存在服务端系统渠道或服务器环境变量中；普通用户配置 Store 不得持久化 API Key，也不得由前端直接请求外部模型地址。
+- Docker 静态资源路径目前仍是待办项，文档中不要过度承诺生产部署已经完全验证。
+
+## Mandatory Testing
+
+- After every code change, run the relevant automated checks and browser regression flow before reporting completion.
+- Cover desktop and mobile layouts, canvas interactions including node actions and linking, image workbench generation/history/reference-image flows, video workbench text-to-video and image-to-video flows, all visible buttons touched by the change, and configured API capability checks for text/image/video.
+- For live upstream API tests that include Chinese prompts, do not put Chinese literals directly in PowerShell commands. Use the app flow, Node/fetch with UTF-8 text loaded from a file, or base64/Unicode reconstruction before sending so the upstream prompt is not submitted as question marks.
+- If the full live API/browser matrix cannot be completed, report the exact gap and why.

@@ -1,0 +1,86 @@
+---
+title: 接口响应与敏感配置
+description: 当前接口响应事实与管理员敏感配置契约
+---
+
+# 接口响应与敏感配置
+
+## 当前响应规则
+
+现有 Next.js Route Handler 按业务返回 JSON，错误通常使用 `{ error: string }` 并配合对应 HTTP 状态码。项目尚未统一为 `{ code, data, msg }`，新增或修改接口时应保持调用方已有契约，并在边界校验身份、权限和外部输入。
+
+服务端不得把异常堆栈、上游鉴权头、完整密钥或包含密钥的上游错误返回浏览器。外部渠道失败应保留可诊断的 HTTP 状态和脱敏消息。
+
+## 系统渠道密钥
+
+管理员设置响应中的系统渠道使用以下字段表达密钥状态：
+
+```ts
+{
+  apiKey: "";
+  hasApiKey: boolean;
+}
+```
+
+- `apiKey` 在服务端响应和页面初始数据中始终为空，不能用于回显已保存密钥。
+- `hasApiKey` 只表示服务端是否保存了凭据，不包含凭据内容。
+- 更新渠道时，空 `apiKey` 表示保留已保存密钥；只有显式清除操作才删除凭据。
+- 模型拉取和渠道健康检查应提交渠道 ID，由服务端读取已保存凭据；临时输入的新密钥仅用于当前保存或测试请求。
+- 返回客户端或写入日志前必须过滤 Authorization、API Key 和上游可能回显的敏感字段。
+
+新增敏感配置时应沿用相同原则：浏览器只接收“是否已配置”状态，真实值只在服务端解密和使用。
+
+## 统一创作运行时
+
+创作会话与资产读取接口使用 `{ code, data, msg }`：
+
+- `GET/POST /api/creative/conversations`
+- `GET/PATCH /api/creative/conversations/{id}`
+- `GET /api/creative/conversations/{id}/messages`
+- `GET /api/creative/conversations/{id}/assets`
+- `POST /api/creative/assets`
+- `GET /api/creative/assets/{id}`
+
+所有接口先校验登录用户与资源所有权；无权访问时返回 404 或 403，不回传其他用户的会话、消息和资产。会话创建后不能改变 Surface 或项目。
+
+`POST /api/creative/assets` 使用 `multipart/form-data` 提交 `conversationId` 和单个 `file`。只接受项目列出的图片、视频和音频 MIME，单文件最大 20MB；上传完成后返回稳定创作资产，媒体内容进入服务器日期目录，不写入数据库 base64。
+
+Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/projects/{id}`；素材库使用 `GET/POST /api/library-assets` 与 `PATCH/DELETE /api/library-assets/{id}`。两组接口均按当前登录用户隔离，响应采用 `{ code, data, msg }`。
+
+`POST /api/agent/runs` 接收：
+
+```ts
+{
+  clientRequestId: string;
+  surface: "chat" | "canvas" | "drama";
+  conversationId?: string;
+  projectId?: string;
+  prompt: string;
+  snapshot?: unknown;
+  assetIds?: string[];
+}
+```
+
+`chat` 不接受项目或快照，`canvas/drama` 必须提供项目，项目快照最大 512KB。相同用户与 `clientRequestId` 的重复提交返回原 Run。`GET /api/agent/runs/{id}/events` 使用递增数字事件 ID，支持 `Last-Event-ID` 或 `lastEventId` 断线续传。
+
+创建后续 Run 时，服务端会将同一会话的持久摘要和最近 12 条已完成消息加入规划输入；前端只需继续提交稳定 `conversationId`。同一 deliverable 可选择多个 `assetIds`，依赖 deliverable 完成后登记的资产会自动成为下游图片/视频任务的真实参考素材。
+
+用户明确要求“建立画布项目”或“建立短剧项目”时，Chat 规划可返回 `projectHandoff`。运行完成前 SSE 发送一次 `project.handoff`，数据包含稳定 `id/sourceRunId/conversationId`、目标 `surface`、标题、摘要、风格、比例、稳定 `assetIds` 和完整资产信息；`run.completed.data.projectHandoff` 与助手消息 metadata 保存同一份交接。客户端必须使用交接 ID 幂等落地 Canvas 本地项目或服务端短剧项目，SSE 重放不得重复创建。
+
+## 短剧项目与生成运营
+
+- `GET/POST /api/drama/projects`：列出或创建当前用户的短剧项目。
+- `GET/PATCH/DELETE /api/drama/projects/{id}`：读取、更新或删除当前用户拥有的短剧项目。
+- `GET /api/admin/generation-operations`：管理员按任务类型、状态、Surface、用户和关键词分页查询统一生成运营数据，并返回任务摘要与可探测渠道。
+
+短剧接口使用 `{ code, data, msg }`，服务端校验项目归属并保存完整项目聚合快照。生成运营接口只允许管理员访问；取消、重试和渠道探测继续调用现有任务控制与健康检查接口，不建立独立任务状态机。
+
+## 模型路由设置快照
+
+管理员更新系统渠道、逻辑模型或默认模型时，设置接口把 `{ systemChannels, logicalModels, defaultModels }` 视为同一配置快照：
+
+- 逻辑模型 ID 在同一快照内唯一；同一逻辑模型不能重复绑定同一渠道和上游模型。
+- 绑定渠道必须存在，上游模型必须属于该渠道已拉取的模型列表。
+- 默认模型必须是启用、能力匹配且至少有一个可用绑定的逻辑模型。
+- 删除渠道时客户端应同时移除关联绑定；仍存在悬空引用的快照返回 400，不写入部分配置。
+- 服务端保存前统一归一化优先级、模型名称和失效默认值，保存结果继续按敏感配置规则脱敏返回。

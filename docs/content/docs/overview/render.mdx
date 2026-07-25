@@ -1,0 +1,25 @@
+---
+title: Render 部署
+description: 使用 Render Blueprint 和 PostgreSQL 部署 VOZEB PRO
+---
+
+# Render 部署
+
+仓库根目录 `render.yaml` 会创建 Web Service 和 PostgreSQL，并把 `DATABASE_URL` 注入应用。
+
+[部署到 Render](https://render.com/deploy?repo=https://github.com/csyqlz/VOZEB-PRO)
+
+## 部署步骤
+
+1. 连接 GitHub 仓库并创建 Blueprint。
+2. 为 `NEXT_PUBLIC_SITE_URL` 填写最终 Render 域名或自定义 HTTPS 域名。
+3. 确认 `VOZEB_PRO_ENCRYPTION_KEY` 已由 Render 生成并长期保留。
+4. 部署完成后访问 `/install` 创建管理员。
+5. 登录后台配置模型渠道和默认逻辑模型。
+
+## 免费实例限制
+
+- Web Service 可能休眠，首次访问需要等待唤醒。
+- Render 临时文件系统不适合本项目的长期媒体目录；部署时必须挂载持久化磁盘并将 `VOZEB_PRO_DATA_DIR` 指向该磁盘。
+- Canvas、素材库、短剧和工作台记录保存在 PostgreSQL，媒体文件还需要随持久化磁盘一起备份。
+- 生产支付回调、长任务和媒体生成应使用稳定实例并完成实网验证。

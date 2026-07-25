@@ -1,0 +1,638 @@
+import { describe, expect, it, vi } from "vitest";
+
+import type { QueryExecutor } from "./postgres";
+import { createPostgresRepositories } from "./repositories";
+
+function mockExecutor(rows: Record<string, unknown>[][]) {
+    const query = vi.fn(async () => ({ rows: rows.shift() || [], rowCount: 1 }));
+    return { executor: { query } as unknown as QueryExecutor, query };
+}
+
+function queryArgs(query: ReturnType<typeof mockExecutor>["query"], index: number) {
+    return (query.mock.calls as unknown[][])[index] || [];
+}
+
+describe("split Postgres repositories", () => {
+    it("loads settings without touching user or billing tables", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "default",
+                    site: {},
+                    mail: {},
+                    model_point_costs: {},
+                    generation_point_multipliers: {},
+                    generation_concurrency: {},
+                    generation_defaults: {},
+                    payment_config: {},
+                    default_models: {},
+                    default_plan_id: "free",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ],
+            [
+                {
+                    id: "free",
+                    name: "免费版",
+                    enabled: true,
+                    limits: {},
+                    features: [],
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ],
+            [],
+        ]);
+
+        const settings = await createPostgresRepositories(executor).settings.getSettings();
+
+        expect(settings.settings?.defaultPlanId).toBe("free");
+        expect(settings.plans).toHaveLength(1);
+        expect(query).toHaveBeenCalledTimes(3);
+        expect(query.mock.calls.map((_, index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM entitlement_plans"), expect.stringContaining("FROM system_model_channels")]);
+    });
+
+    it("loads wallet settings without loading model channels", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [{ id: "default", free_daily_points_enabled: true, free_daily_points: 3, default_plan_id: "free", created_at: timestamp, updated_at: timestamp }],
+            [{ id: "free", name: "免费版", enabled: true, daily_points: 0, limits: {}, features: [], created_at: timestamp, updated_at: timestamp }],
+        ]);
+
+        const settings = await createPostgresRepositories(executor).settings.getWalletSettings();
+
+        expect(settings.plans).toHaveLength(1);
+        expect(query).toHaveBeenCalledTimes(2);
+        expect([0, 1].map((index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("FROM app_settings"), expect.stringContaining("FROM entitlement_plans")]);
+        expect(String(queryArgs(query, 0)[0])).not.toContain("system_model_channels");
+    });
+
+    it("loads an authenticated user with one targeted session query", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "user-one",
+                    username: "user-one",
+                    display_name: "User One",
+                    role: "user",
+                    status: "active",
+                    plan_id: "pro",
+                    points_balance: 120,
+                    password_hash: "hash",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    resolved_plan_id: "pro",
+                    resolved_plan_name: "专业版",
+                },
+            ],
+        ]);
+
+        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-one", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
+
+        expect(user).toMatchObject({
+            user: { id: "user-one", username: "user-one", pointsBalance: 120 },
+            planId: "pro",
+            planName: "专业版",
+            permanentPoints: 120,
+            dailyPoints: 0,
+        });
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(queryArgs(query, 0)[0]).toContain("sessions.id = $1");
+        expect(queryArgs(query, 0)[0]).toContain("sessions.token_hash = $2");
+        expect(queryArgs(query, 0)[0]).toContain("sessions.expires_at > $3");
+        expect(queryArgs(query, 0)[0]).not.toContain("check_ins");
+        expect(queryArgs(query, 0)[1]).toEqual(["session-one", "token-hash", timestamp, "2026-01-01"]);
+    });
+
+    it("looks up a login by username or email without reading the user table", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "user-one",
+                    username: "user-one",
+                    email: "user@example.com",
+                    display_name: "User One",
+                    role: "user",
+                    status: "active",
+                    plan_id: "free",
+                    points_balance: 20,
+                    password_hash: "hash",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ],
+        ]);
+
+        const user = await createPostgresRepositories(executor).users.getByLogin("user-one", "user@example.com");
+
+        expect(user).toMatchObject({ id: "user-one", email: "user@example.com" });
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(queryArgs(query, 0)[0]).toContain("lower(username) = lower($1)");
+        expect(queryArgs(query, 0)[0]).toContain("lower(coalesce(email, '')) = lower($2)");
+        expect(queryArgs(query, 0)[1]).toEqual(["user-one", "user@example.com"]);
+    });
+
+    it("creates a session with one insert query", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "session-one",
+                    user_id: "user-one",
+                    token_hash: "token-hash",
+                    created_at: timestamp,
+                    expires_at: "2026-01-08T00:00:00.000Z",
+                },
+            ],
+        ]);
+
+        const session = await createPostgresRepositories(executor).sessions.create({
+            id: "session-one",
+            userId: "user-one",
+            tokenHash: "token-hash",
+            createdAt: timestamp,
+            expiresAt: "2026-01-08T00:00:00.000Z",
+        });
+
+        expect(session).toMatchObject({ id: "session-one", userId: "user-one" });
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(queryArgs(query, 0)[0]).toContain("INSERT INTO sessions");
+        expect(queryArgs(query, 0)[1]).toEqual(["session-one", "user-one", "token-hash", timestamp, "2026-01-08T00:00:00.000Z"]);
+    });
+
+    it("paginates and searches users before loading wallet details", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const userRow = { id: "admin-one", username: "admin-one", display_name: "管理员", role: "admin", status: "active", plan_id: "pro", points_balance: 40, password_hash: "hash", created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([
+            [{ total: 41 }],
+            [userRow],
+            [
+                {
+                    ...userRow,
+                    resolved_plan_id: "pro",
+                    resolved_plan_name: "专业版",
+                    active_assignment_id: "assignment-one",
+                    active_assignment_metadata: { dailyPoints: 30 },
+                    daily_wallet_user_id: "admin-one",
+                    daily_wallet_plan_id: "pro",
+                    daily_wallet_assignment_id: "assignment-one",
+                    daily_wallet_granted_points: 30,
+                    daily_wallet_remaining_points: 12,
+                },
+            ],
+        ]);
+        const users = createPostgresRepositories(executor).users;
+
+        const page = await users.list({ page: 9, pageSize: 20, keyword: "管理员", role: "admin", status: "active" });
+        const details = await users.getPublicDetails(
+            page.items.map((user) => user.id),
+            { now: timestamp, date: "2026-01-01" },
+        );
+
+        expect(page).toMatchObject({ total: 41, page: 3, pageSize: 20, items: [{ id: "admin-one" }] });
+        expect(details[0]).toMatchObject({ planId: "pro", planName: "专业版", permanentPoints: 40, dailyPoints: 12 });
+        expect(queryArgs(query, 0)[0]).toContain("CASE WHEN role = 'admin' THEN '管理员'");
+        expect(queryArgs(query, 0)[1]).toEqual(["管理员", "%管理员%", "admin", "active"]);
+        expect(queryArgs(query, 1)[1]).toEqual(["管理员", "%管理员%", "admin", "active", 20, 40]);
+        expect(queryArgs(query, 2)[0]).toContain("users.id = ANY($1::text[])");
+        expect(queryArgs(query, 2)[1]).toEqual([["admin-one"], timestamp, "2026-01-01"]);
+    });
+
+    it("summarizes users without returning the full user table", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([[{ total: 10, active: 8, disabled: 2, admins: 2, active_admins: 1, users_with_plan: 3, total_points_balance: 980.5 }]]);
+
+        const summary = await createPostgresRepositories(executor).users.summarize({ now: timestamp, date: "2026-01-01" });
+
+        expect(summary).toEqual({ total: 10, active: 8, disabled: 2, admins: 2, activeAdmins: 1, usersWithPlan: 3, totalPointsBalance: 980.5 });
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(queryArgs(query, 0)[0]).toContain("count(*) FILTER (WHERE active_assignment_id IS NOT NULL)");
+        expect(queryArgs(query, 0)[1]).toEqual([timestamp, "2026-01-01"]);
+    });
+
+    it("paginates CDK codes and loads redemptions only for the current page", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [{ total: 4 }],
+            [{ total: 8, redeemed: 3, unused: 4, expired: 1 }],
+            [
+                {
+                    id: "cdk-one",
+                    code_hash: "hash-one",
+                    code_ciphertext: "ciphertext",
+                    code_preview: "CDK-ONE",
+                    points: 20,
+                    max_redemptions: 1,
+                    redeemed_count: 1,
+                    status: "active",
+                    note: "测试",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    redemptions: [{ cdk_code_id: "cdk-one", user_id: "user-one", redeemed_at: timestamp, username: "user-one", display_name: "用户一" }],
+                },
+            ],
+        ]);
+
+        const page = await createPostgresRepositories(executor).cdk.list({ page: 9, pageSize: 20, keyword: "user", codeHash: "hash-user", filter: "redeemed" });
+
+        expect(page).toMatchObject({ total: 4, page: 1, pageSize: 20, stats: { total: 8, redeemed: 3, unused: 4, expired: 1 } });
+        expect(page.items[0].redemptions[0]).toMatchObject({ userId: "user-one", username: "user-one" });
+        expect(query).toHaveBeenCalledTimes(3);
+        expect([0, 1, 2].map((index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("count(*) AS total"), expect.stringContaining("count(*) FILTER"), expect.stringContaining("LIMIT $5 OFFSET $6")]);
+        expect(String(queryArgs(query, 2)[0])).not.toContain("FROM cdk_redemptions ORDER BY");
+    });
+
+    it("preserves a negative permanent balance in the authenticated wallet", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor } = mockExecutor([
+            [
+                {
+                    id: "user-negative",
+                    username: "user-negative",
+                    display_name: "Negative Balance",
+                    role: "user",
+                    status: "active",
+                    plan_id: "free",
+                    points_balance: -80,
+                    password_hash: "hash",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    resolved_plan_id: "free",
+                    resolved_plan_name: "免费版",
+                    resolved_plan_daily_points: 0,
+                    free_daily_points_enabled: true,
+                    free_daily_points: 20,
+                },
+            ],
+        ]);
+
+        const user = await createPostgresRepositories(executor).sessions.getAuthenticatedUser({ sessionId: "session-negative", tokenHash: "token-hash", now: timestamp, date: "2026-01-01" });
+
+        expect(user).toMatchObject({ permanentPoints: -80, dailyPoints: 20 });
+    });
+
+    it("updates only the free-user daily points switch", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "default",
+                    free_daily_points_enabled: false,
+                    free_daily_points: 20,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ],
+        ]);
+
+        const settings = await createPostgresRepositories(executor).settings.updateSettings({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
+        const [sql, params] = queryArgs(query, 0) as [string, unknown[]];
+
+        expect(settings).toMatchObject({ freeDailyPointsEnabled: false, freeDailyPoints: 20 });
+        expect(sql).toContain("free_daily_points_enabled");
+        expect(sql).not.toContain("daily_plan_points_enabled");
+        expect(params[3]).toBe(false);
+        expect(params[14]).toBe(20);
+    });
+
+    it("preserves the product list boolean contract", async () => {
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "product-pro",
+                    plan_id: "pro",
+                    name: "Pro",
+                    amount_cents: 1990,
+                    currency: "CNY",
+                    enabled: true,
+                    created_at: "2026-01-01T00:00:00.000Z",
+                    updated_at: "2026-01-01T00:00:00.000Z",
+                },
+            ],
+        ]);
+
+        const products = await createPostgresRepositories(executor).billing.listProducts(true);
+
+        expect(products).toHaveLength(1);
+        expect(products[0]).toMatchObject({ id: "product-pro", planId: "pro" });
+        expect(query).toHaveBeenCalledWith(expect.stringContaining("FROM billing_products"), [true]);
+    });
+
+    it("only deletes billing products without order references", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([[{ id: "unused", plan_id: "creator", name: "Unused", amount_cents: 100, currency: "CNY", enabled: true, created_at: timestamp, updated_at: timestamp }]]);
+
+        const deleted = await createPostgresRepositories(executor).billing.deleteProductIfUnused("unused");
+
+        expect(deleted?.id).toBe("unused");
+        expect(queryArgs(query, 0)[0]).toContain("NOT EXISTS");
+        expect(queryArgs(query, 0)[1]).toEqual(["unused"]);
+    });
+
+    it("keeps boolean row locking for billing orders", async () => {
+        const { executor, query } = mockExecutor([[{ id: "order-one", status: "pending", created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }]]);
+
+        await createPostgresRepositories(executor).billing.getOrderById("order-one", true);
+
+        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
+        expect(queryArgs(query, 0)[1]).toEqual(["order-one"]);
+    });
+
+    it("atomically closes expired pending orders with skip-locked batching", async () => {
+        const timestamp = "2026-07-25T00:00:00.000Z";
+        const { executor, query } = mockExecutor([[{ id: "order-one", status: "closed", expires_at: timestamp, closed_at: timestamp, metadata: { close: { source: "expiration-job" } }, created_at: timestamp, updated_at: timestamp }]]);
+
+        const expired = await createPostgresRepositories(executor).billing.expirePendingOrders({ expiredAt: timestamp, limit: 100 });
+
+        expect(expired).toHaveLength(1);
+        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE SKIP LOCKED");
+        expect(queryArgs(query, 0)[0]).toContain("orders.status = 'pending'");
+        expect(queryArgs(query, 0)[1]).toEqual([timestamp, 100, null, "订单超时自动关闭", "expiration-job"]);
+    });
+
+    it("locks wallet rows and resolves point records by idempotency and refund source", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [{ id: "user-one", username: "user-one", display_name: "User One", role: "user", status: "active", plan_id: "pro", points_balance: 80, password_hash: "hash", created_at: timestamp, updated_at: timestamp }],
+            [
+                {
+                    id: "point-one",
+                    user_id: "user-one",
+                    type: "consume",
+                    amount: -20,
+                    balance_after: 60,
+                    permanent_amount: -10,
+                    daily_amount: -10,
+                    permanent_balance_after: 40,
+                    daily_balance_after: 20,
+                    description: "生成图片",
+                    idempotency_key: "image:task-one",
+                    source_date: "2026-01-01",
+                    created_at: timestamp,
+                },
+            ],
+            [
+                {
+                    id: "refund-one",
+                    user_id: "user-one",
+                    type: "refund",
+                    amount: 20,
+                    balance_after: 80,
+                    permanent_amount: 10,
+                    daily_amount: 10,
+                    permanent_balance_after: 50,
+                    daily_balance_after: 30,
+                    description: "生成失败退回",
+                    source_record_id: "point-one",
+                    source_date: "2026-01-01",
+                    created_at: timestamp,
+                },
+            ],
+        ]);
+        const repos = createPostgresRepositories(executor);
+
+        await repos.users.getById("user-one", true);
+        const record = await repos.points.getRecordByIdempotencyKey("image:task-one");
+        const refund = await repos.points.getRefundRecordBySourceRecordId("point-one");
+
+        expect(record).toMatchObject({ id: "point-one", permanentAmount: -10, dailyAmount: -10, idempotencyKey: "image:task-one" });
+        expect(refund).toMatchObject({ id: "refund-one", sourceRecordId: "point-one" });
+        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
+        expect(queryArgs(query, 0)[1]).toEqual(["user-one"]);
+        expect(queryArgs(query, 1)[0]).toContain("WHERE idempotency_key = $1");
+        expect(queryArgs(query, 1)[1]).toEqual(["image:task-one"]);
+        expect(queryArgs(query, 2)[0]).toContain("type = 'refund'");
+        expect(queryArgs(query, 2)[1]).toEqual(["point-one"]);
+    });
+
+    it("filters and paginates debit point records in PostgreSQL", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "point-one",
+                    user_id: "user-one",
+                    type: "consume",
+                    amount: -20,
+                    balance_after: 60,
+                    permanent_amount: -20,
+                    daily_amount: 0,
+                    permanent_balance_after: 60,
+                    daily_balance_after: 0,
+                    description: "生成视频",
+                    created_at: timestamp,
+                    total_count: "17",
+                },
+            ],
+        ]);
+
+        const result = await createPostgresRepositories(executor).points.listRecords("user-one", { direction: "debit", page: 2, pageSize: 8 });
+
+        expect(result).toMatchObject({ total: 17, page: 2, pageSize: 8, items: [{ id: "point-one", amount: -20 }] });
+        expect(queryArgs(query, 0)[0]).toContain("$2 = 'debit' AND amount < 0");
+        expect(queryArgs(query, 0)[1]).toEqual(["user-one", "debit", 8, 8]);
+    });
+
+    it("creates one daily plan wallet and can lock the existing row", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const walletRow = { user_id: "user-one", date: "2026-01-01", plan_id: "pro", assignment_id: "assignment-one", granted_points: 100, remaining_points: 100, created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([[walletRow], [walletRow]]);
+        const wallet = createPostgresRepositories(executor).pointsWallet;
+
+        const created = await wallet.createDailyWallet({ userId: "user-one", date: "2026-01-01", planId: "pro", assignmentId: "assignment-one", grantedPoints: 100, remainingPoints: 100, createdAt: timestamp, updatedAt: timestamp });
+        const locked = await wallet.getDailyWallet("user-one", "2026-01-01", true);
+
+        expect(created).toMatchObject({ userId: "user-one", planId: "pro", grantedPoints: 100, remainingPoints: 100 });
+        expect(locked?.assignmentId).toBe("assignment-one");
+        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (user_id, date) DO NOTHING");
+        expect(queryArgs(query, 1)[0]).toContain("FOR UPDATE");
+        expect(queryArgs(query, 1)[1]).toEqual(["user-one", "2026-01-01"]);
+    });
+
+    it("selects one current assignment with stable ordering", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([[{ id: "assignment-one", user_id: "user-one", plan_id: "pro", status: "active", source: "order", starts_at: timestamp, created_at: timestamp, updated_at: timestamp }]]);
+
+        const assignment = await createPostgresRepositories(executor).billing.getActivePlanAssignment("user-one", new Date(timestamp), true);
+
+        expect(assignment?.id).toBe("assignment-one");
+        expect(queryArgs(query, 0)[0]).toContain("ORDER BY starts_at DESC, created_at DESC, id DESC");
+        expect(queryArgs(query, 0)[0]).toContain("FOR UPDATE");
+        expect(queryArgs(query, 0)[1]).toEqual(["user-one", timestamp]);
+    });
+
+    it("writes plan assignments and provider events to the established tables", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [{ id: "assignment-one", user_id: "user-one", plan_id: "pro", status: "active", source: "order", source_id: "order-one", starts_at: timestamp, created_at: timestamp, updated_at: timestamp }],
+            [{ id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", signature_valid: true, created_at: timestamp, updated_at: timestamp }],
+        ]);
+        const billing = createPostgresRepositories(executor).billing;
+
+        await billing.createPlanAssignment({
+            id: "assignment-one",
+            userId: "user-one",
+            planId: "pro",
+            status: "active",
+            source: "order",
+            sourceId: "order-one",
+            startsAt: timestamp,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+        await billing.upsertProviderEvent({
+            id: "event-one",
+            provider: "stripe",
+            eventId: "evt-one",
+            eventType: "paid",
+            signatureValid: true,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+
+        expect(queryArgs(query, 0)[0]).toContain("INSERT INTO user_plan_assignments");
+        expect(queryArgs(query, 1)[0]).toContain("INSERT INTO payment_provider_events");
+    });
+
+    it("atomically deduplicates and claims payment provider events", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const eventRow = { id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", signature_valid: true, created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([[eventRow], [{ ...eventRow, processing_at: timestamp }]]);
+        const billing = createPostgresRepositories(executor).billing;
+
+        await billing.upsertProviderEvent({
+            id: "event-one",
+            provider: "stripe",
+            eventId: "evt-one",
+            eventType: "paid",
+            signatureValid: true,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+        const claimed = await billing.claimProviderEvent("event-one");
+
+        expect(claimed?.processingAt).toBe(timestamp);
+        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (provider, event_id)");
+        expect(queryArgs(query, 0)[0]).toContain("RETURNING *");
+        expect(queryArgs(query, 1)[0]).toContain("processed_at IS NULL");
+        expect(queryArgs(query, 1)[0]).toContain("processing_at IS NULL OR processing_at < now() - interval '5 minutes'");
+        expect(queryArgs(query, 1)[0]).toContain("RETURNING *");
+        expect(queryArgs(query, 1)[1]).toEqual(["event-one"]);
+    });
+
+    it("replaces generation assets during upsert", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([[{ id: "log-one", user_id: "user-one", kind: "image", status: "success", created_at: timestamp, updated_at: timestamp }], [], []]);
+        const asset = { type: "image" as const, url: "/api/media/file-one", mimeType: "image/png" };
+
+        const saved = await createPostgresRepositories(executor).generationLogs.upsert({
+            id: "log-one",
+            userId: "user-one",
+            username: "user",
+            displayName: "User",
+            kind: "image",
+            source: "create",
+            status: "success",
+            title: "Image",
+            prompt: "prompt",
+            model: "image-model",
+            summary: "done",
+            durationMs: 1,
+            count: 1,
+            successCount: 1,
+            failCount: 0,
+            assets: [asset],
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+
+        expect(saved.assets).toEqual([asset]);
+        expect(queryArgs(query, 1)[0]).toContain("DELETE FROM generation_log_assets");
+        expect(queryArgs(query, 2)[0]).toContain("INSERT INTO generation_log_assets");
+        expect(query.mock.calls.map((_, index) => String(queryArgs(query, index)[0])).some((statement) => statement.includes("DELETE FROM generation_logs"))).toBe(false);
+    });
+
+    it("rejects a generation log upsert when the id belongs to another user", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([[]]);
+
+        await expect(
+            createPostgresRepositories(executor).generationLogs.upsert({
+                id: "shared-log",
+                userId: "user-two",
+                username: "user-two",
+                displayName: "User Two",
+                kind: "image",
+                source: "unknown",
+                status: "success",
+                title: "Image",
+                prompt: "prompt",
+                model: "image-model",
+                summary: "done",
+                durationMs: 1,
+                count: 1,
+                successCount: 1,
+                failCount: 0,
+                assets: [],
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            }),
+        ).rejects.toThrow("belongs to another user");
+
+        expect(query).toHaveBeenCalledTimes(1);
+        expect(queryArgs(query, 0)[0]).toContain("WHERE generation_logs.user_id = EXCLUDED.user_id");
+    });
+
+    it("deletes only the requested generation log ids", async () => {
+        const { executor, query } = mockExecutor([[]]);
+
+        const deleted = await createPostgresRepositories(executor).generationLogs.delete(["log-one", "log-three"]);
+
+        expect(deleted).toBe(1);
+        expect(query).toHaveBeenCalledWith("DELETE FROM generation_logs WHERE id = ANY($1::text[])", [["log-one", "log-three"]]);
+    });
+
+    it("pushes prompt filtering and pagination into PostgreSQL", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "prompt-one",
+                    scope: "user",
+                    owner_user_id: "user-one",
+                    title: "角色设定",
+                    cover_url: "",
+                    prompt: "电影角色",
+                    tags: ["角色"],
+                    category: "人物",
+                    preview: "",
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                    total_count: "3",
+                },
+            ],
+        ]);
+
+        const result = await createPostgresRepositories(executor).prompts.list({ scope: "user", ownerUserId: "user-one", keyword: "角色", category: "人物", tags: ["角色"], page: 2, pageSize: 10 });
+
+        expect(result).toMatchObject({ page: 2, pageSize: 10, total: 3 });
+        expect(result.items[0]).toMatchObject({ id: "prompt-one", ownerUserId: "user-one" });
+        expect(queryArgs(query, 0)[0]).toContain("count(*) OVER()");
+        expect(queryArgs(query, 0)[0]).toContain("jsonb_array_elements_text(tags)");
+        expect(queryArgs(query, 0)[0]).toContain("$1 = 'library' OR owner_user_id = $2");
+        expect(queryArgs(query, 0)[1]).toEqual(["user", "user-one", "角色", "%角色%", "人物", ["角色"], 10, 10]);
+    });
+
+    it("requires an owner when listing user prompts", async () => {
+        const { executor, query } = mockExecutor([[]]);
+
+        await createPostgresRepositories(executor).prompts.list({ scope: "user", page: 1, pageSize: 20 });
+
+        expect(queryArgs(query, 0)[1]).toEqual(["user", null, "", "%%", "", null, 20, 0]);
+        expect(queryArgs(query, 0)[0]).toContain("$1 = 'library' OR owner_user_id = $2");
+    });
+});

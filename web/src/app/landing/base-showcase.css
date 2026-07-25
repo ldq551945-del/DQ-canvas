@@ -1,0 +1,376 @@
+@media (width>=1024px) {
+    .landing-workbench-preview,
+    .landing-workbench-preview .landing-moon-window {
+        min-height: 730px;
+    }
+    .landing-workbench-preview .landing-moon-canvas {
+        min-height: 604px;
+    }
+    .landing-creative-board {
+        height: 560px;
+    }
+    .landing-creative-stage,
+    .landing-creative-output-wall {
+        height: 286px;
+    }
+    .landing-creative-output-card {
+        overflow: hidden;
+    }
+    .landing-creative-output-art {
+        height: 58px;
+    }
+    .landing-creative-output-card small {
+        display: none;
+    }
+}
+.landing-home-v2 .landing-showcase-section {
+    margin-top: -104px;
+    padding-top: 112px;
+    padding-bottom: 116px;
+}
+.landing-home-v2 .landing-showcase-shell {
+    box-shadow: none;
+    backdrop-filter: none;
+    background: 0 0;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    overflow: visible;
+}
+.landing-home-v2 .landing-showcase-header {
+    margin-bottom: 28px;
+}
+.landing-home-v2 .landing-showcase-header h2 {
+    letter-spacing: 0;
+    max-width: 640px;
+    font-size: clamp(2.15rem, 4.4vw, 4.45rem);
+    line-height: 0.98;
+}
+.landing-home-v2 .landing-showcase-header p {
+    color: #44403cb8;
+    max-width: 560px;
+    font-size: 17px;
+    line-height: 1.75;
+}
+.dark .landing-home-v2 .landing-showcase-header p {
+    color: #ffffffa8;
+}
+.landing-home-v2 .landing-showcase-grid {
+    grid-auto-rows: 198px;
+    align-items: stretch;
+    gap: 14px;
+}
+.landing-showcase-card {
+    --card-accent: 13 148 136;
+    --card-accent-2: 245 158 11;
+    --card-paper: 240 253 250;
+    background: rgb(var(--card-paper));
+    color: #171717;
+    touch-action: manipulation;
+    border: 1px solid #0f172a14;
+    border-radius: 8px;
+    outline: none;
+    min-height: 0;
+    transition:
+        border-color 0.2s,
+        box-shadow 0.2s,
+        transform 0.2s;
+    display: block;
+    box-shadow: 0 22px 58px #0f172a1a;
+}
+.landing-showcase-card.is-comic {
+    --card-accent: 99 102 241;
+    --card-accent-2: 236 72 153;
+    --card-paper: 245 243 255;
+}
+.landing-showcase-card.is-beauty {
+    --card-accent: 244 114 182;
+    --card-accent-2: 251 191 36;
+    --card-paper: 255 247 237;
+}
+.landing-showcase-card.is-style {
+    --card-accent: 20 184 166;
+    --card-accent-2: 59 130 246;
+    --card-paper: 239 246 255;
+}
+.landing-showcase-card:before {
+    content: "";
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(180deg, #ffffff1f, #ffffff94 48%, #ffffffeb), linear-gradient(135deg, rgba(var(--card-accent), 0.1), transparent 44%, rgba(var(--card-accent-2), 0.08));
+    position: absolute;
+    inset: 0;
+}
+.landing-showcase-card:hover {
+    border-color: rgba(var(--card-accent), 0.32);
+    box-shadow:
+        0 28px 72px #0f172a24,
+        0 0 0 1px rgba(var(--card-accent), 0.12);
+    transform: translateY(-4px);
+}
+.landing-showcase-card:focus-visible {
+    box-shadow:
+        0 0 0 3px #ffffffdb,
+        0 0 0 6px rgba(var(--card-accent), 0.36),
+        0 26px 68px #0f172a29;
+}
+.landing-showcase-card img,
+.landing-showcase-card-visual {
+    z-index: 0;
+    position: absolute;
+    inset: 0;
+}
+.landing-showcase-card-visual {
+    z-index: 2;
+    background:
+        linear-gradient(145deg, rgba(var(--card-accent), 0.28), rgba(var(--card-accent-2), 0.2) 48%, #ffffffb8), repeating-linear-gradient(90deg, #ffffff2e 0 1px, transparent 1px 52px),
+        repeating-linear-gradient(0deg, #ffffff29 0 1px, transparent 1px 52px);
+    justify-content: center;
+    align-items: center;
+    display: flex;
+}
+.landing-showcase-card-visual:before,
+.landing-showcase-card-visual:after {
+    content: "";
+    z-index: 0;
+    pointer-events: none;
+    position: absolute;
+}
+.landing-showcase-card-visual:before {
+    aspect-ratio: 1.18;
+    background: linear-gradient(180deg, #ffffffbd, #fff3), linear-gradient(135deg, rgba(var(--card-accent), 0.3), rgba(var(--card-accent-2), 0.16));
+    border: 1px solid #ffffff9e;
+    border-radius: 8px;
+    width: 48%;
+    max-width: 220px;
+    transform: translate(-18%, -8%) rotate(-5deg);
+    box-shadow: 0 24px 52px #0f172a29;
+}
+.landing-showcase-card-visual:after {
+    aspect-ratio: 0.78;
+    background: linear-gradient(180deg, #ffffffa8, #ffffff2e), linear-gradient(145deg, rgba(var(--card-accent-2), 0.22), rgba(var(--card-accent), 0.12));
+    border: 1px solid #0f172a14;
+    border-radius: 8px;
+    width: 42%;
+    max-width: 190px;
+    transform: translate(22%, 4%) rotate(7deg);
+    box-shadow: 0 18px 44px #0f172a1f;
+}
+.landing-showcase-card-visual > span {
+    z-index: 2;
+    width: 64px;
+    height: 64px;
+    color: rgb(var(--card-accent));
+    background: #ffffffb8;
+    border: 1px solid #ffffffb8;
+    border-radius: 8px;
+    place-items: center;
+    display: grid;
+    position: relative;
+    box-shadow:
+        0 18px 42px #0f172a24,
+        inset 0 1px #ffffffe6;
+}
+.landing-showcase-card-visual svg {
+    width: 28px;
+    height: 28px;
+}
+.landing-showcase-card-copy {
+    z-index: 3;
+    flex-direction: column;
+    align-items: flex-start;
+    min-width: 0;
+    display: flex;
+    position: absolute;
+    inset: auto 18px 18px;
+}
+.landing-showcase-card-label {
+    border: 1px solid rgba(var(--card-accent), 0.2);
+    color: rgb(var(--card-accent));
+    background: #ffffffad;
+    border-radius: 999px;
+    margin-bottom: 10px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+}
+.landing-showcase-card-copy h3 {
+    color: #171717;
+    letter-spacing: 0;
+    max-width: 100%;
+    margin: 0;
+    font-size: 19px;
+    font-weight: 760;
+    line-height: 1.18;
+}
+.landing-showcase-card-copy p {
+    color: #292524b3;
+    max-width: 95%;
+    margin: 8px 0 0;
+    font-size: 13px;
+    line-height: 1.55;
+}
+.landing-showcase-card-tags {
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+    display: flex;
+}
+.landing-showcase-card-tags span {
+    color: #292524ad;
+    background: #ffffffa8;
+    border: 1px solid #0f172a12;
+    border-radius: 999px;
+    padding: 7px 9px;
+    font-size: 12px;
+    font-weight: 650;
+    line-height: 1;
+}
+.landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-copy {
+    inset: auto 24px 24px;
+}
+.landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-copy h3 {
+    max-width: 420px;
+    font-size: clamp(1.9rem, 3vw, 3.15rem);
+    line-height: 1.02;
+}
+.landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-copy p {
+    max-width: 440px;
+    font-size: 15px;
+}
+.landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-visual > span {
+    width: 82px;
+    height: 82px;
+}
+.landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-visual svg {
+    width: 34px;
+    height: 34px;
+}
+.dark .landing-showcase-card {
+    color: #fff;
+    background: #ffffff0f;
+    border-color: #ffffff1a;
+    box-shadow: 0 24px 72px #0000004d;
+}
+.dark .landing-showcase-card:before {
+    background: linear-gradient(180deg, #08080a0f, #08080a7a 44%, #08080ae6), linear-gradient(135deg, rgba(var(--card-accent), 0.16), transparent 48%, rgba(var(--card-accent-2), 0.13));
+}
+.dark .landing-showcase-card:hover {
+    border-color: rgba(var(--card-accent), 0.38);
+    box-shadow:
+        0 28px 78px #00000061,
+        0 0 0 1px rgba(var(--card-accent), 0.16);
+}
+.dark .landing-showcase-card-visual {
+    background:
+        linear-gradient(145deg, rgba(var(--card-accent), 0.34), rgba(var(--card-accent-2), 0.2) 48%, #ffffff0f), repeating-linear-gradient(90deg, #ffffff12 0 1px, transparent 1px 52px),
+        repeating-linear-gradient(0deg, #ffffff0f 0 1px, transparent 1px 52px);
+}
+.dark .landing-showcase-card-visual > span {
+    color: rgb(var(--card-accent-2));
+    background: #ffffff1a;
+    border-color: #ffffff29;
+    box-shadow:
+        0 18px 44px #00000047,
+        inset 0 1px #ffffff1a;
+}
+.dark .landing-showcase-card-label {
+    border-color: rgba(var(--card-accent), 0.35);
+    color: rgb(var(--card-accent-2));
+    background: #ffffff1a;
+}
+.dark .landing-showcase-card-copy h3 {
+    color: #fff;
+}
+.dark .landing-showcase-card-copy p {
+    color: #ffffffad;
+}
+.dark .landing-showcase-card-tags span {
+    color: #ffffffb8;
+    background: #ffffff14;
+    border-color: #ffffff1f;
+}
+@media (width<=760px) {
+    .landing-home-v2 .landing-showcase-section {
+        margin-top: -46px;
+        padding-top: 78px;
+        padding-bottom: 72px;
+    }
+    .landing-home-v2 .landing-showcase-header {
+        margin-bottom: 20px;
+    }
+    .landing-home-v2 .landing-showcase-header h2 {
+        font-size: clamp(2rem, 11vw, 3.1rem);
+        line-height: 1.02;
+    }
+    .landing-home-v2 .landing-showcase-header p {
+        font-size: 15px;
+        line-height: 1.65;
+    }
+    .landing-home-v2 .landing-showcase-grid {
+        grid-auto-rows: auto;
+        gap: 12px;
+    }
+    .landing-showcase-card {
+        min-height: 268px;
+    }
+    .landing-showcase-card-visual > span {
+        width: 56px;
+        height: 56px;
+        position: absolute;
+        top: 30px;
+        right: 26px;
+    }
+    .landing-showcase-card-visual svg {
+        width: 25px;
+        height: 25px;
+    }
+    .landing-showcase-card-visual:before {
+        transform: translate(-28%, -22%) rotate(-6deg);
+    }
+    .landing-showcase-card-visual:after {
+        transform: translate(24%, -12%) rotate(7deg);
+    }
+    .landing-showcase-grid .landing-showcase-card:first-child {
+        min-height: 318px;
+    }
+    .landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-visual > span {
+        width: 64px;
+        height: 64px;
+        top: 42px;
+        right: 34px;
+    }
+    .landing-showcase-card-copy,
+    .landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-copy {
+        inset: auto 16px 16px;
+    }
+    .landing-showcase-card-copy h3,
+    .landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-copy h3 {
+        font-size: clamp(1.45rem, 7vw, 2rem);
+        line-height: 1.08;
+    }
+    .landing-showcase-card-copy p,
+    .landing-showcase-grid .landing-showcase-card:first-child .landing-showcase-card-copy p {
+        max-width: 100%;
+        font-size: 13px;
+    }
+    .landing-showcase-card-tags {
+        gap: 5px;
+        margin-top: 10px;
+    }
+    .landing-showcase-card-tags span {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .landing-showcase-card,
+    .landing-showcase-card img,
+    .landing-showcase-card-visual {
+        transition: none;
+    }
+    .landing-showcase-card:hover {
+        transform: none;
+    }
+}

@@ -1,0 +1,25 @@
+export const ADMIN_SECTION_KEYS = [
+    "overview",
+    "site",
+    "channels",
+    "skills",
+    "settings",
+    "accountDeletion",
+    "mediaStorage",
+    "externalStorage",
+    "backup",
+    "points",
+    "wallet",
+    "orders",
+    "products",
+    "payments",
+    "updates",
+    "cdk",
+    "announcements",
+    "users",
+    "logs",
+    "generationOperations",
+    "prompts",
+] as const;
+
+export type AdminSectionKey = (typeof ADMIN_SECTION_KEYS)[number];

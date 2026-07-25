@@ -1,0 +1,735 @@
+.landing-scene-panel-left,
+.landing-scene-panel-right {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    border-radius: 22px;
+    padding: 16px 20px;
+    opacity: 0.56;
+    transition: transform 180ms ease-out;
+}
+
+.landing-scene-panel-left {
+    left: 3%;
+    bottom: 7%;
+    transform: translate3d(var(--landing-float-reverse-x), var(--landing-float-y), 0);
+}
+
+.landing-scene-panel-right {
+    right: 3%;
+    top: 28%;
+    transform: translate3d(var(--landing-float-x), var(--landing-float-reverse-y), 0);
+}
+
+.landing-scene-panel-left strong,
+.landing-scene-panel-right strong {
+    font-size: 28px;
+    line-height: 1;
+}
+
+.landing-moon-grid {
+    background-image: linear-gradient(rgba(12, 10, 9, 0.075) 1px, transparent 1px), linear-gradient(90deg, rgba(12, 10, 9, 0.06) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.96), rgba(0, 0, 0, 0.52) 58%, transparent);
+    opacity: 0.28;
+}
+
+.dark .landing-moon-grid {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+}
+
+.landing-moon-scan {
+    display: none;
+}
+
+.dark .landing-moon-scan {
+    display: none;
+}
+
+.landing-moon-header {
+    margin-top: max(10px, env(safe-area-inset-top));
+}
+
+.landing-moon-brand {
+    min-height: 44px;
+}
+
+.landing-moon-nav {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid rgba(12, 10, 9, 0.1);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.76);
+    padding: 5px;
+    box-shadow: 0 16px 58px rgba(15, 23, 42, 0.12);
+    backdrop-filter: blur(20px);
+    transition:
+        border-color 180ms ease,
+        box-shadow 220ms ease,
+        transform 220ms ease;
+}
+
+.landing-moon-nav:hover {
+    border-color: rgba(12, 10, 9, 0.16);
+    box-shadow: 0 20px 70px rgba(15, 23, 42, 0.16);
+    transform: translateY(-1px);
+}
+
+.landing-moon-nav-indicator {
+    position: absolute;
+    top: 5px;
+    bottom: 5px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.52)), linear-gradient(135deg, rgba(14, 165, 233, 0.18), rgba(168, 85, 247, 0.12));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.78),
+        0 10px 28px rgba(15, 23, 42, 0.12);
+    transition:
+        left 420ms cubic-bezier(0.16, 1, 0.3, 1),
+        width 420ms cubic-bezier(0.16, 1, 0.3, 1),
+        opacity 160ms ease,
+        background-color 180ms ease;
+    z-index: 0;
+}
+
+.dark .landing-moon-nav {
+    border-color: rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.075);
+    box-shadow: 0 18px 70px rgba(0, 0, 0, 0.3);
+}
+
+.dark .landing-moon-nav:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+    box-shadow: 0 22px 78px rgba(0, 0, 0, 0.38);
+}
+
+.dark .landing-moon-nav-indicator {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.1)), linear-gradient(135deg, rgba(14, 165, 233, 0.22), rgba(168, 85, 247, 0.16));
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.2),
+        0 12px 34px rgba(0, 0, 0, 0.28);
+}
+
+.landing-moon-nav-link {
+    position: relative;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    border-radius: 999px;
+    padding: 0 16px;
+    color: rgba(28, 25, 23, 0.68);
+    font-size: 14px;
+    font-weight: 600;
+    transition:
+        color 180ms ease,
+        transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dark .landing-moon-nav-link {
+    color: rgba(255, 255, 255, 0.68);
+}
+
+.landing-moon-nav-link:hover,
+.landing-moon-nav-link:focus-visible,
+.landing-moon-nav-link.is-active {
+    color: #0c0a09;
+    transform: translateY(-1px);
+}
+
+.dark .landing-moon-nav-link:hover,
+.dark .landing-moon-nav-link:focus-visible,
+.dark .landing-moon-nav-link.is-active {
+    color: #ffffff;
+}
+
+.landing-moon-nav-link:focus-visible {
+    outline: 2px solid rgba(14, 165, 233, 0.58);
+    outline-offset: 3px;
+}
+
+.dark .landing-moon-nav-link:focus-visible {
+    outline-color: rgba(125, 211, 252, 0.7);
+}
+
+.landing-moon-theme {
+    background: rgba(255, 255, 255, 0.78) !important;
+    border-color: rgba(12, 10, 9, 0.1) !important;
+    color: #0c0a09 !important;
+}
+
+.dark .landing-moon-theme {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(255, 255, 255, 0.14) !important;
+    color: #ffffff !important;
+}
+
+.landing-moon-theme:hover {
+    background: #ffffff !important;
+    border-color: rgba(12, 10, 9, 0.16) !important;
+    color: #0c0a09 !important;
+}
+
+.dark .landing-moon-theme:hover {
+    background: rgba(255, 255, 255, 0.14) !important;
+    border-color: rgba(255, 255, 255, 0.22) !important;
+    color: #ffffff !important;
+}
+
+.landing-moon-login.ant-btn {
+    min-height: 42px;
+    border-color: rgba(12, 10, 9, 0.1) !important;
+    background: rgba(255, 255, 255, 0.78) !important;
+    color: #0c0a09 !important;
+    font-weight: 650;
+}
+
+.dark .landing-moon-login.ant-btn {
+    border-color: rgba(255, 255, 255, 0.14) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #ffffff !important;
+}
+
+.landing-moon-login.ant-btn:hover {
+    border-color: rgba(12, 10, 9, 0.16) !important;
+    background: #ffffff !important;
+    color: #0c0a09 !important;
+}
+
+.landing-moon-login.ant-btn:focus-visible,
+.landing-home-v2 .landing-hero-cta.ant-btn:focus-visible {
+    outline: 2px solid rgba(14, 165, 233, 0.64) !important;
+    outline-offset: 3px !important;
+}
+
+.dark .landing-moon-login.ant-btn:hover {
+    border-color: rgba(255, 255, 255, 0.24) !important;
+    background: rgba(255, 255, 255, 0.14) !important;
+    color: #ffffff !important;
+}
+
+.dark .landing-moon-login.ant-btn:focus-visible,
+.dark .landing-home-v2 .landing-hero-cta.ant-btn:focus-visible {
+    outline-color: rgba(125, 211, 252, 0.74) !important;
+}
+
+.landing-moon-copy {
+    position: relative;
+    padding-bottom: 1.25rem;
+    transform: translateY(34px);
+}
+
+.landing-moon-copy::before {
+    content: "";
+    position: absolute;
+    inset: -46px -40px -38px;
+    z-index: -1;
+    border-radius: 44px;
+    background:
+        radial-gradient(ellipse at 50% 34%, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.18) 48%, transparent 78%), radial-gradient(circle at 28% 70%, rgba(125, 211, 252, 0.1), transparent 48%),
+        radial-gradient(circle at 76% 60%, rgba(196, 181, 253, 0.1), transparent 44%);
+    filter: blur(14px);
+    opacity: 0.62;
+}
+
+.dark .landing-moon-copy::before {
+    background:
+        radial-gradient(ellipse at 50% 34%, rgba(5, 5, 5, 0.58), rgba(5, 5, 5, 0.22) 48%, transparent 78%), radial-gradient(circle at 28% 70%, rgba(14, 165, 233, 0.13), transparent 48%),
+        radial-gradient(circle at 76% 60%, rgba(168, 85, 247, 0.12), transparent 44%);
+}
+
+.landing-moon-copy h1 {
+    background: linear-gradient(92deg, #0c0a09 0%, #0c0a09 36%, #0f766e 54%, #334bd6 66%, #0c0a09 90%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent !important;
+    letter-spacing: 0;
+    text-shadow: 0 20px 60px rgba(14, 165, 233, 0.08);
+}
+
+.dark .landing-moon-copy h1 {
+    background: linear-gradient(92deg, #ffffff 0%, #ffffff 34%, #a7f3d0 52%, #bfdbfe 66%, #ffffff 90%);
+    background-size: 220% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent !important;
+    text-shadow: 0 18px 58px rgba(125, 211, 252, 0.08);
+}
+
+.landing-title-lockup {
+    position: relative;
+    display: inline-flex;
+    justify-content: center;
+    padding-top: 0;
+    isolation: isolate;
+    margin-inline: auto;
+}
+
+.landing-title-lockup h1 {
+    position: relative;
+    z-index: 1;
+    font-size: clamp(9.2rem, 11.2vw, 13.5rem) !important;
+    line-height: 0.86;
+}
+
+.landing-moon-copy p {
+    max-width: 50rem;
+    color: rgba(28, 25, 23, 0.68) !important;
+    font-weight: 680;
+    font-size: clamp(1.02rem, 1.12vw, 1.2rem);
+    line-height: 1.72;
+    text-shadow: 0 14px 34px rgba(255, 255, 255, 0.72);
+}
+
+.landing-hero-subcopy {
+    display: grid;
+    gap: 12px;
+    text-wrap: balance;
+}
+
+.landing-hero-eyebrow {
+    display: block;
+    color: #0c0a09;
+    font-size: clamp(1.55rem, 2.12vw, 2.28rem);
+    font-weight: 880;
+    line-height: 1.18;
+}
+
+.landing-hero-eyebrow span {
+    display: inline;
+}
+
+.landing-hero-line {
+    display: block;
+    max-width: 43rem;
+    margin-inline: auto;
+    color: rgba(28, 25, 23, 0.64);
+    font-weight: 660;
+}
+
+.landing-hero-highlight {
+    display: inline;
+    margin: 0 0.22em;
+    border: 0;
+    background: none;
+    padding: 0;
+    color: #0f766e;
+    box-shadow: none;
+    font-weight: 860;
+    white-space: normal;
+}
+
+.dark .landing-moon-copy p {
+    color: rgba(255, 255, 255, 0.74) !important;
+    text-shadow: 0 16px 38px rgba(0, 0, 0, 0.46);
+}
+
+.dark .landing-hero-eyebrow {
+    color: #ffffff;
+}
+
+.dark .landing-hero-line {
+    color: rgba(255, 255, 255, 0.66);
+}
+
+.dark .landing-hero-highlight {
+    color: #a7f3d0;
+}
+
+.landing-moon-kicker {
+    color: rgba(28, 25, 23, 0.66) !important;
+    border-color: rgba(14, 165, 233, 0.2) !important;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(240, 249, 255, 0.76)) !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.62),
+        0 18px 48px rgba(14, 165, 233, 0.12);
+}
+
+.landing-title-lockup .landing-moon-kicker {
+    --landing-kicker-transform: translateY(-8%);
+    position: absolute;
+    right: clamp(-6.25rem, -4.35vw, -4.2rem);
+    top: clamp(2rem, 1.95vw, 2.8rem);
+    z-index: 2;
+    white-space: nowrap;
+    transform: var(--landing-kicker-transform);
+}
+
+.dark .landing-moon-kicker {
+    color: rgba(255, 255, 255, 0.72) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    background: rgba(255, 255, 255, 0.07) !important;
+}
+
+.landing-moon-primary.ant-btn,
+.landing-moon-primary.ant-btn-primary {
+    min-width: 286px;
+    height: 76px;
+    border: 1px solid #0c0a09 !important;
+    border-radius: 999px !important;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), transparent 24%, rgba(255, 255, 255, 0.12) 46%, transparent 70%), #0c0a09 !important;
+    color: #ffffff !important;
+    box-shadow:
+        0 24px 70px rgba(12, 10, 9, 0.18),
+        0 0 0 5px rgba(14, 165, 233, 0.12),
+        0 0 46px rgba(14, 165, 233, 0.2) !important;
+    font-size: 20px !important;
+    font-weight: 800;
+    overflow: hidden;
+}
+
+.dark .landing-moon-primary.ant-btn,
+.dark .landing-moon-primary.ant-btn-primary {
+    border-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #050505 !important;
+    box-shadow:
+        0 24px 70px rgba(125, 211, 252, 0.14),
+        0 0 0 5px rgba(125, 211, 252, 0.12),
+        0 0 52px rgba(125, 211, 252, 0.18) !important;
+}
+
+.landing-moon-primary.ant-btn:hover,
+.landing-moon-primary.ant-btn-primary:hover {
+    background: #000000 !important;
+    border-color: #000000 !important;
+    color: #ffffff !important;
+    transform: translateY(-3px) scale(1.02);
+}
+
+.dark .landing-moon-primary.ant-btn:hover,
+.dark .landing-moon-primary.ant-btn-primary:hover {
+    background: #f5f5f4 !important;
+    border-color: #f5f5f4 !important;
+    color: #050505 !important;
+}
+
+.landing-moon-stat {
+    --stat-accent: 14 165 233;
+    min-width: 0;
+    border: 1px solid rgba(var(--stat-accent), 0.2);
+    border-radius: 18px;
+    background: linear-gradient(145deg, rgba(var(--stat-accent), 0.12), rgba(255, 255, 255, 0.76) 44%), rgba(255, 255, 255, 0.68);
+    padding: 14px;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.44),
+        0 16px 46px rgba(var(--stat-accent), 0.1);
+    backdrop-filter: blur(18px);
+}
+
+.landing-moon-stat:nth-child(2) {
+    --stat-accent: 245 158 11;
+}
+
+.landing-moon-stat:nth-child(3) {
+    --stat-accent: 168 85 247;
+}
+
+.landing-moon-stat svg {
+    color: rgb(var(--stat-accent)) !important;
+}
+
+.dark .landing-moon-stat {
+    border-color: rgba(var(--stat-accent), 0.28);
+    background: linear-gradient(145deg, rgba(var(--stat-accent), 0.16), rgba(255, 255, 255, 0.055) 44%), rgba(255, 255, 255, 0.055);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+        0 16px 46px rgba(var(--stat-accent), 0.12);
+}
+
+.landing-moon-preview {
+    position: relative;
+    min-height: 480px;
+}
+
+.landing-moon-window {
+    position: relative;
+    overflow: hidden;
+    min-height: 480px;
+    border: 1px solid rgba(12, 10, 9, 0.1);
+    border-radius: 30px;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.58)), rgba(255, 255, 255, 0.82);
+    box-shadow:
+        0 36px 120px rgba(15, 23, 42, 0.14),
+        inset 0 1px 0 rgba(255, 255, 255, 0.86);
+    backdrop-filter: blur(24px);
+}
+
+.dark .landing-moon-window {
+    border-color: rgba(255, 255, 255, 0.13);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.035)), rgba(12, 12, 11, 0.82);
+    box-shadow:
+        0 36px 120px rgba(0, 0, 0, 0.36),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.landing-moon-window::before {
+    content: "";
+    position: absolute;
+    inset: 62px 0 0;
+    background-image: linear-gradient(rgba(12, 10, 9, 0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(12, 10, 9, 0.05) 1px, transparent 1px);
+    background-size: 38px 38px;
+    opacity: 0.55;
+}
+
+.dark .landing-moon-window::before {
+    background-image: linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+}
+
+.landing-moon-window-top {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 58px;
+    padding: 0 18px;
+    border-bottom: 1px solid rgba(12, 10, 9, 0.09);
+    color: rgba(28, 25, 23, 0.58);
+    font-size: 12px;
+}
+
+.dark .landing-moon-window-top {
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.landing-moon-window-top span {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    background: rgba(12, 10, 9, 0.26);
+}
+
+.dark .landing-moon-window-top span {
+    background: rgba(255, 255, 255, 0.32);
+}
+
+.landing-moon-window-top strong {
+    margin-left: 8px;
+    font-weight: 650;
+}
+
+.landing-moon-canvas {
+    position: relative;
+    min-height: 352px;
+}
+
+.landing-moon-node {
+    position: absolute;
+    z-index: 3;
+    border: 1px solid rgba(12, 10, 9, 0.1);
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.76);
+    color: #0c0a09;
+    box-shadow: 0 22px 80px rgba(15, 23, 42, 0.12);
+    backdrop-filter: blur(22px);
+}
+
+.dark .landing-moon-node {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.09);
+    color: #ffffff;
+    box-shadow: 0 22px 80px rgba(0, 0, 0, 0.28);
+}
+
+.landing-moon-node-main {
+    left: 12%;
+    top: 54px;
+    display: grid;
+    grid-template-columns: 116px minmax(0, 1fr);
+    width: min(74%, 360px);
+    overflow: hidden;
+}
+
+.landing-moon-node-media {
+    display: grid;
+    min-height: 150px;
+    place-items: center;
+    background: linear-gradient(135deg, rgba(12, 10, 9, 0.08), transparent 52%), #f5f5f4;
+}
+
+.dark .landing-moon-node-media {
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.18), transparent 52%), #171717;
+}
+
+.landing-moon-node-copy {
+    padding: 18px;
+}
+
+.landing-moon-node-copy span,
+.landing-moon-node-side span,
+.landing-moon-node-video span {
+    display: block;
+    color: rgba(28, 25, 23, 0.56);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.dark .landing-moon-node-copy span,
+.dark .landing-moon-node-side span,
+.dark .landing-moon-node-video span {
+    color: rgba(255, 255, 255, 0.56);
+}
+
+.landing-moon-node-copy strong {
+    display: block;
+    margin-top: 8px;
+    font-size: 18px;
+    line-height: 1.3;
+}
+
+.landing-moon-node-side,
+.landing-moon-node-video {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 15px;
+}
+
+.landing-moon-node-side {
+    right: 11%;
+    top: 235px;
+}
+
+.landing-moon-node-video {
+    left: 18%;
+    bottom: 42px;
+}
+
+.landing-moon-link {
+    position: absolute;
+    z-index: 2;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(12, 10, 9, 0.32), transparent);
+    transform-origin: left center;
+}
+
+.dark .landing-moon-link {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.52), transparent);
+}
+
+.landing-moon-link-a {
+    left: 39%;
+    top: 225px;
+    width: 178px;
+    transform: rotate(26deg);
+}
+
+.landing-moon-link-b {
+    left: 31%;
+    top: 280px;
+    width: 138px;
+    transform: rotate(111deg);
+}
+
+.landing-moon-window-footer {
+    position: absolute;
+    left: 24px;
+    right: 24px;
+    bottom: 18px;
+    z-index: 3;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0;
+}
+
+.landing-moon-window-footer span {
+    border: 1px solid rgba(12, 10, 9, 0.1);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.46);
+    padding: 7px 9px;
+    color: rgba(28, 25, 23, 0.56);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.dark .landing-moon-window-footer span {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.62);
+}
+
+.landing-home-v2 .landing-showcase-section {
+    padding-top: 76px;
+}
+
+.landing-home-v2 .landing-footer-shell {
+    border-color: rgba(255, 255, 255, 0.56);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.34)), linear-gradient(120deg, rgba(14, 165, 233, 0.06), transparent 34%), linear-gradient(56deg, transparent 48%, rgba(168, 85, 247, 0.05) 76%, transparent 92%);
+    box-shadow:
+        0 12px 32px rgba(15, 23, 42, 0.055),
+        0 0 0 1px rgba(14, 165, 233, 0.07),
+        inset 0 1px 0 rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(10px);
+}
+
+.dark .landing-home-v2 .landing-footer-shell {
+    border-color: rgba(255, 255, 255, 0.08);
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.46), rgba(2, 6, 23, 0.28)), linear-gradient(120deg, rgba(34, 211, 238, 0.07), transparent 34%), linear-gradient(56deg, transparent 48%, rgba(139, 92, 246, 0.07) 76%, transparent 92%);
+    box-shadow:
+        0 12px 36px rgba(0, 0, 0, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.landing-home-v2 .landing-showcase-header h2,
+.landing-home-v2 .landing-footer-title {
+    color: #0c0a09 !important;
+}
+
+.dark .landing-home-v2 .landing-showcase-header h2,
+.dark .landing-home-v2 .landing-footer-title {
+    color: #ffffff !important;
+}
+
+.landing-home-v2 .landing-showcase-header p,
+.landing-home-v2 .landing-footer-copyright,
+.landing-home-v2 .landing-footer-link,
+.landing-home-v2 .landing-footer-social {
+    color: rgba(255, 255, 255, 0.58);
+}
+
+.landing-home-v2 .landing-showcase-header p,
+.landing-home-v2 .landing-footer-copyright,
+.landing-home-v2 .landing-footer-link,
+.landing-home-v2 .landing-footer-social {
+    color: rgba(28, 25, 23, 0.58);
+}
+
+.dark .landing-home-v2 .landing-showcase-header p,
+.dark .landing-home-v2 .landing-footer-copyright,
+.dark .landing-home-v2 .landing-footer-link,
+.dark .landing-home-v2 .landing-footer-social {
+    color: rgba(255, 255, 255, 0.58);
+}
+
+.landing-home-v2 .landing-showcase-header .ant-btn-link {
+    color: #0c0a09;
+}
+
+.dark .landing-home-v2 .landing-showcase-header .ant-btn-link {
+    color: #ffffff;
+}
+
+.landing-home-v2 .landing-footer-social {
+    border-color: rgba(12, 10, 9, 0.1);
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.dark .landing-home-v2 .landing-footer-social {
+    border-color: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.landing-home-v2 .landing-footer-link:hover,
+.landing-home-v2 .landing-footer-social:hover {
+    color: #0c0a09;
+}
+
+.dark .landing-home-v2 .landing-footer-link:hover,
+.dark .landing-home-v2 .landing-footer-social:hover {
+    color: #ffffff;
+}

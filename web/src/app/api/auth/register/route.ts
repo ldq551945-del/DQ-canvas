@@ -1,0 +1,42 @@
+import { NextResponse } from "next/server";
+
+import { createSession, createUser, isAuthInputError } from "@/lib/auth/store";
+import { readJsonBody } from "@/lib/auth/request";
+import { serializeCurrentUser, setSessionCookie } from "@/lib/auth/session";
+import { checkRateLimit, getClientIp } from "@/lib/server/security";
+import { getInstallStatus } from "@/lib/server/install-status";
+
+export const runtime = "nodejs";
+
+export async function POST(request: Request) {
+    try {
+        const install = await getInstallStatus();
+        if (!install.ready && !install.firstAdminRequired) return NextResponse.json({ error: "请先完成数据库初始化并配置加密密钥" }, { status: 503 });
+        const body = await readJsonBody<{ username?: string; email?: string; emailCode?: string; displayName?: string; password?: string }>(request);
+        const registrationIdentity = String(body.username || body.email || "unknown")
+            .trim()
+            .toLowerCase()
+            .slice(0, 160);
+        const limit = await checkRateLimit(`register:${getClientIp(request)}:${registrationIdentity}`, { maxRequests: 10, windowMs: 60 * 60 * 1000 });
+        if (!limit.allowed) return NextResponse.json({ error: "注册请求过于频繁，请稍后重试", retryAfter: Math.ceil((limit.resetAt - Date.now()) / 1000) }, { status: 429 });
+        const user = await createUser({
+            username: body.username || "",
+            email: body.email,
+            emailCode: body.emailCode,
+            displayName: body.displayName,
+            password: body.password || "",
+        });
+        const sessionValue = await createSession(user.id);
+        const response = NextResponse.json({ user: serializeCurrentUser(user) });
+        setSessionCookie(response, sessionValue, request);
+        return response;
+    } catch (error) {
+        return authErrorResponse(error);
+    }
+}
+
+function authErrorResponse(error: unknown) {
+    if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+    console.error("Register failed", error);
+    return NextResponse.json({ error: "注册失败，请稍后重试" }, { status: 500 });
+}

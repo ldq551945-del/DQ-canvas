@@ -1,0 +1,538 @@
+@media (prefers-reduced-motion: no-preference) {
+    .landing-home-v2::after {
+        animation: landing-hero-color-flow 15s ease-in-out infinite alternate;
+    }
+
+    .landing-title-lockup .landing-moon-kicker {
+        animation: landing-badge-rise-in 620ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
+    }
+
+    .landing-moon-copy h1 {
+        animation:
+            landing-rise-in 760ms cubic-bezier(0.16, 1, 0.3, 1) 160ms both,
+            landing-title-flow 7s ease-in-out 1s infinite;
+    }
+
+    .landing-moon-copy p {
+        animation: landing-rise-in 720ms cubic-bezier(0.16, 1, 0.3, 1) 260ms both;
+    }
+
+    .landing-moon-hero-actions {
+        animation: landing-rise-in 720ms cubic-bezier(0.16, 1, 0.3, 1) 360ms both;
+    }
+
+    .landing-moon-primary.ant-btn,
+    .landing-moon-primary.ant-btn-primary {
+        animation: landing-button-glow 3.6s ease-in-out infinite;
+        background-size: 220% 100% !important;
+    }
+
+    .dark .landing-moon-primary.ant-btn,
+    .dark .landing-moon-primary.ant-btn-primary {
+        animation-name: landing-button-glow-dark;
+    }
+
+    .landing-moon-stat-row {
+        animation: landing-rise-in 720ms cubic-bezier(0.16, 1, 0.3, 1) 460ms both;
+    }
+
+    .landing-scene-panel-main {
+        animation: landing-window-breathe 8s ease-in-out infinite;
+    }
+
+    .dark .landing-scene-panel-main {
+        animation-name: landing-window-breathe-dark;
+    }
+
+    .landing-scene-board {
+        animation: landing-board-grid-drift 22s linear infinite;
+    }
+
+    .landing-canvas-node-beauty,
+    .landing-canvas-node-prompt {
+        animation: landing-canvas-node-drift-a 8.8s ease-in-out infinite;
+    }
+
+    .landing-canvas-node-commerce,
+    .landing-canvas-node-story {
+        animation: landing-canvas-node-drift-b 9.6s ease-in-out infinite;
+    }
+
+    .landing-canvas-beam {
+        animation: landing-canvas-beam-flow 5.8s ease-in-out infinite;
+    }
+
+    .landing-canvas-pin {
+        animation: landing-canvas-pin-pulse 3.8s ease-in-out infinite;
+    }
+
+    .landing-canvas-cursor {
+        animation: landing-canvas-cursor-drift 7.4s ease-in-out infinite;
+    }
+
+    .landing-scene-node-large {
+        animation: landing-canvas-float 7s ease-in-out infinite;
+    }
+
+    .landing-scene-node-prompt,
+    .landing-scene-node-output {
+        animation: landing-canvas-float 8s ease-in-out infinite reverse;
+    }
+
+    .landing-scene-cursor {
+        animation: landing-cursor-drift 9s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+    }
+
+    .landing-scene-line::after {
+        animation: landing-line-pulse 3.6s ease-in-out infinite;
+    }
+
+    .landing-scene-board::after {
+        animation: landing-board-flow-b 14s ease-in-out infinite alternate;
+    }
+
+    .landing-scene-use-case-beauty {
+        animation: landing-case-drift-a 8.6s ease-in-out infinite;
+    }
+
+    .landing-scene-use-case-commerce {
+        animation: landing-case-drift-b 9.4s ease-in-out infinite;
+    }
+
+    .landing-scene-use-case-drama {
+        animation: landing-case-drift-c 10.2s ease-in-out infinite;
+    }
+
+    .landing-scene-use-case-product {
+        animation: landing-case-drift-d 9.8s ease-in-out infinite;
+    }
+
+    .landing-capability-ai {
+        animation: landing-capability-orbit 24s linear infinite;
+    }
+
+    .landing-capability-beauty {
+        animation: landing-capability-orbit 24s linear infinite -4s;
+    }
+
+    .landing-capability-commerce {
+        animation: landing-capability-orbit 24s linear infinite -8s;
+    }
+
+    .landing-capability-story {
+        animation: landing-capability-orbit 24s linear infinite -12s;
+    }
+
+    .landing-capability-video {
+        animation: landing-capability-orbit 24s linear infinite -16s;
+    }
+
+    .landing-capability-retouch {
+        animation: landing-capability-orbit 24s linear infinite -20s;
+    }
+}
+
+@keyframes landing-rise-in {
+    from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.985);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes landing-badge-rise-in {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.985) var(--landing-kicker-transform);
+    }
+
+    to {
+        opacity: 1;
+        transform: var(--landing-kicker-transform);
+    }
+}
+
+@keyframes landing-title-flow {
+    0%,
+    100% {
+        background-position: 0% 50%;
+    }
+
+    50% {
+        background-position: 100% 50%;
+    }
+}
+
+@keyframes landing-window-breathe {
+    0%,
+    100% {
+        border-color: rgba(14, 165, 233, 0.14);
+        box-shadow:
+            0 12px 28px rgba(15, 23, 42, 0.045),
+            0 0 0 1px rgba(255, 255, 255, 0.38) inset;
+    }
+
+    50% {
+        border-color: rgba(14, 165, 233, 0.22);
+        box-shadow:
+            0 16px 38px rgba(14, 165, 233, 0.07),
+            0 0 0 1px rgba(255, 255, 255, 0.48) inset;
+    }
+}
+
+@keyframes landing-window-breathe-dark {
+    0%,
+    100% {
+        border-color: rgba(255, 255, 255, 0.12);
+        box-shadow:
+            0 12px 34px rgba(0, 0, 0, 0.14),
+            inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    50% {
+        border-color: rgba(125, 211, 252, 0.18);
+        box-shadow:
+            0 16px 42px rgba(14, 165, 233, 0.12),
+            inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+}
+
+@keyframes landing-board-grid-drift {
+    from {
+        background-position:
+            0 0,
+            0 0;
+    }
+
+    to {
+        background-position:
+            38px 38px,
+            38px 38px;
+    }
+}
+
+@keyframes landing-canvas-node-drift-a {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: 10px -8px;
+    }
+}
+
+@keyframes landing-canvas-node-drift-b {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: -10px 8px;
+    }
+}
+
+@keyframes landing-canvas-beam-flow {
+    0%,
+    100% {
+        background-position: 0% 50%;
+        opacity: 0.28;
+    }
+
+    50% {
+        background-position: 100% 50%;
+        opacity: 0.58;
+    }
+}
+
+@keyframes landing-canvas-pin-pulse {
+    0%,
+    100% {
+        opacity: 0.62;
+        box-shadow:
+            0 0 0 7px rgba(14, 165, 233, 0.08),
+            0 0 22px rgba(14, 165, 233, 0.34);
+    }
+
+    50% {
+        opacity: 1;
+        box-shadow:
+            0 0 0 11px rgba(14, 165, 233, 0.12),
+            0 0 30px rgba(14, 165, 233, 0.46);
+    }
+}
+
+@keyframes landing-canvas-cursor-drift {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    45% {
+        translate: 18px -12px;
+    }
+
+    72% {
+        translate: -8px 10px;
+    }
+}
+
+@keyframes landing-hero-color-flow {
+    from {
+        background-position:
+            0% 40%,
+            100% 40%,
+            20% 80%,
+            70% 20%;
+        opacity: 0.62;
+    }
+
+    to {
+        background-position:
+            100% 60%,
+            0% 60%,
+            80% 20%,
+            20% 80%;
+        opacity: 0.88;
+    }
+}
+
+@keyframes landing-board-flow-a {
+    from {
+        background-position:
+            0% 40%,
+            100% 60%;
+    }
+
+    to {
+        background-position:
+            100% 62%,
+            0% 38%;
+    }
+}
+
+@keyframes landing-board-flow-b {
+    from {
+        background-position:
+            100% 20%,
+            0% 70%;
+    }
+
+    to {
+        background-position:
+            0% 80%,
+            100% 20%;
+    }
+}
+
+@keyframes landing-button-glow {
+    0%,
+    100% {
+        background-position: 0% 50%;
+        box-shadow:
+            0 24px 70px rgba(12, 10, 9, 0.18),
+            0 0 0 5px rgba(14, 165, 233, 0.12),
+            0 0 46px rgba(14, 165, 233, 0.2);
+    }
+
+    50% {
+        background-position: 100% 50%;
+        box-shadow:
+            0 26px 78px rgba(12, 10, 9, 0.2),
+            0 0 0 7px rgba(168, 85, 247, 0.11),
+            0 0 58px rgba(168, 85, 247, 0.18);
+    }
+}
+
+@keyframes landing-button-glow-dark {
+    0%,
+    100% {
+        box-shadow:
+            0 24px 70px rgba(125, 211, 252, 0.14),
+            0 0 0 5px rgba(125, 211, 252, 0.12),
+            0 0 52px rgba(125, 211, 252, 0.18);
+    }
+
+    50% {
+        box-shadow:
+            0 26px 78px rgba(196, 181, 253, 0.16),
+            0 0 0 7px rgba(196, 181, 253, 0.1),
+            0 0 60px rgba(196, 181, 253, 0.18);
+    }
+}
+
+@keyframes landing-case-drift-a {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: 18px -14px;
+    }
+}
+
+@keyframes landing-case-drift-b {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: -20px 12px;
+    }
+}
+
+@keyframes landing-case-drift-c {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: -14px -18px;
+    }
+}
+
+@keyframes landing-case-drift-d {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: 18px 16px;
+    }
+}
+
+@keyframes landing-capability-orbit {
+    0%,
+    100% {
+        left: 50%;
+        top: 10%;
+    }
+
+    16.666% {
+        left: 80%;
+        top: 24%;
+    }
+
+    33.333% {
+        left: 90%;
+        top: 58%;
+    }
+
+    50% {
+        left: 50%;
+        top: 88%;
+    }
+
+    66.666% {
+        left: 10%;
+        top: 58%;
+    }
+
+    83.333% {
+        left: 20%;
+        top: 24%;
+    }
+}
+
+@keyframes landing-capability-drift-a {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: 10px -12px;
+    }
+}
+
+@keyframes landing-capability-drift-b {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: -12px 10px;
+    }
+}
+
+@keyframes landing-capability-drift-c {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: 12px 9px;
+    }
+}
+
+@keyframes landing-canvas-float {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    50% {
+        translate: 0 -8px;
+    }
+}
+
+@keyframes landing-cursor-drift {
+    0%,
+    100% {
+        translate: 0 0;
+    }
+
+    42% {
+        translate: 26px -18px;
+    }
+
+    70% {
+        translate: -12px 14px;
+    }
+}
+
+@keyframes landing-line-pulse {
+    0%,
+    100% {
+        opacity: 0.28;
+        transform: translateX(-18px);
+    }
+
+    50% {
+        opacity: 0.92;
+        transform: translateX(24px);
+    }
+}
+
+@keyframes landing-showcase-flow-drift {
+    0%,
+    100% {
+        transform: translate3d(0, 0, 0) rotate(var(--showcase-flow-rotate));
+    }
+
+    50% {
+        transform: translate3d(42px, -12px, 0) rotate(var(--showcase-flow-rotate));
+    }
+}
+
+@keyframes landing-showcase-node-drift {
+    0%,
+    100% {
+        transform: translate3d(0, 0, 0);
+    }
+
+    50% {
+        transform: translate3d(12px, -10px, 0);
+    }
+}

@@ -1,0 +1,114 @@
+import type { AuthSettings } from "@/lib/auth/store";
+import type { CreativeAsset, CreativeConversationContext, CreativeSurface } from "@/lib/creative-runtime-contract";
+import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
+import type { AgentPlan } from "@/lib/server/agent-run-validation";
+
+export function selectAgentSkills(settings: AuthSettings, surface: CreativeSurface, prompt: string, requestedSkillIds: string[] = []) {
+    const workspaces = surface === "canvas" ? new Set(["canvas"]) : surface === "drama" ? new Set(["drama"]) : new Set(["image", "video", "drama"]);
+    const requested = new Set(requestedSkillIds);
+    return settings.agentSkills.filter(
+        (skill) => skill.enabled && (skill.workspaces || ["image"]).some((workspace) => workspaces.has(workspace)) && (requested.has(skill.id) || skill.keywords.some((keyword) => prompt.includes(keyword)) || prompt.includes(skill.name)),
+    );
+}
+
+export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string, skillPrompt: string) {
+    const identity =
+        surface === "canvas"
+            ? "你是 VOZEB PRO 画布创作 Agent，也能进行普通对话。"
+            : surface === "drama"
+              ? "你是 VOZEB PRO 短剧项目创作 Agent，负责围绕当前项目规划文本、图片、视频和音频产物，也能进行普通对话。"
+              : "你是 VOZEB PRO 统一创作 Agent，负责通过一个对话入口规划并生成文本、图片、视频和音频产物，也能进行普通对话。";
+    const surfaceRules =
+        surface === "canvas"
+            ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。"
+            : "明确要求生成或修改文本、图片、视频、音频产物时为 generation。禁止创建、更新、删除或连接任何 Canvas 节点，targetNodeId 必须省略。";
+    const projectRule =
+        surface === "drama" ? "短剧项目中的角色、场景、多镜头和依赖生产默认是 complex，并保持项目视觉与叙事一致。" : surface === "canvas" ? "Canvas 的品牌系列、多物料和依赖生产默认是 complex。" : "多物料、系列内容和依赖生产默认是 complex。";
+    const handoffRule =
+        surface === "chat"
+            ? "只有用户原文明确要求创建、建立或整理成画布/短剧项目时才填写 projectHandoff；生成短视频、短片、图片或系列媒体不等于创建项目，必须省略 projectHandoff。只做明确项目交接且无需新产物时允许 deliverables=[]。projectHandoff.assetIds 只能引用 referencedAssets，当前 Run 新生成的资产会由服务端自动合并。"
+            : "当前入口不得填写 projectHandoff。";
+    return `${identity}先结合 conversationContext 的长期摘要和近期消息理解“刚才、上一张、继续、第二个”等上下文，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。每个 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。reply 用自然中文概括推荐方向；decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。服务端给出的 conversationOnly=true 时必须判定为 conversation。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。${skillPrompt}`;
+}
+
+export function agentPlannerInput(
+    run: AgentRun,
+    conversationOnly: boolean,
+    conversationContext: CreativeConversationContext,
+    referencedAssets: CreativeAsset[],
+    availableModels: Array<{ id: string; name: string; capability: string }>,
+    settings: AuthSettings,
+) {
+    return {
+        requirement: run.prompt,
+        conversationOnly,
+        conversationContext: {
+            summary: conversationContext.summary,
+            recentMessages: conversationContext.recentMessages.map((item) => ({ role: item.role, content: item.content, sequence: item.sequence })),
+        },
+        surface: run.surface,
+        ...(run.projectId ? { projectId: run.projectId } : {}),
+        ...(run.surface === "canvas" ? { canvasSnapshot: run.snapshot || {} } : run.surface === "drama" ? { projectSnapshot: run.snapshot || {} } : {}),
+        referencedAssets: referencedAssets.map(plannerAssetSummary),
+        availableModels,
+        defaultModels: settings.defaultModels,
+        generationDefaults: settings.generationDefaults,
+    };
+}
+
+export function taskPlanSummary(task: AgentRunTask) {
+    return { id: task.id, title: task.title, type: task.type, model: task.model, dependencies: task.dependencies, referenceAssetIds: task.references?.map((item) => item.assetId).filter(Boolean) || [] };
+}
+
+export function conversationFallbackReply(surface: CreativeSurface) {
+    if (surface === "canvas") return "在的，你可以直接告诉我想了解什么，或让我操作当前画布。";
+    if (surface === "drama") return "在的，你可以直接询问当前项目，也可以让我继续创作角色、场景、分镜或媒体产物。";
+    return "在的，你可以直接告诉我想了解什么，或描述你想创作的内容。";
+}
+
+export function resolveTaskReference(requestedIds: string[] | undefined, assets: Map<string, CreativeAsset>, taskType: AgentRunTask["type"]) {
+    return resolveTaskReferences(requestedIds, assets, taskType)[0];
+}
+
+export function resolveTaskReferences(requestedIds: string[] | undefined, assets: Map<string, CreativeAsset>, taskType: AgentRunTask["type"]) {
+    const requested = Array.from(new Set((requestedIds || []).map((id) => id.trim()).filter(Boolean)))
+        .map((id) => assets.get(id))
+        .filter((asset): asset is CreativeAsset => Boolean(asset));
+    return requested.filter((asset) => {
+        if (taskType === "image") return asset.type === "image" && Boolean(assetAccessUrl(asset));
+        if (taskType === "video") return asset.type !== "text" && Boolean(assetAccessUrl(asset));
+        if (taskType === "audio") return asset.type === "audio" || asset.type === "text";
+        return true;
+    });
+}
+
+export function assetAccessUrl(asset?: CreativeAsset) {
+    if (!asset) return undefined;
+    return [asset.remoteUrl, asset.serverUrl].find((value) => typeof value === "string" && value.trim() && !value.startsWith("data:"))?.trim();
+}
+
+export function creativeAssetContext(asset: CreativeAsset) {
+    const content = asset.textContent?.trim();
+    const url = assetAccessUrl(asset);
+    return [`资产 ID：${asset.id}`, `类型：${asset.type}`, `标题：${asset.title}`, content ? `文本：${content.slice(0, 2000)}` : "", url ? `媒体地址：${url}` : ""].filter(Boolean).join("；");
+}
+
+export function agentPlanReply(plan: AgentPlan, tasks: AgentRunTask[], surface: CreativeSurface) {
+    const summary = plan.reply?.trim() || (surface === "canvas" ? "我已经根据你的目标和当前画布整理好执行方案。" : surface === "drama" ? "我已经结合当前短剧项目整理好执行方案。" : "我已经根据你的需求整理好执行方案。");
+    const decisions = (plan.decisions || []).slice(0, 6).map((item) => `- ${item.label}：${item.value}。${item.reason}`);
+    const order = tasks.map((task) => task.title).join(" → ");
+    const taskReply = tasks.length ? `已安排 ${tasks.length} 个创作任务，将按依赖顺序执行：${order}。` : "";
+    const handoffReply = surface === "chat" && plan.projectHandoff ? `完成后将创建${plan.projectHandoff.surface === "canvas" ? "画布" : "短剧"}项目「${plan.projectHandoff.title}」。` : "";
+    return [summary, decisions.length ? `我的选择：\n${decisions.join("\n")}` : "", taskReply, handoffReply].filter(Boolean).join("\n\n");
+}
+
+function plannerAssetSummary(asset: CreativeAsset) {
+    return {
+        id: asset.id,
+        type: asset.type,
+        title: asset.title,
+        ...(asset.textContent ? { textContent: asset.textContent.slice(0, 2000) } : {}),
+        ...(assetAccessUrl(asset) ? { url: assetAccessUrl(asset) } : {}),
+        ...(asset.mimeType ? { mimeType: asset.mimeType } : {}),
+    };
+}

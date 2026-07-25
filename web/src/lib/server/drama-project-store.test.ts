@@ -1,0 +1,117 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { DramaProject } from "@/lib/drama-project-contract";
+
+const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>() }));
+
+vi.mock("@/lib/server/database", () => ({
+    ensurePostgresSchema: vi.fn(),
+    getDatabaseProvider: vi.fn(() => "file"),
+    postgresQuery: vi.fn(),
+}));
+vi.mock("@/lib/server/data-adapter", () => ({
+    readJsonDataFile: vi.fn(async (name: string, fallback: unknown) => structuredClone(mocks.files.has(name) ? mocks.files.get(name) : fallback)),
+    writeJsonDataFile: vi.fn(async (name: string, value: unknown) => {
+        mocks.files.set(name, structuredClone(value));
+    }),
+}));
+
+import { createDramaProject, deleteDramaProject, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "./drama-project-store";
+
+describe("drama project file provider", () => {
+    beforeEach(() => mocks.files.clear());
+
+    it("keeps projects isolated by user across create, update and delete", async () => {
+        await createDramaProject("user-one", project("one", "项目一"));
+        await createDramaProject("user-two", project("two", "项目二"));
+
+        const summaries = await listDramaProjectSummaries("user-one");
+        expect(summaries).toMatchObject([{ id: "one", title: "项目一", episodeCount: 1, shotCount: 0 }]);
+        expect(summaries[0]).not.toHaveProperty("episodes");
+        expect(await getDramaProject("two", "user-one")).toBeNull();
+
+        await expect(updateDramaProject("user-one", project("two", "越权修改"))).rejects.toMatchObject({ status: 404 });
+        expect(await deleteDramaProject("user-one", "two")).toBe(false);
+        expect(await deleteDramaProject("user-one", "one")).toBe(true);
+        expect(await listDramaProjectSummaries("user-one")).toEqual([]);
+        expect(await listDramaProjectSummaries("user-two")).toHaveLength(1);
+    });
+
+    it("persists multi-episode task state in the aggregate snapshot", async () => {
+        const original = project("one", "项目一");
+        await createDramaProject("user-one", original);
+        const updated: DramaProject = {
+            ...original,
+            activeEpisodeId: "episode-two",
+            episodes: [
+                ...original.episodes,
+                {
+                    id: "episode-two",
+                    title: "第 2 集",
+                    script: "续集",
+                    outline: "",
+                    hook: "",
+                    nextPreview: "",
+                    sourceRange: "",
+                    reviewStatus: "visual_ready",
+                    shots: [
+                        {
+                            id: "shot-two",
+                            order: 1,
+                            title: "镜头 01",
+                            description: "夜景",
+                            sourceText: "夜景",
+                            shotBoundary: "场景变化",
+                            dialogue: "出发",
+                            narration: "",
+                            utterances: [],
+                            imagePrompt: "夜景分镜",
+                            videoPrompt: "镜头推进",
+                            cameraMotion: "推进",
+                            duration: 5,
+                            characterIds: [],
+                            propIds: [],
+                            clueIds: [],
+                            storyboardStatus: "success",
+                            storyboardTaskId: "image-task",
+                            storyboardImageUrl: "/api/generation-log-assets/shot.png",
+                            generationStatus: "running",
+                            generationTaskId: "video-task",
+                            audioStatus: "queued",
+                        },
+                    ],
+                    renderTask: { id: "render-task", status: "pending" },
+                },
+            ],
+            updatedAt: new Date(Date.now() + 1000).toISOString(),
+        };
+
+        await updateDramaProject("user-one", updated);
+        expect(await getDramaProject("one", "user-one")).toMatchObject({
+            activeEpisodeId: "episode-two",
+            episodes: [{ id: "episode-one" }, { id: "episode-two", shots: [{ storyboardTaskId: "image-task", generationTaskId: "video-task" }], renderTask: { id: "render-task" } }],
+        });
+    });
+});
+
+function project(id: string, title: string): DramaProject {
+    const now = new Date().toISOString();
+    return {
+        id,
+        title,
+        summary: "",
+        style: "电影感",
+        ratio: "9:16",
+        status: "active",
+        creativeConversationId: `conversation-${id}`,
+        activeEpisodeId: "episode-one",
+        characters: [],
+        scenes: [],
+        props: [],
+        clues: [],
+        defaultVideoMode: "storyboard",
+        episodes: [{ id: "episode-one", title: "第 1 集", script: "", outline: "", hook: "", nextPreview: "", sourceRange: "", reviewStatus: "draft", shots: [] }],
+        createdAt: now,
+        updatedAt: now,
+    };
+}

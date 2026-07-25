@@ -1,0 +1,654 @@
+@media (width>=1024px) and (width<=1279px) {
+    .landing-home-v2 .landing-hero-layout,
+    .landing-home-v2 .landing-showcase-shell,
+    .landing-home-v2 .landing-footer-shell {
+        width: min(1180px, 100vw - 64px) !important;
+        max-width: 1180px !important;
+    }
+    .landing-home-v2 .landing-hero-layout {
+        grid-template-columns: minmax(0, 1fr) minmax(386px, 410px) !important;
+        gap: 36px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview {
+        width: 410px !important;
+        max-width: 410px !important;
+    }
+}
+@media (width>=1280px) {
+    .landing-home-v2 .landing-hero-layout {
+        min-height: calc(100dvh - 100px) !important;
+        padding: 12px 0 18px !important;
+    }
+    .landing-home-v2 .landing-hero-description {
+        margin-top: 22px !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid {
+        width: 100% !important;
+        max-width: 680px !important;
+        margin-top: 24px !important;
+    }
+    .landing-home-v2 .landing-hero-chain {
+        max-width: 680px !important;
+        margin-top: 24px !important;
+    }
+    .landing-home-v2 .landing-moon-hero-actions {
+        max-width: 680px !important;
+        margin-top: 18px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview,
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window {
+        height: 590px !important;
+        min-height: 590px !important;
+        max-height: 590px !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-workbench-preview {
+        align-self: center !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-canvas {
+        height: 534px !important;
+        min-height: 534px !important;
+        max-height: 534px !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-creative-board {
+        height: 500px !important;
+        min-height: 500px !important;
+        max-height: 500px !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-creative-stage {
+        height: 230px !important;
+        min-height: 230px !important;
+        max-height: 230px !important;
+    }
+    .landing-home-v2 .landing-creative-output-wall {
+        height: 230px !important;
+        max-height: 230px !important;
+    }
+}
+@media (width>=1536px) {
+    .landing-home-v2 .landing-hero-layout,
+    .landing-home-v2 .landing-showcase-shell,
+    .landing-home-v2 .landing-footer-shell {
+        width: min(1560px, 100vw - 120px) !important;
+        max-width: 1560px !important;
+    }
+    .landing-home-v2 .landing-hero-title,
+    .landing-home-v2 .landing-hero-description,
+    .landing-home-v2 .landing-hero-proof-grid,
+    .landing-home-v2 .landing-hero-chain,
+    .landing-home-v2 .landing-moon-hero-actions {
+        max-width: 820px !important;
+    }
+    .landing-home-v2 .landing-hero-description {
+        font-size: clamp(1.12rem, 0.95vw, 1.26rem) !important;
+    }
+    .landing-home-v2 .landing-workbench-preview {
+        width: 540px !important;
+        max-width: 540px !important;
+        height: clamp(620px, 63vh, 680px) !important;
+        min-height: 620px !important;
+        max-height: 680px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window {
+        border-radius: 28px !important;
+        height: 100% !important;
+        min-height: 0 !important;
+        max-height: none !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window-top {
+        height: 58px !important;
+        padding-inline: 18px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-canvas {
+        height: calc(100% - 58px) !important;
+        min-height: 0 !important;
+        max-height: none !important;
+    }
+    .landing-home-v2 .landing-creative-board {
+        border-radius: 20px !important;
+        gap: 13px !important;
+        height: 100% !important;
+        min-height: 0 !important;
+        max-height: none !important;
+    }
+    .landing-home-v2 .landing-creative-stage {
+        height: clamp(244px, 25vh, 284px) !important;
+        min-height: 244px !important;
+        max-height: 284px !important;
+    }
+    .landing-home-v2 .landing-creative-output-wall {
+        grid-template-rows: minmax(118px, 1fr) minmax(112px, 0.96fr) !important;
+        height: 100% !important;
+        min-height: 0 !important;
+        max-height: none !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-featured {
+        grid-template-columns: 158px minmax(0, 1fr) !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-featured .landing-creative-output-art {
+        width: 158px !important;
+        height: 82px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-featured strong {
+        font-size: 16px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card:not(.is-featured) {
+        grid-template-columns: 60px minmax(0, 1fr) !important;
+    }
+    .landing-home-v2 .landing-creative-output-card:not(.is-featured) .landing-creative-output-art {
+        width: 60px !important;
+        height: 60px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card:not(.is-featured) strong {
+        font-size: 15px !important;
+    }
+    .landing-home-v2 .landing-creative-prompt {
+        min-height: 58px !important;
+    }
+    .landing-home-v2 .landing-creative-pipeline-item {
+        min-height: 50px !important;
+    }
+}
+@media (width>=1024px) {
+    .landing-home-v2 .landing-hero-copy-panel {
+        text-align: center !important;
+        justify-items: center !important;
+        display: grid !important;
+    }
+    .landing-home-v2 .landing-hero-badge {
+        margin-inline: auto !important;
+    }
+    .landing-home-v2 .landing-hero-title {
+        text-align: center !important;
+        margin-inline: auto !important;
+    }
+    .landing-home-v2 .landing-hero-description {
+        display: none !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window {
+        background: linear-gradient(#fffffff5, #f8fafceb) !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window:before,
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window:after {
+        opacity: 0.24 !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-canvas {
+        background: linear-gradient(#eff6ff7a, #ffffff4d) !important;
+        padding: clamp(12px, 1.1vw, 16px) !important;
+        display: flex !important;
+    }
+    .landing-home-v2 .landing-creative-board {
+        background: linear-gradient(#fffffff5, #f8fafce6) !important;
+        border-radius: 18px !important;
+        width: 100% !important;
+        height: 100% !important;
+        box-shadow:
+            0 22px 58px #0f172a14,
+            inset 0 1px #ffffffeb !important;
+    }
+    .landing-home-v2 .landing-creative-output-art:before,
+    .landing-home-v2 .landing-creative-output-art:after {
+        display: none !important;
+    }
+    .landing-home-v2 .landing-creative-output-art {
+        isolation: auto !important;
+        border: 1px solid #0f172a0f !important;
+        overflow: visible !important;
+        box-shadow:
+            inset 0 1px #ffffffd6,
+            0 14px 30px #0f172a0f !important;
+    }
+    .landing-home-v2 .landing-creative-output-art svg {
+        stroke-width: 2.1px !important;
+        width: 44% !important;
+        height: 44% !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-commerce .landing-creative-output-art {
+        background: linear-gradient(135deg, #e0f2feeb, #fef3c7c7) !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-comic .landing-creative-output-art {
+        background: linear-gradient(135deg, #e0e7fff2, #ddd6fec2) !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-beauty .landing-creative-output-art {
+        background: linear-gradient(135deg, #fce7f3e0, #ccfbf1d1) !important;
+    }
+}
+@media (width>=1536px) {
+    .landing-home-v2 .landing-workbench-preview .landing-moon-canvas {
+        padding: 14px !important;
+    }
+    .landing-home-v2 .landing-creative-board {
+        padding: 17px !important;
+    }
+}
+@media (width>=1024px) {
+    .landing-home-v2 .landing-hero-copy-panel {
+        align-content: center !important;
+        justify-self: center !important;
+        width: min(100%, 940px) !important;
+        padding-top: clamp(4px, 1.4vh, 18px) !important;
+    }
+    .landing-home-v2 .landing-hero-badge {
+        border-radius: 13px !important;
+        height: 46px !important;
+        padding: 0 22px !important;
+        font-size: 15px !important;
+        font-weight: 800 !important;
+    }
+    .landing-home-v2 .landing-hero-badge svg {
+        width: 18px !important;
+        height: 18px !important;
+    }
+    .landing-home-v2 .landing-hero-title {
+        line-height: 0.8 !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        gap: clamp(18px, 2vw, 24px) !important;
+        width: min(100%, 920px) !important;
+        max-width: 920px !important;
+        margin-top: clamp(46px, 5.8vh, 66px) !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid span {
+        min-height: 62px !important;
+        font-size: 19px !important;
+    }
+    .landing-home-v2 .landing-hero-chain {
+        grid-template-columns: repeat(6, minmax(82px, 1fr)) !important;
+        justify-items: center !important;
+        gap: 0 !important;
+        width: min(100%, 820px) !important;
+        max-width: 820px !important;
+        margin-top: clamp(28px, 3.8vh, 42px) !important;
+    }
+    .landing-home-v2 .landing-hero-chain:before {
+        left: 38px !important;
+        right: 38px !important;
+    }
+    .landing-home-v2 .landing-hero-chain-item {
+        width: 86px !important;
+        min-width: 86px !important;
+        font-size: 16px !important;
+    }
+    .landing-home-v2 .landing-hero-chain-item span {
+        width: 52px !important;
+        height: 52px !important;
+        margin-bottom: 13px !important;
+        font-size: 16px !important;
+    }
+    .landing-home-v2 .landing-moon-hero-actions {
+        justify-content: center !important;
+        width: min(100%, 820px) !important;
+        max-width: 820px !important;
+        margin-top: clamp(22px, 3.2vh, 34px) !important;
+    }
+}
+@media (width>=1536px) {
+    .landing-home-v2 .landing-hero-layout {
+        grid-template-columns: minmax(720px, 1fr) minmax(520px, 540px) !important;
+        gap: clamp(48px, 3.6vw, 68px) !important;
+    }
+    .landing-home-v2 .landing-hero-copy-panel {
+        width: 100% !important;
+        max-width: 980px !important;
+    }
+    .landing-home-v2 .landing-hero-title {
+        font-size: clamp(9.4rem, 9.8vw, 11.2rem) !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid {
+        max-width: 940px !important;
+    }
+    .landing-home-v2 .landing-hero-chain,
+    .landing-home-v2 .landing-moon-hero-actions {
+        width: min(100%, 820px) !important;
+        max-width: 820px !important;
+    }
+    .landing-home-v2 .landing-hero-chain {
+        grid-template-columns: repeat(6, minmax(82px, 1fr)) !important;
+    }
+}
+@media (width<=1023px) {
+    .landing-home-v2 .landing-hero-badge span {
+        white-space: nowrap !important;
+    }
+}
+.landing-home-v2 .landing-hero-heading {
+    width: fit-content;
+    max-width: 100%;
+    position: relative;
+    transform: translateY(18px);
+}
+.landing-home-v2 .landing-hero-heading .landing-hero-badge {
+    z-index: 1;
+    white-space: nowrap;
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0 !important;
+    transform: translate(18%, -105%) !important;
+}
+@media (width>=1024px) {
+    .landing-home-v2 .landing-hero-heading {
+        transform: translateY(76px);
+    }
+    .landing-home-v2 .landing-hero-heading .landing-hero-badge {
+        transform: translate(108%, -33%) !important;
+    }
+    .landing-home-v2 .landing-hero-title {
+        margin-top: 0 !important;
+        font-size: clamp(8.4rem, 11.4vw, 13rem) !important;
+    }
+}
+.landing-home-v2 .landing-hero-heading .landing-hero-badge {
+    background: #ffffffd1 !important;
+    border-color: #0ea5e933 !important;
+    height: 36px !important;
+    min-height: 36px !important;
+    padding: 0 14px !important;
+    font-size: 13px !important;
+}
+.landing-home-v2 .landing-hero-heading .landing-hero-badge:hover {
+    color: #0369a1 !important;
+    background: #fffffff5 !important;
+    border-color: #0ea5e96b !important;
+    box-shadow: 0 10px 26px #0ea5e929 !important;
+}
+.landing-home-v2 .landing-hero-heading .landing-hero-badge svg {
+    transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+}
+.dark .landing-home-v2 .landing-hero-heading .landing-hero-badge {
+    background: #0f172ac2 !important;
+    border-color: #7dd3fc3d !important;
+}
+.dark .landing-home-v2 .landing-hero-heading .landing-hero-badge:hover {
+    color: #bae6fd !important;
+    background: #0f172af0 !important;
+    border-color: #7dd3fc7a !important;
+}
+@media (width<=1023px) {
+    .landing-home-v2 .landing-moon-hero {
+        min-height: auto !important;
+    }
+    .landing-home-v2 .landing-hero-layout {
+        gap: 38px !important;
+        min-height: auto !important;
+        padding: 34px 16px 56px !important;
+    }
+    .landing-home-v2 .landing-hero-copy-panel {
+        text-align: center !important;
+        flex-direction: column !important;
+        justify-self: center !important;
+        align-items: center !important;
+        width: 100% !important;
+        max-width: 560px !important;
+        display: flex !important;
+    }
+    .landing-home-v2 .landing-hero-heading {
+        margin-top: 34px !important;
+        transform: none !important;
+    }
+    .landing-home-v2 .landing-hero-heading .landing-hero-badge {
+        height: 32px !important;
+        min-height: 32px !important;
+        padding-inline: 12px !important;
+        font-size: 12px !important;
+        transform: translate(4%, -92%) !important;
+    }
+    .landing-home-v2 .landing-hero-heading .landing-hero-badge svg {
+        width: 14px !important;
+        height: 14px !important;
+    }
+    .landing-home-v2 .landing-hero-title {
+        margin: 0 !important;
+        font-size: clamp(4.35rem, 20vw, 6.4rem) !important;
+        line-height: 0.86 !important;
+    }
+    .landing-home-v2 .landing-hero-description {
+        text-align: center !important;
+        width: min(100%, 520px) !important;
+        margin-top: 28px !important;
+        font-size: 14px !important;
+        line-height: 1.8 !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+        width: min(100%, 420px) !important;
+        max-width: 420px !important;
+        padding: 6px !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid span {
+        min-height: 42px !important;
+        font-size: 14px !important;
+    }
+    .landing-home-v2 .landing-moon-hero-actions {
+        justify-content: center !important;
+        width: 100% !important;
+        margin-top: 24px !important;
+    }
+    .landing-home-v2 .landing-moon-primary.ant-btn.landing-hero-cta,
+    .landing-home-v2 .landing-moon-primary.ant-btn-primary.landing-hero-cta {
+        width: min(100%, 240px) !important;
+        min-width: 0 !important;
+        height: 52px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview {
+        width: min(100%, 430px) !important;
+        height: 520px !important;
+        min-height: 520px !important;
+        max-height: 520px !important;
+        margin: 0 auto !important;
+        transform: none !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window {
+        border-radius: 22px !important;
+        height: 520px !important;
+        min-height: 520px !important;
+        max-height: 520px !important;
+        padding-bottom: 0 !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window-top {
+        height: 48px !important;
+        padding-inline: 14px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window-top strong {
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 12rem !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-canvas {
+        height: calc(100% - 48px) !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        padding: 10px !important;
+    }
+    .landing-home-v2 .landing-creative-board {
+        border-radius: 16px !important;
+        height: 100% !important;
+        min-height: 0 !important;
+        padding: 13px !important;
+    }
+    .landing-home-v2 .landing-creative-board-head strong {
+        font-size: 20px !important;
+    }
+    .landing-home-v2 .landing-creative-status {
+        padding: 7px 9px !important;
+        font-size: 11px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card {
+        min-width: 0 !important;
+        padding: 9px !important;
+    }
+    .landing-home-v2 .landing-creative-prompt {
+        padding: 9px 11px !important;
+    }
+    .landing-home-v2 .landing-creative-prompt strong {
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 220px !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-creative-pipeline {
+        gap: 6px !important;
+    }
+    .landing-home-v2 .landing-creative-pipeline-item {
+        min-height: 42px !important;
+        padding: 8px !important;
+    }
+}
+@media (width<=480px) {
+    .landing-home-v2 .landing-moon-header,
+    .landing-home-v2 .landing-hero-layout {
+        padding-inline: 14px !important;
+    }
+    .landing-home-v2 .landing-hero-title {
+        font-size: clamp(4.1rem, 22vw, 5.5rem) !important;
+    }
+    .landing-home-v2 .landing-hero-description {
+        max-width: 340px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview {
+        width: 100% !important;
+    }
+}
+.landing-home-v2 .landing-workbench-preview,
+.landing-home-v2 .landing-workbench-preview .landing-moon-window {
+    filter: none !important;
+}
+.landing-home-v2 .landing-workbench-preview .landing-moon-window {
+    box-shadow: inset 0 0 0 1px #ffffff80 !important;
+}
+.dark .landing-home-v2 .landing-workbench-preview .landing-moon-window {
+    box-shadow: inset 0 0 0 1px #ffffff14 !important;
+}
+.landing-home-v2 .landing-workbench-preview .landing-moon-window-top > span:first-of-type {
+    background: #ff5f57 !important;
+    box-shadow: inset 0 0 0 1px #991b1b29 !important;
+}
+.landing-home-v2 .landing-workbench-preview .landing-moon-window-top > span:nth-of-type(2) {
+    background: #febc2e !important;
+    box-shadow: inset 0 0 0 1px #a1620724 !important;
+}
+.landing-home-v2 .landing-workbench-preview .landing-moon-window-top > span:nth-of-type(3) {
+    background: #28c840 !important;
+    box-shadow: inset 0 0 0 1px #15803d29 !important;
+}
+@media (width<=1023px) {
+    .landing-home-v2 .landing-hero-description {
+        display: none !important;
+    }
+    .landing-home-v2 .landing-hero-proof-grid {
+        margin-top: 32px !important;
+    }
+    .landing-home-v2 .landing-hero-chain {
+        grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+        gap: 0 !important;
+        width: min(100%, 520px) !important;
+        max-width: 520px !important;
+        margin-top: 28px !important;
+        display: grid !important;
+        position: relative !important;
+    }
+    .landing-home-v2 .landing-hero-chain:before {
+        left: 8% !important;
+        right: 8% !important;
+    }
+    .landing-home-v2 .landing-hero-chain-item {
+        white-space: nowrap !important;
+        width: auto !important;
+        min-width: 0 !important;
+        font-size: 11px !important;
+    }
+    .landing-home-v2 .landing-hero-chain-item span {
+        width: 34px !important;
+        height: 34px !important;
+        margin-bottom: 8px !important;
+        font-size: 11px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview,
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window {
+        height: 620px !important;
+        min-height: 620px !important;
+        max-height: 620px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window-top em {
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        margin-left: auto !important;
+        display: block !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-creative-stage {
+        grid-template-columns: minmax(112px, 0.72fr) minmax(0, 1.28fr) !important;
+        gap: 8px !important;
+        min-height: 238px !important;
+        display: grid !important;
+    }
+    .landing-home-v2 .landing-creative-input-card {
+        min-width: 0 !important;
+        padding: 10px !important;
+        display: flex !important;
+    }
+    .landing-home-v2 .landing-creative-input-card strong {
+        font-size: 14px !important;
+    }
+    .landing-home-v2 .landing-creative-input-card p {
+        font-size: 10px !important;
+        line-height: 1.5 !important;
+    }
+    .landing-home-v2 .landing-creative-output-wall {
+        grid-template-rows: 112px 112px !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        gap: 8px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card.is-featured {
+        grid-column: 1/-1 !important;
+    }
+    .landing-home-v2 .landing-creative-output-card small {
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        display: block !important;
+        overflow: hidden !important;
+    }
+    .landing-home-v2 .landing-creative-prompt {
+        min-height: 56px !important;
+    }
+    .landing-home-v2 .landing-creative-pipeline {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        display: grid !important;
+    }
+}
+@media (width<=480px) {
+    .landing-home-v2 .landing-hero-chain {
+        width: 100% !important;
+    }
+    .landing-home-v2 .landing-hero-chain-item {
+        font-size: 10px !important;
+    }
+    .landing-home-v2 .landing-hero-chain-item span {
+        width: 30px !important;
+        height: 30px !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window-top strong {
+        max-width: 9.5rem !important;
+    }
+    .landing-home-v2 .landing-workbench-preview .landing-moon-window-top em {
+        max-width: 7rem !important;
+        font-size: 10px !important;
+    }
+    .landing-home-v2 .landing-creative-stage {
+        grid-template-columns: 106px minmax(0, 1fr) !important;
+    }
+    .landing-home-v2 .landing-creative-output-card {
+        padding: 7px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card strong {
+        font-size: 12px !important;
+    }
+    .landing-home-v2 .landing-creative-output-card small {
+        font-size: 9px !important;
+    }
+}

@@ -1,0 +1,93 @@
+import { nanoid } from "nanoid";
+
+import { getNodeSpec } from "../constants";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ViewportTransform } from "../types";
+
+export type CanvasAgentOp =
+    | { type: "add_node"; id?: string; nodeType?: CanvasNodeType; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
+    | { type: "update_node"; id: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
+    | { type: "delete_node"; id?: string; ids?: string[]; nodeType?: CanvasNodeType }
+    | { type: "delete_connections"; id?: string; ids?: string[]; all?: boolean }
+    | { type: "connect_nodes"; id?: string; fromNodeId: string; toNodeId: string }
+    | { type: "set_viewport"; viewport: ViewportTransform }
+    | { type: "select_nodes"; ids: string[] }
+    | { type: "run_generation"; nodeId: string; mode?: "text" | "image" | "video" | "audio"; prompt?: string };
+
+export type CanvasAgentSnapshot = {
+    projectId: string;
+    title: string;
+    nodes: CanvasNodeData[];
+    connections: CanvasConnection[];
+    selectedNodeIds: string[];
+    viewport: ViewportTransform;
+};
+
+export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasAgentOp[]) {
+    let nodes = snapshot.nodes;
+    let connections = snapshot.connections;
+    let selectedNodeIds = snapshot.selectedNodeIds;
+    let viewport = snapshot.viewport;
+
+    (Array.isArray(ops) ? ops : []).forEach((op, index) => {
+        if (!op?.type) return;
+        if (op.type === "add_node") {
+            const nodeType = Object.values(CanvasNodeType).includes(op.nodeType as CanvasNodeType) ? op.nodeType! : CanvasNodeType.Text;
+            const spec = getNodeSpec(nodeType);
+            const existing = op.id ? nodes.find((node) => node.id === op.id) : undefined;
+            if (existing) {
+                nodes = nodes.map((node) => (node.id === op.id ? { ...node, type: nodeType, title: op.title || node.title, metadata: { ...node.metadata, ...op.metadata } } : node));
+                selectedNodeIds = [existing.id];
+                return;
+            }
+            const requestedPosition = op.position || { x: op.x ?? index * 36, y: op.y ?? index * 36 };
+            const position = op.id?.startsWith("output-agent-") ? findFreeNodePosition(nodes, requestedPosition, op.width || spec.width, op.height || spec.height) : requestedPosition;
+            const node: CanvasNodeData = {
+                id: op.id || `${nodeType}-${Date.now()}-${index}`,
+                type: nodeType,
+                title: op.title || spec.title,
+                position,
+                width: op.width || spec.width,
+                height: op.height || spec.height,
+                metadata: { ...spec.metadata, ...op.metadata },
+            };
+            nodes = [...nodes, node];
+            selectedNodeIds = [node.id];
+        }
+        if (op.type === "update_node") {
+            if (!op.id) return;
+            nodes = nodes.map((node) => (node.id === op.id ? { ...node, ...op.patch, metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata } } : node));
+        }
+        if (op.type === "delete_node") {
+            const ids = new Set(op.ids || (op.id ? [op.id] : op.nodeType ? nodes.filter((node) => node.type === op.nodeType).map((node) => node.id) : []));
+            nodes = nodes.filter((node) => !ids.has(node.id));
+            connections = connections.filter((conn) => !ids.has(conn.fromNodeId) && !ids.has(conn.toNodeId));
+            selectedNodeIds = selectedNodeIds.filter((id) => !ids.has(id));
+        }
+        if (op.type === "delete_connections") {
+            const ids = new Set(op.ids || (op.id ? [op.id] : []));
+            connections = op.all ? [] : connections.filter((conn) => !ids.has(conn.id));
+        }
+        if (op.type === "connect_nodes") {
+            if (!op.fromNodeId || !op.toNodeId) return;
+            const exists = connections.some((conn) => conn.fromNodeId === op.fromNodeId && conn.toNodeId === op.toNodeId);
+            const hasNodes = nodes.some((node) => node.id === op.fromNodeId) && nodes.some((node) => node.id === op.toNodeId);
+            if (!exists && hasNodes) connections = [...connections, { id: op.id || nanoid(), fromNodeId: op.fromNodeId, toNodeId: op.toNodeId }];
+        }
+        if (op.type === "set_viewport" && op.viewport) viewport = op.viewport;
+        if (op.type === "select_nodes") selectedNodeIds = (op.ids || []).filter((id) => nodes.some((node) => node.id === id));
+    });
+
+    return { ...snapshot, nodes, connections, selectedNodeIds, viewport };
+}
+
+function findFreeNodePosition(nodes: CanvasNodeData[], start: { x: number; y: number }, width: number, height: number) {
+    const gap = 36;
+    for (let step = 0; step < 200; step += 1) {
+        const column = step % 5;
+        const row = Math.floor(step / 5);
+        const candidate = { x: start.x + column * (width + gap), y: start.y + row * (height + gap) };
+        const overlaps = nodes.some((node) => candidate.x < node.position.x + node.width + gap && candidate.x + width + gap > node.position.x && candidate.y < node.position.y + node.height + gap && candidate.y + height + gap > node.position.y);
+        if (!overlaps) return candidate;
+    }
+    return { x: start.x, y: start.y + nodes.length * (height + gap) };
+}

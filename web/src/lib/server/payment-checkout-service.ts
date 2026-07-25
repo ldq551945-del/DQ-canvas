@@ -1,0 +1,37 @@
+import { BillingInputError } from "@/lib/server/billing-errors";
+import { expirePendingBillingOrders } from "@/lib/server/billing-order-expiration-service";
+import { isAutomaticallyExpiredOrder } from "@/lib/server/billing-service-helpers";
+import { createPostgresRepositories, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
+import { getPaymentRuntimeConfig, isPaymentRuntimeProviderCheckoutReady } from "@/lib/server/payment-config-store";
+import { checkoutFromMetadata, checkoutMetadata, createProviderCheckout, mergeMetadata, normalizeId, normalizeProvider } from "./payment-checkout-providers";
+import type { CreatePaymentCheckoutOptions } from "./payment-checkout-types";
+
+export async function createPaymentCheckoutForOrder(orderId: string, options: CreatePaymentCheckoutOptions = {}) {
+    if (!isPostgresDatabaseEnabled()) throw new BillingInputError("支付下单需要启用 PostgreSQL", 501);
+    await expirePendingBillingOrders({ orderId });
+
+    const paymentConfig = await getPaymentRuntimeConfig();
+    return withPostgresTransaction(async (client) => {
+        const repos = createPostgresRepositories(client);
+        const order = await repos.billing.getOrderById(normalizeId(orderId), true);
+        if (!order || (options.userId && order.userId !== options.userId)) throw new BillingInputError("订单不存在", 404);
+        if (isAutomaticallyExpiredOrder(order)) throw new BillingInputError("订单已过期", 409);
+        if (order.status !== "pending") throw new BillingInputError("当前订单状态不能发起支付", 409);
+        if (order.expiresAt && Date.parse(order.expiresAt) <= Date.now()) throw new BillingInputError("订单已过期", 409);
+
+        const provider = normalizeProvider(options.provider || order.provider);
+        if (!isPaymentRuntimeProviderCheckoutReady(paymentConfig, provider)) throw new BillingInputError("该支付渠道未启用或配置不完整", 400);
+        const existing = checkoutFromMetadata(order, provider);
+        if (existing) return existing;
+
+        const checkout = await createProviderCheckout(provider, order, options, paymentConfig);
+        const metadata = mergeMetadata(order.metadata, { checkout: checkoutMetadata(checkout) });
+        await repos.billing.updateOrder(order.id, {
+            provider,
+            providerOrderId: checkout.providerOrderId,
+            providerPaymentId: checkout.providerPaymentId,
+            metadata,
+        });
+        return checkout;
+    });
+}

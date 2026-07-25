@@ -2,16 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     checkMediaProxyRateLimit: vi.fn(),
+    consumeUserPoints: vi.fn(),
     getAuthSettings: vi.fn(),
+    refundUserPoints: vi.fn(),
     safeUrl: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
 vi.mock("@/lib/auth/store", () => ({
-    consumeUserPoints: vi.fn(),
+    consumeUserPoints: mocks.consumeUserPoints,
     getAuthSettings: mocks.getAuthSettings,
     isQuotaExceededError: vi.fn(() => false),
-    refundUserPoints: vi.fn(),
+    refundUserPoints: mocks.refundUserPoints,
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 vi.mock("@/lib/server/security", () => ({
@@ -27,6 +29,8 @@ const context = { params: Promise.resolve({ channelId: "channel-one", path: ["_m
 describe("system media proxy", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
         mocks.safeUrl.mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
@@ -101,6 +105,8 @@ describe("system media proxy", () => {
 describe("GlobalAiOpc native text proxy", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
@@ -131,6 +137,28 @@ describe("GlobalAiOpc native text proxy", () => {
         expect(new Headers(init?.headers).get("x-goog-api-key")).toBeNull();
         expect(JSON.parse(String(init?.body))).toMatchObject({ contents: [{ role: "user", parts: [{ text: "hello" }] }] });
         expect(await response.json()).toMatchObject({ choices: [{ message: { role: "assistant", content: "OK" } }] });
+    });
+
+    it("charges text calls with the logical model id instead of the upstream alias", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "writer",
+                    name: "写作模型",
+                    capability: "text",
+                    enabled: true,
+                    bindings: [{ id: "writer-binding", channelId: "channel-one", upstreamModel: "vendor-text", enabled: true, priority: 1 }],
+                },
+            ],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-text"] }],
+        });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+
+        const response = await POST(chatRequest({ model: "vendor-text", messages: [{ role: "user", content: "hello" }] }), textContext());
+
+        expect(response.status).toBe(200);
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer", 1, "text", undefined);
     });
 
     it("routes GlobalAiOpc media models from one catalog channel to the matching service endpoint", async () => {

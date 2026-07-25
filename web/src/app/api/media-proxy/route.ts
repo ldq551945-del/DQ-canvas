@@ -68,7 +68,7 @@ async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | n
         const response = await fetch(current, {
             method,
             headers: {
-                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.1",
+                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.2",
                 ...(range ? { Range: range } : {}),
             },
             cache: "no-store",
@@ -88,6 +88,9 @@ function mediaHeaders(source: Headers) {
     const contentType = source.get("content-type") || "application/octet-stream";
     headers.set("Content-Type", contentType);
     headers.set("Cache-Control", "private, max-age=600");
+    headers.set("Cross-Origin-Resource-Policy", "same-site");
+    headers.set("X-Content-Type-Options", "nosniff");
+    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
     for (const key of ["content-length", "content-range", "accept-ranges", "last-modified", "etag"]) {
         const value = source.get(key);
         if (value) headers.set(key, value);

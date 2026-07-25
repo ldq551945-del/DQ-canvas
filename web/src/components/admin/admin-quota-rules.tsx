@@ -7,6 +7,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { DEFAULT_MODEL_POINT_COST_KEY } from "@/constant/credits";
 import type { AuthSettings } from "@/lib/auth/store";
 import type { LogicalModelCapability } from "@/lib/auth/store";
+import { configuredModelPointCostKeys, resolveConfiguredModelPointCost } from "@/lib/model-point-cost";
 import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 
@@ -58,9 +59,8 @@ export function QuotaRuleTable({
     onGenerationPointMultiplierDelete: (group: keyof AuthSettings["generationPointMultipliers"], key: string) => void;
 }) {
     const [activeCapability, setActiveCapability] = useState<LogicalModelCapability>("text");
-    const channelModels = uniqueList(settings.systemChannels.flatMap((channel) => channel.models));
-    const models = uniqueList([...channelModels, ...Object.keys(settings.modelPointCosts || {}).filter((model) => model !== DEFAULT_MODEL_POINT_COST_KEY)]);
-    const channelModelSet = new Set(channelModels);
+    const models = listPointCostModels(settings);
+    const managedModelSet = new Set(settings.logicalModels.length ? settings.logicalModels.map((model) => model.id) : settings.systemChannels.flatMap((channel) => channel.models));
     const groupedModels = modelCapabilityOptions.map((option) => ({ ...option, models: models.filter((model) => resolvePointCostModelCapability(settings, model) === option.value) }));
     const visibleModels = groupedModels.find((group) => group.value === activeCapability)?.models || [];
     return (
@@ -108,24 +108,48 @@ export function QuotaRuleTable({
                 <div className="mt-3 text-[11px] text-stone-400 dark:text-stone-500">当前显示{modelCapabilityOptions.find((item) => item.value === activeCapability)?.label}模型；每个数值均表示该模型每次调用扣除的基础积分。</div>
                 <div className="mt-3 grid gap-x-5 gap-y-2 md:grid-cols-2">
                     {visibleModels.length ? (
-                        visibleModels.map((model) => (
-                            <div
-                                key={model}
-                                className="grid min-w-0 grid-cols-[minmax(0,1fr)_76px_28px] items-center gap-2 border-t border-zinc-100 py-2 first:border-t-0 md:[&:nth-child(2)]:border-t-0 dark:border-zinc-900 sm:grid-cols-[minmax(0,1fr)_104px_32px]"
-                            >
-                                <div className="min-w-0">
-                                    <div className="flex min-w-0 items-center gap-2">
-                                        <span className="block min-w-0 truncate text-sm text-stone-700 dark:text-stone-200" title={model}>
-                                            {model}
-                                        </span>
-                                        <ModelCapabilityTag capability={activeCapability} />
+                        visibleModels.map((model) => {
+                            const logical = settings.logicalModels.find((item) => item.id.toLowerCase() === model.toLowerCase());
+                            return (
+                                <div
+                                    key={model}
+                                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_76px_28px] items-center gap-2 border-t border-zinc-100 py-2 first:border-t-0 md:[&:nth-child(2)]:border-t-0 dark:border-zinc-900 sm:grid-cols-[minmax(0,1fr)_104px_32px]"
+                                >
+                                    <div className="min-w-0">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <span className="block min-w-0 truncate text-sm text-stone-700 dark:text-stone-200" title={logical ? `${logical.name} (${logical.id})` : model}>
+                                                {logical?.name || model}
+                                            </span>
+                                            <ModelCapabilityTag capability={activeCapability} />
+                                        </div>
+                                        {logical && logical.name !== logical.id ? (
+                                            <span className="mt-0.5 block truncate text-xs text-stone-400">ID: {logical.id}</span>
+                                        ) : !managedModelSet.has(model) ? (
+                                            <span className="mt-0.5 block text-xs text-stone-400">手动添加</span>
+                                        ) : null}
                                     </div>
-                                    {!channelModelSet.has(model) ? <span className="mt-0.5 block text-xs text-stone-400">手动添加</span> : null}
+                                    <InputNumber
+                                        className="w-full"
+                                        min={0}
+                                        precision={2}
+                                        value={resolveConfiguredModelPointCost(settings.modelPointCosts, model, settings.logicalModels)}
+                                        onChange={(value) => onModelPointCostChange(model, toNumberOrOne(value))}
+                                    />
+                                    <Button
+                                        className="!h-7 !w-7 !min-w-7 !p-0"
+                                        size="small"
+                                        danger
+                                        icon={<Trash2 className="size-3.5" />}
+                                        aria-label="删除消耗配置"
+                                        title="删除消耗配置"
+                                        onClick={() => {
+                                            const keys = configuredModelPointCostKeys(settings.modelPointCosts, model, settings.logicalModels);
+                                            (keys.length ? keys : [model]).forEach(onModelPointCostDelete);
+                                        }}
+                                    />
                                 </div>
-                                <InputNumber className="w-full" min={0} precision={2} value={settings.modelPointCosts[model] ?? 1} onChange={(value) => onModelPointCostChange(model, toNumberOrOne(value))} />
-                                <Button className="!h-7 !w-7 !min-w-7 !p-0" size="small" danger icon={<Trash2 className="size-3.5" />} aria-label="删除消耗配置" title="删除消耗配置" onClick={() => onModelPointCostDelete(model)} />
-                            </div>
-                        ))
+                            );
+                        })
                     ) : (
                         <div className="rounded-md border border-dashed border-stone-200 px-3 py-6 text-center text-sm text-stone-500 md:col-span-2 dark:border-stone-800">
                             当前没有{modelCapabilityOptions.find((item) => item.value === activeCapability)?.label}模型，请先在模型渠道中配置对应能力。
@@ -144,6 +168,14 @@ export function QuotaRuleTable({
             </section>
         </div>
     );
+}
+
+export function listPointCostModels(settings: Pick<AuthSettings, "logicalModels" | "systemChannels" | "modelPointCosts">) {
+    const logicalIds = settings.logicalModels.map((model) => model.id);
+    const channelModels = uniqueList(settings.systemChannels.flatMap((channel) => channel.models));
+    const bindingAliases = new Set(settings.logicalModels.flatMap((model) => model.bindings.map((binding) => binding.upstreamModel.toLowerCase())));
+    const customModels = Object.keys(settings.modelPointCosts || {}).filter((model) => model !== DEFAULT_MODEL_POINT_COST_KEY && (!logicalIds.length || !bindingAliases.has(model.toLowerCase())));
+    return uniqueList([...(logicalIds.length ? logicalIds : channelModels), ...customModels]);
 }
 
 export function resolvePointCostModelCapability(settings: Pick<AuthSettings, "logicalModels">, model: string): LogicalModelCapability {

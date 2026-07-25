@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 
 import { flattenPublicCapabilityModels, resolvePublicCapabilityModels } from "@/lib/public-model-catalog";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
+import { materializeLogicalModelPointCosts } from "@/lib/model-point-cost";
 
 type ApiCallFormat = "openai" | "gemini";
 type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "qingyan" | "globalaiopc" | "seedance" | "compatible";
@@ -316,7 +317,7 @@ export function applyPublicSystemSettings(config: AiConfig, settings?: PublicSys
         model: imageModel || textModel || videoModel || audioModel || "",
         systemPrompt: "",
         audioInstructions: "",
-        modelPointCosts: settings?.modelPointCosts || {},
+        modelPointCosts: materializeLogicalModelPointCosts(settings?.modelPointCosts, logicalModels),
         generationPointMultipliers: normalizeGenerationPointMultipliers(settings?.generationPointMultipliers),
         generationConcurrency: normalizeGenerationConcurrency(settings?.generationConcurrency),
         canvasImageCount: normalizeCanvasImageCount(settings?.generationDefaults?.canvasImageCount),

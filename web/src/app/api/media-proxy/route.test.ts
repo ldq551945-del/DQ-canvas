@@ -46,6 +46,9 @@ describe("media proxy", () => {
 
         expect(response.status).toBe(200);
         expect(response.headers.get("cache-control")).toBe("private, max-age=600");
+        expect(response.headers.get("cross-origin-resource-policy")).toBe("same-site");
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow, noarchive");
     });
 });
 

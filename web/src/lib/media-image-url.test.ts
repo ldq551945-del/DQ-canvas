@@ -5,6 +5,7 @@ import { imagePreviewUrl, originalImageDownloadUrl, originalImageExtension } fro
 describe("media image urls", () => {
     it("builds bounded WebP previews while preserving signed query values", () => {
         expect(imagePreviewUrl("/api/reference-assets/permanent/file.png?expires=1&signature=test", 4096)).toBe("/api/reference-assets/permanent/file.png?expires=1&signature=test&format=webp&width=2048");
+        expect(imagePreviewUrl("/api/reference-assets/permanent/file.png", 257)).toBe("/api/reference-assets/permanent/file.png?format=webp&width=320");
     });
 
     it("builds original-file downloads from a preview url", () => {

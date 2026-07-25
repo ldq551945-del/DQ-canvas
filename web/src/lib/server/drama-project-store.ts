@@ -93,15 +93,20 @@ export async function createDramaProject(userId: string, project: DramaProject) 
     return project;
 }
 
-export async function updateDramaProject(userId: string, project: DramaProject) {
+export async function updateDramaProject(userId: string, project: DramaProject, expectedUpdatedAt?: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery(
             `UPDATE drama_projects SET title = $3, status = $4, project_json = $5::jsonb, updated_at = $6
-             WHERE id = $1 AND user_id = $2 RETURNING id`,
-            [project.id, userId, project.title, project.status, JSON.stringify(project), new Date(project.updatedAt)],
+             WHERE id = $1 AND user_id = $2
+               AND ($7::text IS NULL OR project_json->>'updatedAt' = $7)
+             RETURNING id`,
+            [project.id, userId, project.title, project.status, JSON.stringify(project), new Date(project.updatedAt), expectedUpdatedAt || null],
         );
-        if (!result.rows[0]) throw new DramaProjectStoreError("短剧项目不存在", 404);
+        if (!result.rows[0]) {
+            const existing = await getDramaProject(project.id, userId);
+            throw new DramaProjectStoreError(existing ? "短剧项目已在其他页面更新，请刷新后重试" : "短剧项目不存在", existing ? 409 : 404);
+        }
         return project;
     }
     let found = false;
@@ -110,6 +115,7 @@ export async function updateDramaProject(userId: string, project: DramaProject) 
         projects: db.projects.map((record) => {
             if (record.userId !== userId || record.project.id !== project.id) return record;
             found = true;
+            if (expectedUpdatedAt && record.project.updatedAt !== expectedUpdatedAt) throw new DramaProjectStoreError("短剧项目已在其他页面更新，请刷新后重试", 409);
             return { ...record, project };
         }),
     }));

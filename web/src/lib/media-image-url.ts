@@ -1,10 +1,12 @@
+import { normalizeImagePreviewWidth } from "@/lib/media-image-variant";
+
 const LOCAL_IMAGE_ROUTES = ["/api/reference-assets/", "/api/generation-log-assets/"];
 
 export function imagePreviewUrl(url: string, width = 1600) {
     return withLocalImageParams(url, (params) => {
         params.delete("download");
         params.set("format", "webp");
-        params.set("width", String(Math.max(64, Math.min(2048, Math.round(width)))));
+        params.set("width", String(normalizeImagePreviewWidth(width)));
     });
 }
 

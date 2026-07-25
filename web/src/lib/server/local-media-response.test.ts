@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import sharp from "sharp";
 
-import { createLocalMediaResponse } from "./local-media-response";
+import { createLocalMediaResponse, requestedImageVariant } from "./local-media-response";
 
 const directory = resolve(tmpdir(), `vozeb-pro-media-response-${process.pid}-${Date.now()}`);
 const filePath = resolve(directory, "sample.mp4");
@@ -52,6 +52,13 @@ describe("local media response", () => {
         expect(response?.headers.get("content-type")).toBe("image/webp");
         expect(response?.headers.get("content-disposition")).toContain("sample.webp");
         expect(metadata).toMatchObject({ format: "webp", width: 64, height: 32 });
+    });
+
+    it("normalizes arbitrary preview widths to finite transform variants", () => {
+        expect(requestedImageVariant(new Request("http://localhost/media?format=webp"), "image/png")).toEqual({ format: "webp", width: 1600 });
+        expect(requestedImageVariant(new Request("http://localhost/media?format=webp&width=65"), "image/png")).toEqual({ format: "webp", width: 96 });
+        expect(requestedImageVariant(new Request("http://localhost/media?format=webp&width=903"), "image/png")).toEqual({ format: "webp", width: 960 });
+        expect(requestedImageVariant(new Request("http://localhost/media?format=webp&width=999999"), "image/png")).toEqual({ format: "webp", width: 2048 });
     });
 
     it("returns the untouched original image as an attachment for download", async () => {

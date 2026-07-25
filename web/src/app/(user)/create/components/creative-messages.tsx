@@ -127,7 +127,7 @@ export function CreativeMessages({
                     </article>
                 );
             })}
-            <div ref={endRef} />
+            <div ref={endRef} className="h-36 sm:h-40" aria-hidden="true" />
         </div>
     );
 }
@@ -188,7 +188,7 @@ function CreativeAssetGrid({ assets, selectedAssetIds, onToggleAsset }: { assets
     const media = assets.filter((asset) => asset.type !== "text" && assetUrl(asset));
     if (!media.length) return null;
     return (
-        <div className="mt-3 grid max-w-[732px] gap-2 sm:mt-4 sm:grid-cols-[repeat(2,minmax(0,360px))] sm:gap-3">
+        <div className={cn("mt-3 grid w-full max-w-[280px] grid-cols-1 gap-2 sm:mt-4 sm:gap-3", media.length > 1 && "sm:max-w-[572px] sm:grid-cols-[repeat(2,minmax(0,280px))]")}>
             {media.map((asset) => {
                 const url = assetUrl(asset)!;
                 const selected = selectedAssetIds.includes(asset.id);
@@ -199,7 +199,13 @@ function CreativeAssetGrid({ assets, selectedAssetIds, onToggleAsset }: { assets
                                 <AgentMediaPreview type={asset.type} url={url} title={asset.title || "生成音频"} />
                             </div>
                         ) : (
-                            <AgentMediaPreview type={asset.type} url={url} title={asset.title || (asset.type === "video" ? "生成视频" : "生成图片")} className={asset.type === "video" ? "aspect-video" : "aspect-square"} />
+                            <AgentMediaPreview
+                                type={asset.type}
+                                url={url}
+                                title={asset.title || (asset.type === "video" ? "生成视频" : "生成图片")}
+                                className={asset.type === "video" ? "aspect-video" : "flex items-center justify-center bg-stone-100 dark:bg-stone-950"}
+                                fit={asset.type === "image" ? "contain" : "cover"}
+                            />
                         )}
                         <figcaption className="flex min-w-0 items-center gap-2 border-t border-stone-200 px-3 py-2 dark:border-stone-700">
                             <span className="min-w-0 flex-1 truncate text-xs text-stone-500 dark:text-stone-400">{asset.title}</span>

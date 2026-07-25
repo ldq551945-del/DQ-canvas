@@ -2,23 +2,35 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DramaProject } from "@/lib/drama-project-contract";
 
-const mocks = vi.hoisted(() => ({
-    createCreativeConversation: vi.fn(),
-    updateCreativeConversation: vi.fn(),
-    createDramaProject: vi.fn(),
-    deleteDramaProject: vi.fn(),
-    findDramaProjectBySourceHandoffId: vi.fn(),
-    getDramaProject: vi.fn(),
-    listDramaProjectSummaries: vi.fn(),
-    updateDramaProject: vi.fn(),
-    createDramaProjectVersion: vi.fn(),
-    getDramaProjectVersion: vi.fn(),
-    listDramaProjectVersions: vi.fn(),
-    deleteUserLocalMediaAssets: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+    class MockDramaProjectStoreError extends Error {
+        constructor(
+            message: string,
+            readonly status: number,
+        ) {
+            super(message);
+        }
+    }
+    return {
+        DramaProjectStoreError: MockDramaProjectStoreError,
+        createCreativeConversation: vi.fn(),
+        updateCreativeConversation: vi.fn(),
+        createDramaProject: vi.fn(),
+        deleteDramaProject: vi.fn(),
+        findDramaProjectBySourceHandoffId: vi.fn(),
+        getDramaProject: vi.fn(),
+        listDramaProjectSummaries: vi.fn(),
+        updateDramaProject: vi.fn(),
+        createDramaProjectVersion: vi.fn(),
+        getDramaProjectVersion: vi.fn(),
+        listDramaProjectVersions: vi.fn(),
+        deleteUserLocalMediaAssets: vi.fn(),
+    };
+});
 
 vi.mock("@/lib/server/creative-runtime-store", () => ({ createCreativeConversation: mocks.createCreativeConversation, updateCreativeConversation: mocks.updateCreativeConversation }));
 vi.mock("@/lib/server/drama-project-store", () => ({
+    DramaProjectStoreError: mocks.DramaProjectStoreError,
     createDramaProject: mocks.createDramaProject,
     deleteDramaProject: mocks.deleteDramaProject,
     findDramaProjectBySourceHandoffId: mocks.findDramaProjectBySourceHandoffId,
@@ -34,6 +46,7 @@ vi.mock("@/lib/server/drama-project-version-store", () => ({
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
 import { createDramaProjectForUser, deleteDramaProjectForUser, DramaProjectServiceError, restoreDramaProjectVersionForUser, updateDramaProjectForUser } from "./drama-project-service";
+import { DramaProjectStoreError } from "./drama-project-store";
 
 describe("drama project service updates", () => {
     beforeEach(() => {
@@ -63,7 +76,8 @@ describe("drama project service updates", () => {
         const saved = await updateDramaProjectForUser("user-one", current.id, project("2026-07-19T08:00:02.000Z", "新标题"));
 
         expect(saved.title).toBe("新标题");
-        expect(mocks.updateDramaProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ id: current.id, title: "新标题" }));
+        expect(saved.updatedAt).toBe("2026-07-19T08:00:02.000Z");
+        expect(mocks.updateDramaProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ id: current.id, title: "新标题", updatedAt: "2026-07-19T08:00:02.000Z" }), current.updatedAt);
     });
 
     it("archives the new conversation when project creation fails", async () => {
@@ -125,7 +139,15 @@ describe("drama project service updates", () => {
             defaultVideoMode: "storyboard",
             episodes: [{ id: "episode-one", sourceRange: "", reviewStatus: "draft" }],
         });
-        expect(mocks.updateDramaProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ title: "历史版本" }));
+        expect(mocks.updateDramaProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ title: "历史版本" }), current.updatedAt);
+    });
+
+    it("maps a concurrent persistence conflict to a user-readable 409", async () => {
+        const current = project("2026-07-19T08:00:01.000Z", "旧标题");
+        mocks.getDramaProject.mockResolvedValue(current);
+        mocks.updateDramaProject.mockRejectedValueOnce(new DramaProjectStoreError("短剧项目已在其他页面更新，请刷新后重试", 409));
+
+        await expect(updateDramaProjectForUser("user-one", current.id, project("2026-07-19T08:00:02.000Z", "新标题"))).rejects.toMatchObject({ status: 409, message: "短剧项目已在其他页面更新，请刷新后重试" });
     });
 
     it("returns 404 before reading another user's version", async () => {

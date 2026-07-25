@@ -195,6 +195,36 @@ describe("points wallet service", () => {
         expect((await readAuthDb()).quotaUsage.map((usage) => usage.date)).toEqual(["2026-07-22", "2026-07-23"]);
     });
 
+    it("tracks and refunds quota usage for a zero-point model", async () => {
+        await seedWallet({ permanentPoints: 0, dailyPoints: 0, dailyText: 1 });
+        const input = {
+            userId: "user-one",
+            amount: 0,
+            units: 1,
+            usageKind: "text" as const,
+            model: "free-text",
+            description: "免费文本调用",
+            now: at("2026-07-22T08:00:00+08:00"),
+        };
+
+        const consumption = await consumePoints({ ...input, idempotencyKey: "free-text:first" });
+        await expect(consumePoints({ ...input, idempotencyKey: "free-text:limited" })).rejects.toThrow("今日文本生成次数不足");
+        const refund = await refundPoints({
+            userId: "user-one",
+            sourceRecordId: consumption.record.id,
+            idempotencyKey: "free-text:refund",
+            usageKind: "text",
+            units: 1,
+            description: "免费文本调用失败回滚",
+            now: at("2026-07-22T08:05:00+08:00"),
+        });
+        await expect(consumePoints({ ...input, idempotencyKey: "free-text:after-refund" })).resolves.toMatchObject({ applied: true });
+
+        expect(consumption).toMatchObject({ applied: true, snapshot: { totalPoints: 0 }, record: { amount: 0 } });
+        expect(refund).toMatchObject({ applied: true, permanentRestored: 0, dailyRestored: 0 });
+        expect((await readAuthDb()).quotaUsage).toEqual([expect.objectContaining({ usageKind: "text", units: 1, pointsSpent: 0 })]);
+    });
+
     it("rejects a credit idempotency key owned by another record type", async () => {
         await seedWallet({ permanentPoints: 50, dailyPoints: 0 });
         await consume("shared-key", 5, "2026-07-22T08:00:00+08:00");
@@ -217,6 +247,7 @@ async function seedWallet({
     freeDailyPoints = 0,
     freeDailyPointsEnabled = true,
     dailyImages = 0,
+    dailyText = 0,
     planId = "pro",
 }: {
     permanentPoints: number;
@@ -224,6 +255,7 @@ async function seedWallet({
     freeDailyPoints?: number;
     freeDailyPointsEnabled?: boolean;
     dailyImages?: number;
+    dailyText?: number;
     planId?: "free" | "pro";
 }) {
     const db = structuredClone(emptyDb());
@@ -232,7 +264,7 @@ async function seedWallet({
     db.settings.entitlements = {
         enabled: true,
         defaultPlanId: "free",
-        plans: [plan({ id: "free", dailyPoints: 0, dailyImages: 0 }), plan({ id: "pro", dailyPoints, dailyImages })],
+        plans: [plan({ id: "free", dailyPoints: 0, dailyImages: 0, dailyText: 0 }), plan({ id: "pro", dailyPoints, dailyImages, dailyText })],
     };
     db.users.push(user(permanentPoints, planId));
     await writeAuthDb(db);
@@ -253,13 +285,13 @@ function user(pointsBalance: number, planId: "free" | "pro"): StoredUser {
     };
 }
 
-function plan({ id, dailyPoints, dailyImages }: { id: "free" | "pro"; dailyPoints: number; dailyImages: number }): EntitlementPlan {
+function plan({ id, dailyPoints, dailyImages, dailyText }: { id: "free" | "pro"; dailyPoints: number; dailyImages: number; dailyText: number }): EntitlementPlan {
     return {
         id,
         name: id === "pro" ? "专业版" : "免费版",
         enabled: true,
         dailyPoints,
-        limits: { dailyPointSpend: 0, dailyApiCalls: 0, dailyImages, dailyVideos: 0, dailyAudio: 0, dailyText: 0 },
+        limits: { dailyPointSpend: 0, dailyApiCalls: 0, dailyImages, dailyVideos: 0, dailyAudio: 0, dailyText },
         features: ["points-wallet"],
     };
 }

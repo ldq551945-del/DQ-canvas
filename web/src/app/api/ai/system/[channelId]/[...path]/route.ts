@@ -496,7 +496,7 @@ function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typ
         nextHeaders.set("x-vozeb-pro-points-permanent", String(pointsResult.permanentRemaining));
         nextHeaders.set("x-vozeb-pro-points-daily", String(pointsResult.dailyRemaining));
         nextHeaders.set("x-vozeb-pro-points-daily-expires-at", pointsResult.dailyExpiresAt);
-        nextHeaders.set("x-vozeb-pro-points-record-id", pointsResult.recordId);
+        if (pointsResult.recordId) nextHeaders.set("x-vozeb-pro-points-record-id", pointsResult.recordId);
     } else if (typeof refundedPointsRemaining === "number") {
         nextHeaders.set("x-vozeb-pro-points-remaining", String(refundedPointsRemaining));
     }

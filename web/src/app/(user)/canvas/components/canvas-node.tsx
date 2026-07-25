@@ -114,7 +114,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
-    const imageBorderColor = isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : "transparent";
+    const imageBorderColor = isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : theme.node.stroke;
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const resizeRef = useRef({
         isResizing: false,

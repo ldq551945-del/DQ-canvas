@@ -30,7 +30,7 @@ describe("agent message controls", () => {
     it("renders clickable image and video preview entries", () => {
         const image = renderToStaticMarkup(
             <App>
-                <AgentMediaPreview type="image" url="/generated/image.png" title="生成图片" />
+                <AgentMediaPreview type="image" url="/generated/image.png" title="生成图片" fit="contain" />
             </App>,
         );
         const video = renderToStaticMarkup(
@@ -41,6 +41,9 @@ describe("agent message controls", () => {
 
         expect(image).toContain("查看大图");
         expect(image).toContain('src="/generated/image.png"');
+        expect(image).toContain("object-contain");
+        expect(image).toContain("max-h-[min(42dvh,360px)]");
+        expect(image).not.toContain("object-cover");
         expect(video).toContain('aria-label="打开视频：生成视频"');
         expect(video).toContain('src="/generated/video.mp4"');
     });

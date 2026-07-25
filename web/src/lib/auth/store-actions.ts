@@ -609,9 +609,10 @@ export async function consumeUserPoints(userId: string, model: string, amount = 
     const user = db?.users.find((item) => item.id === userId);
     if (db && (!user || user.status !== "active")) throw new AuthInputError("用户不可用");
     const settings = db ? db.settings : await getAuthSettings();
-    const multiplier = resolveModelPointCost(settings.modelPointCosts, normalizedModel);
+    const multiplier = resolveModelPointCost(settings.modelPointCosts, normalizedModel, settings.logicalModels);
     const units = Math.min(1000, normalizePointAmount(amount, 1));
     const cost = normalizePointAmount(units * multiplier, 0);
+    const operationKey = idempotencyKey?.trim() || `points-consume:${randomUUID()}`;
     const result = await consumePoints({
         userId,
         amount: cost,
@@ -619,7 +620,7 @@ export async function consumeUserPoints(userId: string, model: string, amount = 
         usageKind,
         model: normalizedModel,
         description: buildPointRecordDescription(normalizedModel, usageKind, "consume"),
-        idempotencyKey: idempotencyKey?.trim() || `points-consume:${randomUUID()}`,
+        idempotencyKey: operationKey,
     });
     return {
         model: normalizedModel,
@@ -639,18 +640,19 @@ export async function consumeUserPoints(userId: string, model: string, amount = 
 
 export async function refundUserPoints(userId: string, model: string, amount: number, usageKind: PointUsageKind = "api", units = 0, idempotencyKey?: string, sourceRecordId?: string) {
     const refund = normalizePointAmount(amount, 0);
+    const sourceId = sourceRecordId?.trim();
     if (isPostgresDatabaseEnabled()) {
         const clock = walletClock();
-        if (!refund) {
+        if (!refund && !sourceId) {
             const details = await createPostgresRepositories().users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date });
             const user = details[0];
             return user ? publicUserFromAuthenticatedRecord(user, clock.expiresAt) : null;
         }
-        if (!sourceRecordId?.trim()) throw new AuthInputError("退款缺少原消费流水");
+        if (!sourceId) throw new AuthInputError("退款缺少原消费流水");
         const result = await refundPoints({
             userId,
-            sourceRecordId,
-            idempotencyKey: idempotencyKey?.trim() || `points-refund:${sourceRecordId || randomUUID()}`,
+            sourceRecordId: sourceId,
+            idempotencyKey: idempotencyKey?.trim() || `points-refund:${sourceId}`,
             usageKind,
             units: normalizePointAmount(units, 0),
             model: model.trim(),
@@ -663,9 +665,8 @@ export async function refundUserPoints(userId: string, model: string, amount: nu
     const db = await readAuthDb();
     const user = db.users.find((item) => item.id === userId);
     if (!user) return null;
-    if (!refund) return toPublicUser(user, db);
+    if (!refund && !sourceId) return toPublicUser(user, db);
 
-    const sourceId = sourceRecordId?.trim();
     if (!sourceId) throw new AuthInputError("退款缺少原消费流水");
     const result = await refundPoints({
         userId,

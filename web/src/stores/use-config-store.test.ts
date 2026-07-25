@@ -91,6 +91,16 @@ describe("applyPublicSystemSettings", () => {
 
         expect(config.videoModel).toBe("video-v1");
     });
+
+    it("uses an existing upstream point price for the logical model estimate", () => {
+        const config = applyPublicSystemSettings(defaultConfig, {
+            ...audioSettings,
+            modelPointCosts: { "speech-v1": 2.5 },
+            logicalModels: [{ ...audioSettings.logicalModels![0], id: "voice-pro" }],
+        });
+
+        expect(config.modelPointCosts["voice-pro"]).toBe(2.5);
+    });
 });
 
 function rawModelSettings(): PublicSystemSettings {

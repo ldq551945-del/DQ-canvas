@@ -4,8 +4,9 @@ import { basename, extname } from "node:path";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 
-const MAX_PREVIEW_WIDTH = 2048;
-const DEFAULT_PREVIEW_WIDTH = 1600;
+import { normalizeImagePreviewWidth } from "@/lib/media-image-variant";
+import { getOrCreateCachedImageVariant } from "@/lib/server/media-image-variant-cache";
+
 const MAX_INPUT_PIXELS = 100_000_000;
 const MEDIA_SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-site",
@@ -57,9 +58,9 @@ async function createImageVariantResponse(request: Request, filePath: string, in
     };
     if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers: responseHeaders });
 
-    let pipeline = sharp(filePath, { limitInputPixels: MAX_INPUT_PIXELS, failOn: "error" }).rotate();
-    pipeline = pipeline.resize({ width: variant.width, withoutEnlargement: true, fit: "inside" });
-    const body = await pipeline.webp({ quality: 82, effort: 4 }).toBuffer();
+    const body = await getOrCreateCachedImageVariant(`local:${filePath}:${cacheKey}`, () =>
+        sharp(filePath, { limitInputPixels: MAX_INPUT_PIXELS, failOn: "error" }).rotate().resize({ width: variant.width, withoutEnlargement: true, fit: "inside" }).webp({ quality: 82, effort: 4 }).toBuffer(),
+    );
     return new Response(new Uint8Array(body), { status: 200, headers: { ...responseHeaders, "Content-Length": String(body.length) } });
 }
 
@@ -70,9 +71,7 @@ export function requestedImageVariant(request: Request, mimeType: string): Media
     const explicitWebp = url.searchParams.get("format") === "webp";
     const browserImageRequest = request.headers.get("sec-fetch-dest") === "image" && request.headers.get("accept")?.includes("image/webp");
     if (!explicitWebp && !browserImageRequest) return null;
-    const requestedWidth = Number.parseInt(url.searchParams.get("width") || "", 10);
-    const width = Number.isFinite(requestedWidth) ? Math.max(64, Math.min(MAX_PREVIEW_WIDTH, requestedWidth)) : DEFAULT_PREVIEW_WIDTH;
-    return { format: "webp", width };
+    return { format: "webp", width: normalizeImagePreviewWidth(url.searchParams.get("width")) };
 }
 
 function variantFileName(filePath: string, format: MediaImageVariant["format"]) {

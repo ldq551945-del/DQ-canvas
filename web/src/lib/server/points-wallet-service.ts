@@ -182,9 +182,9 @@ export function adjustPermanentPointsInAuthDb(db: AuthDatabase, input: AdjustPer
 }
 
 export async function consumePoints(input: ConsumePointsInput): Promise<PointsWalletMutationResult> {
-    const amount = positivePoints(input.amount);
+    const amount = normalizePointAmount(input.amount, -1);
     const idempotencyKey = requiredIdempotencyKey(input.idempotencyKey);
-    if (!amount) throw new AuthInputError("本次积分消费必须大于零");
+    if (amount < 0) throw new AuthInputError("本次积分消费不能小于零");
     if (isPostgresDatabaseEnabled()) return consumePostgresPoints({ ...input, amount, idempotencyKey });
     return mutateAuthDb((db) => consumeFilePoints(db, { ...input, amount, idempotencyKey }, walletClock(input)));
 }
@@ -307,10 +307,10 @@ async function consumePostgresPoints(input: ConsumePointsInput & { amount: numbe
             id: randomUUID(),
             userId: user.id,
             type: "consume",
-            amount: -split.cost,
+            amount: split.cost ? -split.cost : 0,
             balanceAfter: snapshot.totalPoints,
-            permanentAmount: -split.permanentDebit,
-            dailyAmount: -split.dailyDebit,
+            permanentAmount: split.permanentDebit ? -split.permanentDebit : 0,
+            dailyAmount: split.dailyDebit ? -split.dailyDebit : 0,
             permanentBalanceAfter: snapshot.permanentPoints,
             dailyBalanceAfter: snapshot.dailyPoints,
             description: input.description,
@@ -510,10 +510,10 @@ function consumeFilePoints(db: AuthDatabase, input: ConsumePointsInput & { amoun
         id: randomUUID(),
         userId: user.id,
         type: "consume",
-        amount: -split.cost,
+        amount: split.cost ? -split.cost : 0,
         balanceAfter: snapshot.totalPoints,
-        permanentAmount: -split.permanentDebit,
-        dailyAmount: -split.dailyDebit,
+        permanentAmount: split.permanentDebit ? -split.permanentDebit : 0,
+        dailyAmount: split.dailyDebit ? -split.dailyDebit : 0,
         permanentBalanceAfter: snapshot.permanentPoints,
         dailyBalanceAfter: snapshot.dailyPoints,
         description: input.description,

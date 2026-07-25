@@ -2,7 +2,7 @@ import { nanoid } from "nanoid";
 
 import type { CreateDramaProjectInput, DramaAssetProfile, DramaAssetReference, DramaEpisode, DramaNamedAsset, DramaProject, DramaShot, DramaShotContinuity, DramaUtterance, DramaVideoMode } from "@/lib/drama-project-contract";
 import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
-import { createDramaProject, deleteDramaProject, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
+import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
@@ -83,7 +83,13 @@ export async function updateDramaProjectForUser(userId: string, id: string, valu
     const incomingUpdatedAt = parseTimestamp(object(value).updatedAt);
     if (incomingUpdatedAt && incomingUpdatedAt < parseTimestamp(current.updatedAt)) return current;
     const project = normalizeProject(value, current);
-    return updateDramaProject(userId, project);
+    if (incomingUpdatedAt) project.updatedAt = new Date(incomingUpdatedAt).toISOString();
+    try {
+        return await updateDramaProject(userId, project, current.updatedAt);
+    } catch (error) {
+        if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
+        throw error;
+    }
 }
 
 export async function listDramaProjectVersionsForUser(userId: string, id: string) {
@@ -106,7 +112,12 @@ export async function restoreDramaProjectVersionForUser(userId: string, id: stri
     const version = await getDramaProjectVersion(userId, projectId, cleanText(versionId, 160));
     if (!version) throw new DramaProjectServiceError("短剧版本不存在", 404);
     await createDramaProjectVersion(userId, projectId, "恢复前自动快照", current);
-    return updateDramaProject(userId, normalizeProject(version.snapshot, current));
+    try {
+        return await updateDramaProject(userId, normalizeProject(version.snapshot, current), current.updatedAt);
+    } catch (error) {
+        if (error instanceof DramaProjectStoreError) throw new DramaProjectServiceError(error.message, error.status);
+        throw error;
+    }
 }
 
 export async function deleteDramaProjectForUser(userId: string, id: string) {
@@ -160,7 +171,7 @@ export function normalizeProject(value: unknown, current: DramaProject): DramaPr
         episodes,
         sourceAssets: normalizeSourceAssets(input.sourceAssets),
         createdAt: current.createdAt,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextTimestamp(current.updatedAt),
     };
 }
 
@@ -468,6 +479,10 @@ function cleanText(value: unknown, max: number) {
 function parseTimestamp(value: unknown) {
     const time = Date.parse(String(value || ""));
     return Number.isFinite(time) ? time : 0;
+}
+
+function nextTimestamp(previous: string) {
+    return new Date(Math.max(Date.now(), parseTimestamp(previous) + 1)).toISOString();
 }
 
 function timestamp(value: unknown) {

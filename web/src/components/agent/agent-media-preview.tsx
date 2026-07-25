@@ -7,7 +7,7 @@ import { Maximize2, PlayCircle } from "lucide-react";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
 
-export function AgentMediaPreview({ type, url, title, className }: { type: "text" | "image" | "video" | "audio"; url: string; title: string; className?: string }) {
+export function AgentMediaPreview({ type, url, title, className, fit = "cover" }: { type: "text" | "image" | "video" | "audio"; url: string; title: string; className?: string; fit?: "cover" | "contain" }) {
     const [videoOpen, setVideoOpen] = useState(false);
     if (type === "image") {
         const thumbnailUrl = imagePreviewUrl(url, 960);
@@ -15,10 +15,10 @@ export function AgentMediaPreview({ type, url, title, className }: { type: "text
         return (
             <div className={cn("group/media relative overflow-hidden", className)}>
                 <Image
-                    rootClassName="!block !h-full !w-full cursor-zoom-in overflow-hidden"
+                    rootClassName={cn("cursor-zoom-in overflow-hidden", fit === "contain" ? "!flex !h-auto !max-h-[min(42dvh,360px)] !w-full !items-center !justify-center" : "!block !h-full !w-full")}
                     src={thumbnailUrl}
                     alt={title}
-                    className="!block !h-full !w-full object-cover"
+                    className={cn("!block", fit === "contain" ? "!h-auto !max-h-[min(42dvh,360px)] !w-auto !max-w-full object-contain" : "!h-full !w-full object-cover")}
                     preview={{
                         src: largePreviewUrl,
                         mask: (

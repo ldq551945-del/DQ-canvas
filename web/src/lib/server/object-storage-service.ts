@@ -7,6 +7,7 @@ import { classifyManagedMediaType, isManagedMediaType, isMediaSourceGroup, media
 import type { ExternalStorageFilesPayload, ObjectStorageDeleteResult, ObjectStorageMigrationResult } from "@/lib/object-storage-contract";
 import { resolveServerDataPath } from "@/lib/server/data-dir";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
+import { runImageVariantTaskOnce } from "@/lib/server/media-image-variant-cache";
 import { mediaContentDisposition, requestedImageVariant } from "@/lib/server/local-media-response";
 import { deleteLocalMediaRegistrations, listLocalMediaRegistrations, listMediaRegistrationsByExternalObjectKeys, registerLocalMediaAsset, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
 import { deleteObjects, getObjectBytes, listObjects, objectExists, putObjectBytes, putObjectFile, signObjectRead, testObjectStorageConnection } from "@/lib/server/object-storage-client";
@@ -53,11 +54,12 @@ export async function createExternalMediaReadUrl(request: Request, registration:
     const variant = requestedImageVariant(request, registration.mimeType);
     if (variant) {
         const key = `${registration.externalObjectKey}${PREVIEW_MARKER}/webp-${variant.width}.webp`;
-        if (!(await objectExists(config, key))) {
-            const source = await getObjectBytes(config, registration.externalObjectKey);
+        await runImageVariantTaskOnce(`object:${config.id}:${key}`, async () => {
+            if (await objectExists(config, key)) return;
+            const source = await getObjectBytes(config, registration.externalObjectKey!);
             const bytes = await sharp(source, { limitInputPixels: MAX_INPUT_PIXELS, failOn: "error" }).rotate().resize({ width: variant.width, withoutEnlargement: true, fit: "inside" }).webp({ quality: 82, effort: 4 }).toBuffer();
             await putObjectBytes(config, { key, bytes, contentType: "image/webp" });
-        }
+        });
         return signObjectRead(config, {
             key,
             contentType: "image/webp",

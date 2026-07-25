@@ -6,6 +6,7 @@ import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
 import { deriveLogicalModelsConfig, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
 import { isGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
+import { resolveConfiguredModelPointCost } from "@/lib/model-point-cost";
 import {
     type UserRole,
     type UserStatus,
@@ -66,7 +67,6 @@ import {
     EMAIL_CODE_MAX_AGE_MS,
     EMAIL_CODE_RESEND_COOLDOWN_MS,
     DEFAULT_USER_POINTS,
-    DEFAULT_MODEL_POINT_COST_KEY,
     DEFAULT_SITE_SETTINGS,
     DEFAULT_MAIL_SETTINGS,
     DEFAULT_GENERATION_POINT_MULTIPLIERS,
@@ -663,10 +663,8 @@ export function normalizeMultiplierMap(value: unknown, defaults: Record<string, 
     };
 }
 
-export function resolveModelPointCost(costs: ModelPointCosts, model: string) {
-    const modelName = model.trim();
-    const matchedKey = Object.keys(costs || {}).find((key) => key.toLowerCase() === modelName.toLowerCase());
-    return normalizePointMultiplier(costs[matchedKey || DEFAULT_MODEL_POINT_COST_KEY], 1);
+export function resolveModelPointCost(costs: ModelPointCosts, model: string, logicalModels: LogicalModel[] = []) {
+    return resolveConfiguredModelPointCost(costs, model, logicalModels);
 }
 
 export function buildPointRecordDescription(model: string, usageKind: PointUsageKind, action: "consume" | "refund") {

@@ -92,6 +92,18 @@ describe("drama project file provider", () => {
             episodes: [{ id: "episode-one" }, { id: "episode-two", shots: [{ storyboardTaskId: "image-task", generationTaskId: "video-task" }], renderTask: { id: "render-task" } }],
         });
     });
+
+    it("rejects a stale conditional update instead of overwriting a newer snapshot", async () => {
+        const original = project("one", "初始项目");
+        await createDramaProject("user-one", original);
+        const first = { ...original, title: "第一处修改", updatedAt: new Date(Date.parse(original.updatedAt) + 1).toISOString() };
+        const stale = { ...original, title: "过期修改", updatedAt: new Date(Date.parse(original.updatedAt) + 2).toISOString() };
+
+        await updateDramaProject("user-one", first, original.updatedAt);
+
+        await expect(updateDramaProject("user-one", stale, original.updatedAt)).rejects.toMatchObject({ status: 409 });
+        await expect(getDramaProject("one", "user-one")).resolves.toMatchObject({ title: "第一处修改" });
+    });
 });
 
 function project(id: string, title: string): DramaProject {

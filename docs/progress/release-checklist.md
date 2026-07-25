@@ -30,6 +30,6 @@ pnpm run check:release
 ## GitHub 发布
 
 - Release 只记录 VOZEB PRO 当前版本的真实变更。
-- Release 标题使用 `VOZEB PRO v版本号`，例如 `VOZEB PRO v0.0.1`。
+- Release 标题使用 `VOZEB PRO v版本号`，例如 `VOZEB PRO v0.0.2`。
 - README 首页不写更新列表，只保留 GitHub Releases 入口。
 - 版本更新后同步 `VERSION`、`web/package.json`、README、docs 首页、CHANGELOG 和 README 截图。

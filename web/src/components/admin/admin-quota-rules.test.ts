@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolvePointCostModelCapability } from "./admin-quota-rules";
+import { listPointCostModels, resolvePointCostModelCapability } from "./admin-quota-rules";
 
 describe("积分规则模型分类", () => {
     const settings = {
@@ -25,5 +25,25 @@ describe("积分规则模型分类", () => {
         expect(resolvePointCostModelCapability(settings, "seedance-video-pro")).toBe("video");
         expect(resolvePointCostModelCapability(settings, "speech-tts-1")).toBe("audio");
         expect(resolvePointCostModelCapability(settings, "gpt-5.4")).toBe("text");
+    });
+
+    it("lists logical billing keys without duplicating their upstream aliases", () => {
+        expect(
+            listPointCostModels({
+                ...settings,
+                systemChannels: [{ id: "channel-1", name: "渠道", baseUrl: "", apiKey: "", apiFormat: "openai", models: ["vendor-omni"], enabled: true }],
+                modelPointCosts: { "vendor-omni": 2, "manual-model": 4 },
+            }),
+        ).toEqual(["visual-model", "manual-model"]);
+    });
+
+    it("keeps raw channel models when logical routing is not configured", () => {
+        expect(
+            listPointCostModels({
+                logicalModels: [],
+                systemChannels: [{ id: "channel-1", name: "渠道", baseUrl: "", apiKey: "", apiFormat: "openai", models: ["raw-text"], enabled: true }],
+                modelPointCosts: {},
+            }),
+        ).toEqual(["raw-text"]);
     });
 });

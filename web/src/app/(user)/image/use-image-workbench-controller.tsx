@@ -79,6 +79,10 @@ export function useImageWorkbenchController() {
         setLastAgentPrompt,
         availableSkills,
         agentSessionByRecordId,
+        loadAgentSession,
+        hasOlderAgentMessages,
+        olderAgentMessagesLoading,
+        loadOlderAgentMessages,
     } = useWorkbenchAgentSessions("image", userId);
     const [selectedSkill, setSelectedSkill] = useState<AgentSkillSummary>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
@@ -609,7 +613,7 @@ export function useImageWorkbenchController() {
         setActiveAgentRecordId(currentLog.id);
         setActiveAgentSessionId(session?.id || `log-${currentLog.id}`);
         setActiveCreativeConversationId(session?.creativeConversationId || currentLog.creativeConversationId);
-        setAgentMessages(session?.messages || fallbackMessages);
+        setAgentMessages(session?.loaded && session.messages.length ? session.messages : fallbackMessages);
         setPrompt(session?.prompt || "");
         setLastAgentPrompt(session?.lastPrompt || currentLog.prompt);
         setSelectedSkill(undefined);
@@ -621,6 +625,19 @@ export function useImageWorkbenchController() {
         if (currentLog.config.size) updateConfig("size", currentLog.config.size);
         if (currentLog.config.count) updateConfig("count", currentLog.config.count);
         setLogResults(currentLog.id, getLogResults(currentLog));
+        if (session && !session.loaded)
+            void loadAgentSession(session)
+                .then((loaded) => {
+                    if (!loaded || activeLogIdRef.current !== currentLog.id) return;
+                    setActiveAgentRecordId(loaded.recordId || currentLog.id);
+                    setActiveAgentSessionId(loaded.id);
+                    setActiveCreativeConversationId(loaded.creativeConversationId);
+                    setAgentMessages(loaded.messages.length ? loaded.messages : fallbackMessages);
+                    setLastAgentPrompt(loaded.lastPrompt || currentLog.prompt);
+                })
+                .catch(() => {
+                    if (activeLogIdRef.current === currentLog.id) message.warning("完整对话加载失败，已显示当前生成记录");
+                });
     };
 
     const buildRequestSnapshot = (promptOverride?: string, parameterPatch?: WorkbenchAgentParameterPatch) => {
@@ -770,6 +787,9 @@ export function useImageWorkbenchController() {
         selectSkill,
         selectImageModel,
         agentSessionByRecordId,
+        hasOlderAgentMessages,
+        olderAgentMessagesLoading,
+        loadOlderAgentMessages,
         importedCreatePromptRef,
         references,
         setReferences,

@@ -27,6 +27,11 @@ export const metadata: Metadata = {
   alternates: {
     canonical: "/",
   },
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/favicon.ico",
+  },
   openGraph: {
     type: "website",
     locale: "zh_CN",
@@ -34,11 +39,13 @@ export const metadata: Metadata = {
     title: "VOZEB PRO 文档",
     description: "VOZEB PRO - AI创意工作台官方文档",
     siteName: "VOZEB PRO 文档",
+    images: ["/logo.svg"],
   },
   twitter: {
     card: "summary_large_image",
     title: "VOZEB PRO 文档",
     description: "VOZEB PRO - AI创意工作台官方文档",
+    images: ["/logo.svg"],
   },
   robots: {
     index: true,

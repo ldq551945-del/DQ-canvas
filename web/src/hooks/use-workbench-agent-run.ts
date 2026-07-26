@@ -92,7 +92,7 @@ export function useWorkbenchAgentRun({
 
     const runAgentGenerate = useCallback(async () => {
         const text = prompt.trim();
-        if (!text || agentRunning) return;
+        if (!text || agentRequestRef.current) return;
         if (workbenchRequiresManualModel(smartPlanning, modelIds)) {
             onManualModelRequired?.();
             return;
@@ -111,7 +111,7 @@ export function useWorkbenchAgentRun({
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 signal: controller.signal,
-                body: JSON.stringify({ workspace, conversationId: sharedConversationId, prompt: text, previousPrompt, models, modelIds, skillIds, smartPlanning, currentConfig, hasReferences, referenceTypes }),
+                body: JSON.stringify({ requestId: progressId, workspace, conversationId: sharedConversationId, prompt: text, previousPrompt, models, modelIds, skillIds, smartPlanning, currentConfig, hasReferences, referenceTypes }),
             });
             const payload = (await response.json().catch(() => ({}))) as { data?: WorkbenchAgentPlanPayload; msg?: string };
             if (!response.ok || !payload.data) throw new Error(payload.msg || "Agent 参数解析失败");
@@ -147,7 +147,6 @@ export function useWorkbenchAgentRun({
             void refreshUserPointsIfSystem("system");
         }
     }, [
-        agentRunning,
         applyParameterPatch,
         conversationId,
         currentConfig,

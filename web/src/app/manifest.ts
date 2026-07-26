@@ -1,10 +1,9 @@
 import type { MetadataRoute } from "next";
 
-import { browserIconHref, getPublicSiteSettings } from "@/lib/server/site-metadata";
+import { getPublicSiteSettings } from "@/lib/server/site-metadata";
 
 export default async function manifest(): Promise<MetadataRoute.Manifest> {
     const site = await getPublicSiteSettings();
-    const icon = browserIconHref(site);
     return {
         name: site.title,
         short_name: site.title.slice(0, 16),
@@ -14,6 +13,6 @@ export default async function manifest(): Promise<MetadataRoute.Manifest> {
         lang: "zh-CN",
         background_color: "#ffffff",
         theme_color: "#111111",
-        icons: [{ src: icon, sizes: "any", purpose: "any" }],
+        icons: [{ src: "/favicon.ico", sizes: "any", purpose: "any" }],
     };
 }

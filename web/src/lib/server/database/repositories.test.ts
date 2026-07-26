@@ -596,6 +596,62 @@ describe("split Postgres repositories", () => {
         expect(query).toHaveBeenCalledWith("DELETE FROM generation_logs WHERE id = ANY($1::text[])", [["log-one", "log-three"]]);
     });
 
+    it("aggregates the generation overview in one bounded query without loading log payloads or assets", async () => {
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    total_calls: 8,
+                    success_calls: 6,
+                    failed_calls: 1,
+                    active_users: 3,
+                    daily: [{ key: "2026-07-25", value: 3 }],
+                    models: [{ key: "image-pro", value: 5 }],
+                    sources: [{ key: "canvas", value: 4 }],
+                    kinds: [{ key: "image", value: 6 }],
+                },
+            ],
+        ]);
+
+        const summary = await createPostgresRepositories(executor).generationLogs.getOverviewAggregate({
+            startAt: "2026-07-19T16:00:00.000Z",
+            endAt: "2026-07-26T16:00:00.000Z",
+            timeZone: "Asia/Shanghai",
+        });
+
+        expect(summary).toMatchObject({ totalCalls: 8, successCalls: 6, failedCalls: 1, activeUsers: 3, models: [{ key: "image-pro", value: 5 }] });
+        expect(query).toHaveBeenCalledTimes(1);
+        const [statement, params] = queryArgs(query, 0);
+        expect(String(statement)).toContain("WITH scoped AS MATERIALIZED");
+        expect(String(statement)).toContain("created_at >= $1::timestamptz AND created_at < $2::timestamptz");
+        expect(String(statement)).not.toMatch(/\bprompt\b|\berror\b|generation_log_assets|SELECT\s+\*/i);
+        expect(params).toEqual(["2026-07-19T16:00:00.000Z", "2026-07-26T16:00:00.000Z", "Asia/Shanghai"]);
+    });
+
+    it("loads the create workbench summary in one bounded query", async () => {
+        const timestamp = "2026-07-26T12:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    running_tasks: [{ id: "pending-one", kind: "video", source: "agent", title: "生成短片", createdAt: timestamp }],
+                    recent_assets: [{ id: "success-one-0", kind: "image", title: "商品图", url: "/api/media/image.webp", createdAt: timestamp }],
+                },
+            ],
+        ]);
+
+        const overview = await createPostgresRepositories(executor).generationLogs.getCreateOverview("user-one");
+
+        expect(overview).toEqual({
+            runningTasks: [{ id: "pending-one", kind: "video", source: "agent", title: "生成短片", createdAt: timestamp }],
+            recentAssets: [{ id: "success-one-0", kind: "image", title: "商品图", url: "/api/media/image.webp", createdAt: timestamp }],
+        });
+        expect(query).toHaveBeenCalledTimes(1);
+        const [statement, params] = queryArgs(query, 0);
+        expect(String(statement)).toContain("LIMIT 4");
+        expect(String(statement)).toContain("LIMIT 8");
+        expect(String(statement)).not.toMatch(/SELECT\s+\*|\bprompt\b|\berror\b/i);
+        expect(params).toEqual(["user-one"]);
+    });
+
     it("pushes prompt filtering and pagination into PostgreSQL", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([

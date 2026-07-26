@@ -1,4 +1,5 @@
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeConversationSource, type CreativeMessage, type CreativeProjectHandoff, type CreativeRunRequest } from "@/lib/creative-runtime-contract";
+import type { CreativeWorkbenchSessionDetail, CreativeWorkbenchSessionSummary, WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 
 export type CreativeAgentRun = {
@@ -20,6 +21,17 @@ export function listCreativeConversationPage(input: { source?: CreativeConversat
 
 export function listCreativeConversations(source: CreativeConversationSource = "agent") {
     return listCreativeConversationPage({ source, limit: 100 }).then((data) => data.conversations);
+}
+
+export function listCreativeWorkbenchSessions(workspace: WorkbenchWorkspace) {
+    const query = new URLSearchParams({ view: "workbench", workspace, limit: "100" });
+    return request<{ sessions: CreativeWorkbenchSessionSummary[]; hasMore: boolean }>(`/api/creative/conversations?${query}`).then((data) => data.sessions);
+}
+
+export function getCreativeWorkbenchSession(conversationId: string, workspace: WorkbenchWorkspace, beforeSequence?: number) {
+    const query = new URLSearchParams({ view: "workbench", workspace });
+    if (beforeSequence) query.set("beforeSequence", String(beforeSequence));
+    return request<{ session: CreativeWorkbenchSessionDetail }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}?${query}`).then((data) => data.session);
 }
 
 export function getCreativeConversation(conversationId: string) {

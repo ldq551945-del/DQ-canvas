@@ -1,4 +1,5 @@
 import type { CanvasProject } from "@/lib/canvas-project-contract";
+import { summarizeCanvasProject, type CreateOverviewMedia, type CreateOverviewProject } from "@/lib/create-workbench-overview";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
 
@@ -18,6 +19,55 @@ export async function listCanvasProjects(userId: string) {
         .filter((record) => record.userId === userId)
         .map((record) => record.project)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function getLatestCanvasProjectOverview(userId: string): Promise<CreateOverviewProject | undefined> {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `
+            SELECT
+                id,
+                title,
+                updated_at,
+                jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
+                jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count,
+                COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('kind', preview.kind, 'url', preview.url) ORDER BY preview.status_order, preview.kind_order, preview.node_order, preview.url_order)
+                    FROM (
+                        SELECT
+                            CASE WHEN node->>'type' = 'video' THEN 'video' ELSE 'image' END AS kind,
+                            media.url,
+                            CASE WHEN node->'metadata'->>'status' = 'success' THEN 0 ELSE 1 END AS status_order,
+                            CASE WHEN node->>'type' IN ('image', 'panorama') THEN 0 ELSE 1 END AS kind_order,
+                            node_order,
+                            media.url_order
+                        FROM jsonb_array_elements(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) WITH ORDINALITY AS project_node(node, node_order)
+                        CROSS JOIN LATERAL (
+                            VALUES
+                                (node->'metadata'->>'serverUrl', 1),
+                                (node->'metadata'->>'remoteUrl', 2),
+                                (node->'metadata'->>'content', 3)
+                        ) AS media(url, url_order)
+                        WHERE node->>'type' IN ('image', 'panorama', 'video')
+                          AND COALESCE(node->'metadata'->>'status', '') <> 'error'
+                          AND COALESCE(btrim(media.url), '') <> ''
+                          AND media.url !~* '^(data|blob):'
+                        ORDER BY status_order, kind_order, node_order, media.url_order
+                        LIMIT 18
+                    ) preview
+                ), '[]'::jsonb) AS previews
+            FROM canvas_projects
+            WHERE user_id = $1
+            ORDER BY updated_at DESC
+            LIMIT 1
+            `,
+            [userId],
+        );
+        return result.rows[0] ? mapPostgresOverview(result.rows[0]) : undefined;
+    }
+    const project = (await listCanvasProjects(userId))[0];
+    return project ? summarizeCanvasProject(project) : undefined;
 }
 
 export async function getCanvasProject(id: string, userId: string) {
@@ -100,6 +150,44 @@ function mutateDatabase(mutator: (database: CanvasProjectDatabase) => CanvasProj
     const operation = mutationQueue.then(async () => writeJsonDataFile(FILE_NAME, mutator(await readDatabase())));
     mutationQueue = operation.catch(() => undefined);
     return operation;
+}
+
+function mapPostgresOverview(row: Record<string, unknown>): CreateOverviewProject {
+    const previews = jsonArray(row.previews);
+    const seen = new Set<string>();
+    return {
+        id: String(row.id || ""),
+        title: String(row.title || ""),
+        updatedAt: isoDate(row.updated_at),
+        nodeCount: Math.max(0, Number(row.node_count) || 0),
+        connectionCount: Math.max(0, Number(row.connection_count) || 0),
+        previews: previews
+            .flatMap((item): CreateOverviewMedia[] => {
+                const source = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+                const kind = source.kind === "video" ? "video" : source.kind === "image" ? "image" : undefined;
+                const url = typeof source.url === "string" ? source.url.trim() : "";
+                if (!kind || !url || /^(data|blob):/i.test(url) || seen.has(url)) return [];
+                seen.add(url);
+                return [{ kind, url }];
+            })
+            .slice(0, 6),
+    };
+}
+
+function jsonArray(value: unknown): unknown[] {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== "string") return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function isoDate(value: unknown) {
+    const date = value instanceof Date ? value : new Date(String(value || ""));
+    return Number.isFinite(date.getTime()) ? date.toISOString() : new Date(0).toISOString();
 }
 
 export class CanvasProjectStoreError extends Error {

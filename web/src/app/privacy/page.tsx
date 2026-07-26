@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Database, KeyRound, MailCheck, ShieldCheck, Workflow } from "lucide-react";
 
@@ -23,6 +24,12 @@ const policies = [
         icon: <KeyRound className="size-5" />,
     },
 ];
+
+export const metadata: Metadata = {
+    title: "隐私政策",
+    description: "了解 VOZEB PRO 对账号、创作、媒体与第三方服务数据的处理方式。",
+    alternates: { canonical: "/privacy" },
+};
 
 export default function PrivacyPage() {
     return (

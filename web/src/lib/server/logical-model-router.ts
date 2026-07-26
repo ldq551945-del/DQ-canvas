@@ -44,9 +44,9 @@ function isStableDiffusionImageModelName(value: string) {
     return value === "sd" || value.includes("stable diffusion") || value.includes("stable_diffusion") || /^sd(?:xl|[-_.\s]?\d)/.test(value);
 }
 
-export function resolveLogicalBillingModel(logicalModels: AuthSettings["logicalModels"], capability: LogicalModelCapability, channelId: string, upstreamModel: string) {
-    return (
-        logicalModels.find((logical) => logical.enabled && logical.capability === capability && logical.bindings.some((binding) => binding.enabled && binding.channelId === channelId && channelSupportsModel([binding.upstreamModel], upstreamModel)))?.id ||
-        upstreamModel
+export function resolveLogicalBillingModel(logicalModels: AuthSettings["logicalModels"], capability: LogicalModelCapability, channelId: string, upstreamModel: string, preferredLogicalModelId = "") {
+    const matches = logicalModels.filter(
+        (logical) => logical.enabled && logical.capability === capability && logical.bindings.some((binding) => binding.enabled && binding.channelId === channelId && channelSupportsModel([binding.upstreamModel], upstreamModel)),
     );
+    return matches.find((logical) => logical.id.toLowerCase() === preferredLogicalModelId.trim().toLowerCase())?.id || matches[0]?.id || upstreamModel;
 }

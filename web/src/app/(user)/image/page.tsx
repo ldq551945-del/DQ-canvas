@@ -102,6 +102,9 @@ export default function ImagePage() {
         selectSkill,
         selectImageModel,
         agentSessionByRecordId,
+        hasOlderAgentMessages,
+        olderAgentMessagesLoading,
+        loadOlderAgentMessages,
         importedCreatePromptRef,
         references,
         setReferences,
@@ -204,7 +207,7 @@ export default function ImagePage() {
                             historyContent={(query, closeHistory) => {
                                 const filteredLogs = logs.filter((log) => {
                                     const session = agentSessionByRecordId.get(log.id);
-                                    return matchesWorkbenchHistoryQuery(query, log.title, log.prompt, ...(session?.messages.map((item) => item.text) || []));
+                                    return matchesWorkbenchHistoryQuery(query, log.title, log.prompt, session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
                                 });
                                 return (
                                     <LogPanel
@@ -229,6 +232,9 @@ export default function ImagePage() {
                             <WorkbenchAgentConversation
                                 messages={agentMessages}
                                 running={agentRunning}
+                                hasOlderMessages={hasOlderAgentMessages}
+                                olderMessagesLoading={olderAgentMessagesLoading}
+                                onLoadOlder={() => void loadOlderAgentMessages()}
                                 onChoice={(choice) => {
                                     if (choice.action === "upload") fileInputRef.current?.click();
                                     else setPrompt(choice.prompt || choice.description);

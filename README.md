@@ -39,28 +39,348 @@ VOZEB PRO 把统一创作 Agent、图片与视频工作台、画布、短剧生�
 - **商业后台**：用户、套餐、积分、CDK、订单、支付、退款、财务流水、公告、提示词、生成运营和审计日志。
 - **存储与备份**：本地媒体、S3 兼容对象存储、引用保护、对象迁移和脱敏业务数据导入导出。
 
-## 核心流程
+## 项目功能流程
+
+所有流程图默认折叠，点击对应标题后即可查看，不会一次展示全部内容。
+
+<details>
+<summary><strong>01｜公开页面与登录注册流程</strong></summary>
 
 ```mermaid
 flowchart LR
-    USER["用户输入与参考素材"] --> UI["Agent / 工作台 / Canvas / 短剧"]
-    UI --> API["Next.js Route Handler"]
-    API --> SKILL["Skill 与能力校验"]
-    SKILL --> ROUTER["逻辑模型路由"]
-    ROUTER --> TASK["幂等生成任务"]
-    TASK --> PROVIDER["文本 / 图片 / 视频 / 音频上游"]
-    PROVIDER --> MEDIA["媒体规范化与登记"]
-    MEDIA --> STORAGE{"存储开关"}
-    STORAGE -->|关闭| LOCAL["服务器本地目录"]
-    STORAGE -->|开启| S3["S3 兼容对象存储"]
-    MEDIA --> PG[("PostgreSQL")]
-    PG --> RESULT["会话、历史、积分与结果"]
-    RESULT --> UI
+    HOME["首页 /<br/>产品介绍、功能入口、公告"] --> ACTION{"访客选择"}
+
+    ACTION --> ANN["公告中心 /announcements<br/>查看置顶公告和平台通知"]
+    ACTION --> LOGIN["登录 /login<br/>账号密码校验"]
+    ACTION --> REGISTER["注册 /register<br/>注册策略与可选邮箱验证码"]
+    ACTION --> FORGOT["找回密码 /forgot-password<br/>邮箱验证码与密码重置"]
+    ACTION --> PRIVACY["隐私政策 /privacy"]
+    ACTION --> TERMS["服务条款 /terms"]
+
+    REGISTER --> LOGIN
+    FORGOT --> LOGIN
+    LOGIN --> SESSION["创建登录 Session"]
+    SESSION --> ROLE{"账号角色"}
+    ROLE -->|普通用户| USER["用户工作区"]
+    ROLE -->|管理员| ADMIN["商业 SaaS 管理后台"]
+
+    INSTALL["安装向导 /install"] --> CHECK["检查运行环境和 PostgreSQL"]
+    CHECK --> SCHEMA["初始化数据库表结构"]
+    SCHEMA --> FIRST_ADMIN["创建首个管理员"]
+    FIRST_ADMIN --> ADMIN
 ```
+
+</details>
+
+<details>
+<summary><strong>02｜用户工作区页面导航</strong></summary>
+
+```mermaid
+flowchart TB
+    USER["用户工作区<br/>加载用户、积分、模型和站点配置"]
+
+    USER --> CREATE["统一 Agent /create<br/>多模态创作与服务端会话"]
+    USER --> IMAGE["图片工作台 /image<br/>文生图、图生图和参考图编辑"]
+    USER --> VIDEO["视频工作台 /video<br/>文生视频和图生视频"]
+
+    USER --> CANVAS["Canvas 项目 /canvas<br/>创建、搜索、重命名和删除"]
+    CANVAS --> CANVAS_ID["Canvas 编辑器 /canvas/:id"]
+
+    USER --> DRAMA["短剧项目 /drama<br/>项目和生产进度管理"]
+    DRAMA --> DRAMA_ID["短剧编辑器 /drama/:id"]
+
+    USER --> PROMPTS["公共提示词 /prompts"]
+    USER --> MY_PROMPTS["我的提示词 /my-prompts"]
+    USER --> ASSETS["我的素材 /assets"]
+    USER --> HELP["帮助中心 /help"]
+    USER --> PROFILE["个人中心 /profile"]
+    USER --> BILLING["充值中心 /billing"]
+
+    PROMPTS --> CREATE
+    PROMPTS --> IMAGE
+    PROMPTS --> VIDEO
+
+    MY_PROMPTS --> CREATE
+    ASSETS --> CREATE
+    ASSETS --> IMAGE
+    ASSETS --> VIDEO
+    ASSETS --> CANVAS_ID
+    ASSETS --> DRAMA_ID
+```
+
+</details>
+
+<details>
+<summary><strong>03｜Agent、图片和视频生成流程</strong></summary>
+
+```mermaid
+flowchart TB
+    START["用户输入文字或参考素材"] --> ENTRY{"选择创作入口"}
+
+    ENTRY -->|统一创作| AGENT["统一 Agent"]
+    ENTRY -->|图片生成| IMAGE["图片工作台"]
+    ENTRY -->|视频生成| VIDEO["视频工作台"]
+
+    AGENT --> SKILL["选择 Skill、智能规划或逻辑模型"]
+    IMAGE --> IMAGE_PARAM["设置参考图、比例、质量和数量"]
+    VIDEO --> VIDEO_PARAM["设置参考素材、时长、比例和清晰度"]
+
+    SKILL --> CHECK["能力、素材、参数与积分校验"]
+    IMAGE_PARAM --> CHECK
+    VIDEO_PARAM --> CHECK
+
+    CHECK --> ROUTER["逻辑模型路由"]
+    ROUTER --> CREATE_TASK["创建幂等生成任务"]
+    CREATE_TASK --> PROVIDER["调用文本、图片、视频或音频上游"]
+    PROVIDER --> POLL["查询同一个上游任务"]
+    POLL --> RESULT{"任务结果"}
+
+    RESULT -->|成功| NORMALIZE["下载并规范化媒体"]
+    RESULT -->|失败| FAILED["保留失败记录并退款"]
+    FAILED --> RETRY["用户主动点击重试"]
+    RETRY --> CREATE_TASK
+
+    NORMALIZE --> SAVE["登记媒体归属和稳定地址"]
+    SAVE --> MESSAGE["返回当前创作会话"]
+    MESSAGE --> OPERATE["预览、下载、保存素材或继续创作"]
+```
+
+</details>
+
+<details>
+<summary><strong>04｜Canvas 创作流程</strong></summary>
+
+```mermaid
+flowchart LR
+    LIST["Canvas 项目 /canvas"] --> CREATE["创建画布"]
+    LIST --> SEARCH["搜索项目"]
+    LIST --> RENAME["重命名项目"]
+    LIST --> DELETE["删除项目"]
+    LIST --> OPEN["打开项目"]
+
+    CREATE --> EDITOR["Canvas 编辑器 /canvas/:id"]
+    OPEN --> EDITOR
+
+    EDITOR --> NODE{"添加节点"}
+    NODE --> TEXT["文本节点"]
+    NODE --> IMAGE["图片节点"]
+    NODE --> VIDEO["视频节点"]
+    NODE --> AUDIO["音频节点"]
+    NODE --> GENERATE["生成节点"]
+
+    TEXT --> CONNECT["拖拽、缩放和节点连线"]
+    IMAGE --> CONNECT
+    VIDEO --> CONNECT
+    AUDIO --> CONNECT
+    GENERATE --> CONNECT
+
+    CONNECT --> AGENT["启动 Canvas Agent Run"]
+    AGENT --> PLAN["分析节点和连接关系"]
+    PLAN --> TASK["创建图片、视频或音频子任务"]
+    TASK --> RESULT["结果写回对应节点"]
+    RESULT --> HISTORY["撤销、重做和历史记录"]
+    HISTORY --> SAVE["自动保存到服务器"]
+    SAVE --> EDITOR
+```
+
+</details>
+
+<details>
+<summary><strong>05｜短剧生产流程</strong></summary>
+
+```mermaid
+flowchart LR
+    LIST["短剧项目 /drama"] --> CREATE["创建短剧项目"]
+    CREATE --> CONFIG["设置剧集数、画幅和镜头"]
+    CONFIG --> EDITOR["短剧编辑器 /drama/:id"]
+
+    EDITOR --> SCRIPT["第一阶段：生成或编辑剧本"]
+    SCRIPT --> REVIEW["第二阶段：内容审核和人工确认"]
+    REVIEW --> ASSETS["第三阶段：角色、场景和道具"]
+    ASSETS --> STORYBOARD["第四阶段：分镜和镜头设计"]
+    STORYBOARD --> SHOTS["第五阶段：生成镜头图片和视频"]
+
+    SHOTS --> AUDIO["生成配音、音效和背景音乐"]
+    AUDIO --> SUBTITLE["生成并校对字幕"]
+    SUBTITLE --> VERSION["保存剧本、分镜和媒体版本"]
+    VERSION --> COMPOSE["使用 FFmpeg 合成成片"]
+    COMPOSE --> CHECK{"合成结果"}
+
+    CHECK -->|成功| EXPORT["预览并导出成片"]
+    CHECK -->|失败| FIX["定位失败镜头或音频"]
+    FIX --> SHOTS
+```
+
+</details>
+
+<details>
+<summary><strong>06｜提示词、素材、账户和支付流程</strong></summary>
+
+```mermaid
+flowchart TB
+    PROMPTS["公共提示词 /prompts"] --> FIND["分类、标签和关键词检索"]
+    FIND --> USE["用于 Agent、图片或视频创作"]
+
+    MY["我的提示词 /my-prompts"] --> MANAGE["创建、编辑、分类、标签和删除"]
+    MANAGE --> SAVE_ASSET["保存为文本素材"]
+    MANAGE --> USE
+
+    ASSETS["我的素材 /assets"] --> FILTER["按图片、视频、音频、文本和附件筛选"]
+    FILTER --> PREVIEW["预览或下载"]
+    FILTER --> CONTINUE["发送到 Agent、工作台、Canvas 或短剧"]
+    FILTER --> DELETE["检查业务引用后删除"]
+
+    HELP["帮助中心 /help"] --> GUIDE["查看 Agent、图片、视频、Canvas、短剧和账户说明"]
+
+    PROFILE["个人中心 /profile"] --> INFO["修改资料和密码"]
+    PROFILE --> RIGHTS["查看积分、套餐、订单和消费记录"]
+    PROFILE --> EXPORT["导出个人数据"]
+    PROFILE --> CANCEL_ACCOUNT["提交账号注销申请"]
+    CANCEL_ACCOUNT --> ADMIN_REVIEW["管理员受理或拒绝"]
+
+    BILLING["充值中心 /billing"] --> PRODUCT["选择套餐或积分商品"]
+    PRODUCT --> ORDER["创建待支付订单"]
+    ORDER --> CHECKOUT["订单支付 /billing/checkout"]
+    CHECKOUT --> CHANNEL["选择可用支付渠道"]
+    CHANNEL --> PAY{"支付结果"}
+
+    PAY -->|成功| SUCCESS["支付成功 /billing/success"]
+    SUCCESS --> CONFIRM["确认支付回调和订单状态"]
+    CONFIRM --> GRANT["套餐或积分入账"]
+    GRANT --> REFRESH["刷新用户余额和订单记录"]
+
+    PAY -->|取消或失败| CANCEL["支付取消 /billing/cancel"]
+    CANCEL --> CHOICE{"订单处理"}
+    CHOICE -->|继续支付| CHECKOUT
+    CHOICE -->|放弃支付| CLOSE["关闭或保留待支付订单"]
+```
+
+</details>
+
+<details>
+<summary><strong>07｜商业 SaaS 后台经营和财务流程</strong></summary>
+
+```mermaid
+flowchart TB
+    ADMIN["管理后台 /admin"] --> ANALYSIS["经营分析"]
+    ADMIN --> PRODUCT["商品运营"]
+    ADMIN --> FINANCE["财务管理"]
+
+    ANALYSIS --> OVERVIEW["经营看板<br/>用户、收入、积分负债、订单和生成指标"]
+    ANALYSIS --> USERS["用户运营<br/>创建用户、角色、状态、套餐和积分"]
+    ANALYSIS --> LOGS["调用记录<br/>用户、入口、模型、状态和失败原因"]
+    ANALYSIS --> GENERATION["生成运营<br/>任务查询、取消、失败记录和重试"]
+
+    PRODUCT --> PRODUCTS["套餐管理<br/>商品价格、权益、支付类型和上下架"]
+    PRODUCT --> ORDERS["订单管理<br/>查询、人工完成、关闭和退款"]
+
+    FINANCE --> POINTS["积分规则<br/>免费额度、模型单价和参数倍率"]
+    FINANCE --> PAYMENTS["支付渠道<br/>商户配置、回调地址、检测和启停"]
+    FINANCE --> CDK["CDK 兑换<br/>批量生成、筛选、停用和兑换追踪"]
+    FINANCE --> WALLET["财务流水<br/>充值、扣费、退款和余额变化"]
+
+    BILLING_ADMIN["财务运营 /admin/billing"] --> ORDERS
+    BILLING_ADMIN --> PRODUCTS
+    BILLING_ADMIN --> PAYMENTS
+
+    PRODUCTS --> USER_BUY["用户选择商品"]
+    USER_BUY --> ORDERS
+    ORDERS --> PAYMENTS
+    PAYMENTS --> PAY_RESULT{"支付结果"}
+
+    PAY_RESULT -->|成功| WALLET
+    PAY_RESULT -->|失败| REFUND["关闭订单或执行退款"]
+    REFUND --> WALLET
+
+    POINTS --> GENERATION
+    GENERATION --> WALLET
+```
+
+</details>
+
+<details>
+<summary><strong>08｜后台模型、系统、存储和内容管理</strong></summary>
+
+```mermaid
+flowchart TB
+    ADMIN["管理后台 /admin"] --> UPSTREAM["上游配置"]
+    ADMIN --> SYSTEM["系统管理"]
+    ADMIN --> STORAGE["存储与备份"]
+    ADMIN --> CONTENT["内容运营"]
+
+    UPSTREAM --> CHANNELS["模型渠道<br/>协议、Base URL、API Key 和模型目录"]
+    CHANNELS --> DETECT["检测文本、图片、视频和音频能力"]
+    DETECT --> LOGICAL["绑定逻辑模型、优先级和默认模型"]
+    UPSTREAM --> SKILLS["Agent Skills<br/>分类、触发规则、能力约束和启停"]
+
+    SYSTEM --> SITE["站点资料<br/>名称、Logo、SEO、首页内容和友情链接"]
+    SYSTEM --> SETTINGS["基础设置<br/>注册、SMTP、默认参数、并发和安全"]
+    SYSTEM --> DELETION["注销申请<br/>筛选、受理、拒绝和处理备注"]
+    SYSTEM --> UPDATES["版本更新<br/>当前版本、Release、日志和升级检查"]
+
+    STORAGE --> LOCAL["本地媒体<br/>分类、归属、期限和引用保护删除"]
+    STORAGE --> S3["外部存储<br/>S3 配置、连接检测、对象管理和迁移"]
+    STORAGE --> BACKUP["数据备份<br/>导入导出和完整备份边界"]
+
+    CONTENT --> ANNOUNCEMENT["公告管理<br/>创建、编辑、置顶、发布和下线"]
+    CONTENT --> PROMPT["提示词管理<br/>搜索、分类、标签和展示状态"]
+
+    SETUP["初始化配置 /admin/setup"] --> SITE
+    SETUP --> CHANNELS
+    SETUP --> SETTINGS
+    SETUP --> PRODUCTS["套餐商品"]
+    SETUP --> PAYMENTS["支付渠道"]
+    SETUP --> S3
+    SETUP --> BACKUP
+
+    ANNOUNCEMENT --> PUBLIC_ANN["用户公告中心"]
+    PROMPT --> PUBLIC_PROMPT["用户公共提示词库"]
+    LOGICAL --> GENERATION["用户生成任务"]
+    SKILLS --> GENERATION
+```
+
+</details>
+
+<details>
+<summary><strong>09｜全平台服务端数据流程</strong></summary>
+
+```mermaid
+flowchart LR
+    PAGE["所有用户页和管理页"] --> CLIENT["前端 API Service"]
+    CLIENT --> ROUTE["Next.js Route Handler"]
+    ROUTE --> AUTH["Session、用户归属和角色鉴权"]
+    AUTH --> SERVICE["业务服务和任务编排"]
+
+    SERVICE --> REPO["Repository<br/>参数化查询和事务"]
+    REPO --> PG[("PostgreSQL 16")]
+
+    SERVICE --> ROUTER["逻辑模型路由"]
+    ROUTER --> PROVIDER["外部 AI 模型"]
+    PROVIDER --> TASK["幂等任务和状态轮询"]
+
+    TASK --> BILLING["积分扣费和套餐用量"]
+    BILLING --> PG
+
+    TASK -->|失败或取消| REFUND["幂等退款"]
+    REFUND --> PG
+
+    TASK --> MEDIA["媒体下载、规范化和登记"]
+    MEDIA --> SWITCH{"存储位置"}
+    SWITCH -->|本地| LOCAL["服务器数据目录"]
+    SWITCH -->|外部| S3["S3 兼容对象存储"]
+    MEDIA --> PG
+
+    PG --> RESPONSE["统一返回 code / data / msg"]
+    LOCAL --> RESPONSE
+    S3 --> RESPONSE
+    RESPONSE --> PAGE
+```
+
+</details>
 
 一条生成任务只调用一次上游创建接口，轮询只查询同一个任务。只有上游明确失败并且用户点击重试，才会创建新的 attempt，避免重复消耗额度。平台规划提示词、模型理由和复盘详情只用于内部执行，不显示或持久化到生成型对话。
 
-完整目录职责、Agent、媒体、计费和部署流程图见[项目结构与流程](docs/content/docs/overview/project-structure.mdx)。
+完整目录职责、Agent、媒体、计费和部署说明见[项目结构与流程](docs/content/docs/overview/project-structure.mdx)。
 
 ## 最低服务器配置
 

@@ -44,5 +44,7 @@ export function generateMetadata(): Metadata {
   return {
     title,
     description,
+    alternates: { canonical: "/docs" },
+    openGraph: { url: "/docs", title, description },
   };
 }

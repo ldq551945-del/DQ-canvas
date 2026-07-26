@@ -5,11 +5,11 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
+import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import type { CreateOverviewAsset, CreateOverviewMedia, CreateOverviewTask } from "@/lib/create-workbench-overview";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import type { StoredGenerationLogRecord } from "@/services/api/generation-logs";
 import { cn } from "@/lib/utils";
 
-import { canvasProjectPreviewMedia, type CreateOverviewAsset, type CreateOverviewMedia } from "../create-workbench-overview-data";
 import { useCreateWorkbenchOverview } from "../use-create-workbench-overview";
 
 const sectionTitleClass = "text-[15px] font-semibold text-[#20242a] dark:text-[#f3f5f7]";
@@ -17,8 +17,7 @@ const sectionHintClass = "mt-1 text-xs text-[#8b949f] dark:text-[#7f8996]";
 const panelClass = "rounded-2xl border border-[#e2e7eb] bg-white dark:border-[#2b3037] dark:bg-[#181b20]";
 
 export function CreateWorkbenchOverview() {
-    const { latestProject, runningTasks, recentAssets, canvasLoading, generationLoading, canvasError, generationError, reload } = useCreateWorkbenchOverview();
-    const overviewLoading = canvasLoading || generationLoading;
+    const { latestProject, runningTasks, recentAssets, loading, error, reload } = useCreateWorkbenchOverview();
 
     return (
         <div className="mt-3 w-full space-y-3 pb-3 sm:mt-12 sm:space-y-9 sm:pb-8">
@@ -35,8 +34,8 @@ export function CreateWorkbenchOverview() {
                     </Link>
                 </div>
                 <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1.55fr)_minmax(280px,0.9fr)] sm:mt-3 sm:gap-3">
-                    <LatestProjectCard project={latestProject} loading={canvasLoading} error={canvasError} onRetry={reload} />
-                    <RunningTasksCard tasks={runningTasks} loading={generationLoading} error={generationError} onRetry={reload} />
+                    <LatestProjectCard project={latestProject} loading={loading} error={error} onRetry={reload} />
+                    <RunningTasksCard tasks={runningTasks} loading={loading} error={error} onRetry={reload} />
                 </div>
             </section>
 
@@ -52,19 +51,19 @@ export function CreateWorkbenchOverview() {
                         查看素材库 <ArrowUpRight className="size-3.5" />
                     </Link>
                 </div>
-                {generationLoading ? <OverviewLoading label="正在读取最近生成..." /> : null}
-                {!generationLoading && generationError ? <OverviewError message={generationError} onRetry={reload} /> : null}
-                {!generationLoading && !generationError && recentAssets.length ? (
+                {loading ? <OverviewLoading label="正在读取最近生成..." /> : null}
+                {!loading && error ? <OverviewError message={error} onRetry={reload} /> : null}
+                {!loading && !error && recentAssets.length ? (
                     <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-3 sm:gap-3 sm:pt-3 lg:grid-cols-4">
                         {recentAssets.map((asset) => (
                             <RecentAssetCard key={asset.id} asset={asset} />
                         ))}
                     </div>
                 ) : null}
-                {!generationLoading && !generationError && !recentAssets.length ? <OverviewEmpty label="完成一次图片或视频生成后，结果会出现在这里" /> : null}
+                {!loading && !error && !recentAssets.length ? <OverviewEmpty label="完成一次图片或视频生成后，结果会出现在这里" /> : null}
             </section>
 
-            {overviewLoading ? <span className="sr-only">正在加载工作台概览</span> : null}
+            {loading ? <span className="sr-only">正在加载工作台概览</span> : null}
         </div>
     );
 }
@@ -89,7 +88,6 @@ function LatestProjectCard({ project, loading, error, onRetry }: { project?: Ret
             </div>
         );
 
-    const previews = canvasProjectPreviewMedia(project);
     return (
         <Link
             href={`/canvas/${project.id}`}
@@ -99,7 +97,7 @@ function LatestProjectCard({ project, loading, error, onRetry }: { project?: Ret
             )}
         >
             <div className="relative min-h-28 overflow-hidden bg-[#eef1f4] sm:min-h-44 dark:bg-[#252a31]">
-                <CanvasProjectCover previews={previews} />
+                <CanvasProjectCover previews={project.previews} />
                 <span className="absolute bottom-3 left-3 inline-flex items-center gap-1.5 rounded-md bg-black/60 px-2 py-1 text-[11px] font-medium text-white backdrop-blur-sm">
                     <Maximize2 className="size-3" /> Canvas 项目
                 </span>
@@ -109,7 +107,7 @@ function LatestProjectCard({ project, loading, error, onRetry }: { project?: Ret
                     <p className="text-[11px] text-[#8b949f] dark:text-[#7f8996]">最近编辑 · {formatRecentTime(project.updatedAt)}</p>
                     <h3 className="mt-2 truncate text-[17px] font-semibold text-[#20242a] dark:text-[#f3f5f7]">{project.title || "未命名项目"}</h3>
                     <p className="mt-2 text-xs text-[#697381] dark:text-[#9aa3af]">
-                        {project.nodes.length} 个节点 · {project.connections.length} 条连线
+                        {project.nodeCount} 个节点 · {project.connectionCount} 条连线
                     </p>
                 </div>
                 <span className="inline-flex w-fit items-center gap-1.5 rounded-lg bg-[#20242a] px-2.5 py-1.5 text-xs font-semibold text-white transition group-hover:bg-[#343b44] sm:px-3 sm:py-2 dark:bg-[#f3f5f7] dark:text-[#20242a] dark:group-hover:bg-white">
@@ -138,7 +136,7 @@ function CanvasProjectCover({ previews }: { previews: CreateOverviewMedia[] }) {
     return preview.kind === "image" ? (
         <img src={imagePreviewUrl(preview.url, 960)} alt="" loading="lazy" className={mediaClass} onError={() => setPreviewIndex((index) => index + 1)} />
     ) : (
-        <video src={preview.url} muted preload="metadata" playsInline className={mediaClass} onError={() => setPreviewIndex((index) => index + 1)} />
+        <video src={browserReadableMediaUrl(preview.url)} muted preload="metadata" playsInline className={mediaClass} onError={() => setPreviewIndex((index) => index + 1)} />
     );
 }
 
@@ -146,7 +144,7 @@ function RecentAssetCard({ asset }: { asset: CreateOverviewAsset }) {
     return (
         <div className="group min-w-0 overflow-hidden rounded-xl border border-[#e2e7eb] bg-white transition hover:border-[#cbd2d9] hover:shadow-[0_10px_26px_rgba(32,36,42,0.08)] dark:border-[#2b3037] dark:bg-[#181b20] dark:hover:border-[#3b424c] dark:hover:shadow-black/25">
             <div className="relative overflow-hidden bg-[#eef1f4] dark:bg-[#252a31]">
-                <AgentMediaPreview type={asset.kind} url={asset.url} title={asset.title} className="aspect-[4/3]" />
+                <AgentMediaPreview type={asset.kind} url={browserReadableMediaUrl(asset.url)} title={asset.title} className="aspect-[4/3]" />
                 <span className="pointer-events-none absolute left-2 top-2 inline-flex size-7 items-center justify-center rounded-lg bg-black/55 text-white backdrop-blur-sm" aria-hidden="true">
                     {asset.kind === "image" ? <FileImage className="size-3.5" /> : <Video className="size-3.5" />}
                 </span>
@@ -159,7 +157,7 @@ function RecentAssetCard({ asset }: { asset: CreateOverviewAsset }) {
     );
 }
 
-function RunningTasksCard({ tasks, loading, error, onRetry }: { tasks: StoredGenerationLogRecord[]; loading: boolean; error?: string; onRetry: () => void }) {
+function RunningTasksCard({ tasks, loading, error, onRetry }: { tasks: CreateOverviewTask[]; loading: boolean; error?: string; onRetry: () => void }) {
     return (
         <div className={cn(panelClass, "min-h-28 p-3 sm:min-h-48 sm:p-5")}>
             <div className="flex items-center justify-between gap-3">
@@ -185,7 +183,7 @@ function RunningTasksCard({ tasks, loading, error, onRetry }: { tasks: StoredGen
     );
 }
 
-function TaskRow({ task }: { task: StoredGenerationLogRecord }) {
+function TaskRow({ task }: { task: CreateOverviewTask }) {
     const isImage = task.kind === "image";
     const href = task.source === "canvas" ? "/canvas" : isImage ? "/image" : "/video";
     const Icon = isImage ? FileImage : Video;
@@ -195,7 +193,7 @@ function TaskRow({ task }: { task: StoredGenerationLogRecord }) {
                 <Icon className="size-4" />
             </span>
             <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium text-[#343b44] group-hover:text-[#20242a] dark:text-[#dce1e7] dark:group-hover:text-white">{task.title || task.prompt || (isImage ? "图片生成" : "视频生成")}</span>
+                <span className="block truncate text-xs font-medium text-[#343b44] group-hover:text-[#20242a] dark:text-[#dce1e7] dark:group-hover:text-white">{task.title || (isImage ? "图片生成" : "视频生成")}</span>
                 <span className="mt-1 block truncate text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{formatRecentTime(task.createdAt)} · 运行中</span>
             </span>
             <LoaderCircle className="size-4 shrink-0 animate-spin text-[#6e87db]" />

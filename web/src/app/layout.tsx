@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
-import { absoluteSiteUrl, browserIconHref, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
+import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import "antd/dist/reset.css";
 import "./globals.css";
 import React from "react";
@@ -21,12 +21,13 @@ export async function generateMetadata(): Promise<Metadata> {
     const site = await getPublicSiteSettings();
     const base = siteMetadataBase();
     const logoUrl = absoluteSiteUrl(site.logoUrl || "/logo.svg", base);
-    const iconUrl = absoluteSiteUrl(browserIconHref(site), base);
+    const iconUrl = absoluteSiteUrl("/favicon.ico", base);
     const title = site.seoTitle || site.title;
     return {
         metadataBase: base,
         title,
         description: site.seoDescription,
+        alternates: { canonical: "/" },
         icons: {
             icon: iconUrl,
             shortcut: iconUrl,
@@ -53,19 +54,17 @@ export async function generateMetadata(): Promise<Metadata> {
     };
 }
 
-export default async function RootLayout({
+export default function RootLayout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
-    const iconHref = browserIconHref(await getPublicSiteSettings());
-
     return (
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
-                <link rel="icon" href={iconHref} />
-                <link rel="shortcut icon" href={iconHref} />
-                <link rel="apple-touch-icon" href={iconHref} />
+                <link rel="icon" href="/favicon.ico" />
+                <link rel="shortcut icon" href="/favicon.ico" />
+                <link rel="apple-touch-icon" href="/favicon.ico" />
             </head>
             <body
                 className="bg-background text-foreground antialiased"

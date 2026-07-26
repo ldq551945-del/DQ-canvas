@@ -14,6 +14,7 @@ import { updateTextTask } from "@/lib/server/text-task-store";
 import type { AiTextMessage } from "@/types/ai";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,7 +103,7 @@ async function runTextTask(task: TextTask, origin: string, cookie: string) {
                 attempts = finishGenerationAttempt(attempts, candidateTask.attemptNo, { status: "succeeded", pointsCost: result.pointsCost, pointsRecordId: result.pointsRecordId });
                 const current = await getTextTask(task.id);
                 if (current?.status === "cancelled") {
-                    if (result.pointsCost && result.pointsRecordId) await refundUserPoints(task.userId, generationModelId(config), result.pointsCost, "text", 1, undefined, result.pointsRecordId);
+                    if (hasSystemAiCharge(result)) await refundUserPoints(task.userId, generationModelId(config), result.pointsCost, "text", 1, undefined, result.pointsRecordId);
                     return;
                 }
                 const completed = await transitionTextTask(candidateTask, ["running"], {
@@ -113,7 +114,7 @@ async function runTextTask(task: TextTask, origin: string, cookie: string) {
                     config: clearSecret(config),
                 });
                 await updateTextTask(task.id, { config: clearSecret(config), candidateConfigs: [], attempts, attemptNo: candidateTask.attemptNo });
-                if (!completed && result.pointsCost && result.pointsRecordId) await refundUserPoints(task.userId, generationModelId(config), result.pointsCost, "text", 1, undefined, result.pointsRecordId);
+                if (!completed && hasSystemAiCharge(result)) await refundUserPoints(task.userId, generationModelId(config), result.pointsCost, "text", 1, undefined, result.pointsRecordId);
                 return;
             } catch (error) {
                 latestError = error;
@@ -401,7 +402,9 @@ function isInternalSystemProxyBase(value: string) {
 function taskHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
     const headers = new Headers();
     if (config.baseUrl.startsWith("/") && cookie) headers.set("cookie", cookie);
-    if (config.baseUrl.startsWith("/") && pointsIdempotencyKey) headers.set("x-vozeb-pro-points-idempotency-key", pointsIdempotencyKey);
+    if (config.baseUrl.startsWith("/")) {
+        Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey)).forEach(([key, value]) => headers.set(key, value));
+    }
     if (config.apiFormat === "gemini") headers.set("x-goog-api-key", config.apiKey);
     else headers.set("authorization", `Bearer ${config.apiKey}`);
     return headers;
@@ -431,15 +434,13 @@ function readPointsRemaining(headers: Headers) {
 }
 
 function readBilling(headers: Headers) {
-    const pointsCost = Number(headers.get("x-vozeb-pro-points-cost"));
     return {
         pointsRemaining: readPointsRemaining(headers),
-        pointsCost: Number.isFinite(pointsCost) && pointsCost > 0 ? pointsCost : undefined,
-        pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
+        ...readSystemAiBilling(headers),
     };
 }
 
 async function refundChargedTextResponse(task: TextTask, headers: Headers) {
-    const { pointsCost, pointsRecordId } = readBilling(headers);
-    if (pointsCost && pointsRecordId) await refundUserPoints(task.userId, generationModelId(task.config), pointsCost, "text", 1, undefined, pointsRecordId);
+    const billing = readSystemAiBilling(headers);
+    if (hasSystemAiCharge(billing)) await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }

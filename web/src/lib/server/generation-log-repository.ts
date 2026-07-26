@@ -20,7 +20,7 @@ const SERVER_ASSET_DOWNLOAD_TIMEOUT_MS = 15000;
 
 let mutationQueue = Promise.resolve();
 
-export function sourceLabel(source: GenerationLogSource) {
+export function sourceLabel(source: string) {
     if (source === "agent") return "Agent 工作台";
     if (source === "image-workbench") return "生图工作台";
     if (source === "video-workbench") return "视频创作台";
@@ -29,7 +29,7 @@ export function sourceLabel(source: GenerationLogSource) {
     return "未知入口";
 }
 
-export function kindLabel(kind: GenerationLogKind) {
+export function kindLabel(kind: string) {
     return kind === "video" ? "视频" : "图片";
 }
 

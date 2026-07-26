@@ -1,36 +1,56 @@
 import type { CreativeMessage } from "@/lib/creative-runtime-contract";
-import { listCreativeAssets, listCreativeConversations, listCreativeMessages } from "@/services/api/creative";
+import type { WorkbenchWorkspace } from "@/lib/workbench-session-contract";
+import { getCreativeWorkbenchSession, listCreativeWorkbenchSessions } from "@/services/api/creative";
 
 import type { WorkbenchAgentMessage, WorkbenchAgentSession } from "./workbench-agent-panel";
 
-type Workspace = "image" | "video";
-
-export async function loadWorkbenchAgentSessions(workspace: Workspace, userId: string) {
+export async function loadWorkbenchAgentSessions(workspace: WorkbenchWorkspace, userId: string) {
     if (!userId) return [];
-    const title = workspace === "image" ? "图片工作台对话" : "视频工作台对话";
-    const source = workspace === "image" ? "image-workbench" : "video-workbench";
-    const conversations = (await listCreativeConversations(source)).filter((conversation) => conversation.title === title);
-    const sessions = await Promise.all(
-        conversations.map(async (conversation): Promise<WorkbenchAgentSession | null> => {
-            const [messages, assets] = await Promise.all([listCreativeMessages(conversation.id), listCreativeAssets(conversation.id)]);
-            const workspaceMessages = messages.filter((message) => message.metadata.workspace === workspace);
-            if (!workspaceMessages.length) return null;
-            const storedRecordId = assets.map((asset) => asset.metadata.generationLogId).find((value): value is string => typeof value === "string" && Boolean(value));
-            const recordId = storedRecordId?.replace(`${workspace}-workbench:`, "");
-            const lastPrompt = workspaceMessages.findLast((message) => message.role === "user")?.content || "";
-            return {
-                id: conversation.id,
-                recordId,
-                creativeConversationId: conversation.id,
-                title: workspaceMessages.find((message) => message.role === "user")?.content.slice(0, 24) || conversation.title,
-                messages: workspaceMessages.map(toWorkbenchMessage),
-                prompt: "",
-                lastPrompt,
-                updatedAt: conversation.updatedAt,
-            };
-        }),
+    const sessions = await listCreativeWorkbenchSessions(workspace);
+    return normalizeWorkbenchAgentSessions(
+        sessions.map((session) => ({
+            id: session.id,
+            recordId: normalizeRecordId(workspace, session.recordId),
+            creativeConversationId: session.id,
+            title: session.title,
+            messages: [],
+            prompt: "",
+            lastPrompt: session.lastPrompt,
+            searchText: session.searchText,
+            loaded: false,
+            updatedAt: session.updatedAt,
+        })),
     );
-    return normalizeWorkbenchAgentSessions(sessions.filter((session): session is WorkbenchAgentSession => Boolean(session)));
+}
+
+export async function loadWorkbenchAgentSession(workspace: WorkbenchWorkspace, session: WorkbenchAgentSession) {
+    if (session.loaded) return session;
+    const detail = await getCreativeWorkbenchSession(session.creativeConversationId || session.id, workspace);
+    return normalizeWorkbenchAgentSessions([
+        {
+            ...session,
+            recordId: normalizeRecordId(workspace, detail.recordId) || session.recordId,
+            messages: detail.messages.map(toWorkbenchMessage),
+            loaded: true,
+            hasOlderMessages: detail.hasMore,
+            oldestSequence: detail.nextBeforeSequence,
+        },
+    ])[0];
+}
+
+export async function loadOlderWorkbenchAgentSession(workspace: WorkbenchWorkspace, session: WorkbenchAgentSession) {
+    if (!session.loaded || !session.hasOlderMessages || !session.oldestSequence) return session;
+    const detail = await getCreativeWorkbenchSession(session.creativeConversationId || session.id, workspace, session.oldestSequence);
+    const existingIds = new Set(session.messages.map((message) => message.id));
+    const olderMessages = detail.messages.map(toWorkbenchMessage).filter((message) => !existingIds.has(message.id));
+    return normalizeWorkbenchAgentSessions([
+        {
+            ...session,
+            messages: [...olderMessages, ...session.messages],
+            hasOlderMessages: detail.hasMore,
+            oldestSequence: detail.nextBeforeSequence,
+        },
+    ])[0];
 }
 
 export function normalizeWorkbenchAgentSessions(sessions: WorkbenchAgentSession[]) {
@@ -51,8 +71,12 @@ export function normalizeWorkbenchAgentSessions(sessions: WorkbenchAgentSession[
     });
 }
 
-export function saveWorkbenchAgentSessions(_workspace: Workspace, _userId: string, sessions: WorkbenchAgentSession[]) {
+export function saveWorkbenchAgentSessions(_workspace: WorkbenchWorkspace, _userId: string, sessions: WorkbenchAgentSession[]) {
     return Promise.resolve(sessions);
+}
+
+function normalizeRecordId(workspace: WorkbenchWorkspace, value?: string) {
+    return value?.replace(`${workspace}-workbench:`, "") || undefined;
 }
 
 export function matchesWorkbenchHistoryQuery(query: string, ...values: string[]) {
@@ -71,6 +95,7 @@ export function removeWorkbenchAgentSessionsForRecords(sessions: WorkbenchAgentS
 function toWorkbenchMessage(message: CreativeMessage): WorkbenchAgentMessage {
     return {
         id: message.id,
+        sequence: message.sequence,
         role: message.role === "user" ? "user" : message.status === "failed" ? "error" : "assistant",
         text: message.content,
     };

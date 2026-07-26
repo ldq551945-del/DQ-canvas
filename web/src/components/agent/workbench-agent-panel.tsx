@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Bot, BookOpen, Check, Circle, CircleStop, History, LoaderCircle, Plus, Search, SlidersHorizontal, XCircle } from "lucide-react";
 import { Button, Input, Popover, Tooltip } from "antd";
 
@@ -76,15 +76,44 @@ export function WorkbenchBackgroundTaskNotice({ count }: { count: number }) {
     return <div className="mx-1 mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-200">有 {count} 个后台生成任务仍在运行，可在历史记录中查看进度。</div>;
 }
 
-export function WorkbenchAgentConversation({ messages, running, onChoice, onEditMessage }: { messages: WorkbenchAgentMessage[]; running: boolean; onChoice?: (choice: WorkbenchAgentChoice) => void; onEditMessage: (text: string) => void }) {
+export function WorkbenchAgentConversation({
+    messages,
+    running,
+    hasOlderMessages = false,
+    olderMessagesLoading = false,
+    onLoadOlder,
+    onChoice,
+    onEditMessage,
+}: {
+    messages: WorkbenchAgentMessage[];
+    running: boolean;
+    hasOlderMessages?: boolean;
+    olderMessagesLoading?: boolean;
+    onLoadOlder?: () => void;
+    onChoice?: (choice: WorkbenchAgentChoice) => void;
+    onEditMessage: (text: string) => void;
+}) {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const scrollStateRef = useRef<{ firstId?: string; height: number }>({ height: 0 });
     const hasActiveProgress = messages.some((message) => message.progress?.phase === "planning" || message.progress?.phase === "submitting");
-    useEffect(() => {
-        const frame = window.requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }));
-        return () => window.cancelAnimationFrame(frame);
+    useLayoutEffect(() => {
+        const container = scrollRef.current;
+        if (!container) return;
+        const firstId = messages[0]?.id;
+        const previous = scrollStateRef.current;
+        if (previous.firstId && firstId !== previous.firstId && messages.some((message) => message.id === previous.firstId)) container.scrollTop += container.scrollHeight - previous.height;
+        else container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+        scrollStateRef.current = { firstId, height: container.scrollHeight };
     }, [messages]);
     return (
         <div ref={scrollRef} className="thin-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto px-1 py-3 sm:space-y-4 sm:py-4" aria-live="polite">
+            {hasOlderMessages ? (
+                <div className="flex justify-center">
+                    <Button type="text" size="small" loading={olderMessagesLoading} disabled={olderMessagesLoading} onClick={onLoadOlder}>
+                        加载更早对话
+                    </Button>
+                </div>
+            ) : null}
             {messages.map((message) => {
                 const displayMessage = { ...message, text: formatAgentMessageText(message.text) };
                 return (

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { getPublicUsersByIds } from "@/lib/auth/store";
-import { cleanupExpiredLocalMediaAssets, deleteLocalMediaAssets, listLocalMediaAssets } from "@/lib/server/local-media-storage";
+import { cleanupExpiredLocalMediaAssets, deleteLocalMediaAssets, getLocalMediaAssetSummary, listLocalMediaAssets } from "@/lib/server/local-media-storage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,6 +13,7 @@ export async function GET(request: Request) {
     if (currentUser.role !== "admin") return NextResponse.json({ error: "需要管理员权限" }, { status: 403 });
 
     const params = new URL(request.url).searchParams;
+    if (params.get("summaryOnly") === "1") return NextResponse.json({ code: 0, data: { summary: await getLocalMediaAssetSummary() }, msg: "OK" });
     const data = await listLocalMediaAssets({
         page: Number(params.get("page") || 1),
         pageSize: Number(params.get("pageSize") || 20),

@@ -23,7 +23,7 @@ import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadines
 import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
 import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
 import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
-import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
+import { AdminOverview } from "@/components/admin/admin-overview";
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
@@ -69,6 +69,7 @@ import dayjs from "dayjs";
 import { nanoid } from "nanoid";
 
 import { formatCreditAmount } from "@/constant/credits";
+import { emptyAdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
 import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
 import type {
     AgentSkill,
@@ -158,6 +159,7 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const promptRequestIdRef = useRef(0);
     const userRequestIdRef = useRef(0);
     const generationLogRequestIdRef = useRef(0);
+    const operationsSummaryRequestIdRef = useRef(0);
     const [users, setUsers] = useState(initialUsers);
     const [userSummary, setUserSummary] = useState(initialUserSummary);
     const [usersLoading, setUsersLoading] = useState(false);
@@ -170,6 +172,8 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
     const [settingsLoading, setSettingsLoading] = useState(false);
     const [assetStats, setAssetStats] = useState<GenerationAssetStats | null>(null);
+    const [operationsSummary, setOperationsSummary] = useState(emptyAdminGenerationOverviewSummary);
+    const [operationsSummaryLoading, setOperationsSummaryLoading] = useState(false);
     const [mailTestLoading, setMailTestLoading] = useState(false);
     const [mailTestTo, setMailTestTo] = useState("");
     const [fetchingModelId, setFetchingModelId] = useState("");
@@ -249,7 +253,6 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         }),
         [settings.entitlements.plans, setupSummary?.enabledPlanProducts, userSummary],
     );
-    const operationsSummary = useMemo(() => buildOperationsSummary(generationLogs, settings.systemChannels), [generationLogs, settings.systemChannels]);
     const filteredUsers = users;
     const selectedUsers = useMemo(() => users.filter((user) => selectedUserIds.includes(user.id)), [selectedUserIds, users]);
     const selectedPrompts = useMemo(() => prompts.filter((prompt) => selectedPromptIds.includes(prompt.id)), [prompts, selectedPromptIds]);
@@ -276,6 +279,7 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         promptRequestIdRef,
         userRequestIdRef,
         generationLogRequestIdRef,
+        operationsSummaryRequestIdRef,
         users,
         setUsers,
         userSummary,
@@ -300,6 +304,10 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         setSettingsLoading,
         assetStats,
         setAssetStats,
+        operationsSummary,
+        setOperationsSummary,
+        operationsSummaryLoading,
+        setOperationsSummaryLoading,
         mailTestLoading,
         setMailTestLoading,
         mailTestTo,
@@ -427,7 +435,6 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         stats,
         settingsSummary,
         walletSummary,
-        operationsSummary,
         filteredUsers,
         selectedUsers,
         selectedPrompts,

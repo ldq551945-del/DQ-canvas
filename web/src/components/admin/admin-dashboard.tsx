@@ -262,6 +262,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
         selectedGenerationLogIds,
         setSelectedGenerationLogIds,
         generationLogsLoading,
+        operationsSummaryLoading,
         setGenerationLogsLoading,
         bulkDeletingGenerationLogs,
         setBulkDeletingGenerationLogs,
@@ -344,6 +345,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
         allCreatedCdkSelected,
         saveSettings,
         loadBillingSummary,
+        loadOperationsSummary,
         loadGenerationAssetStats,
         updateUser,
         createUser,
@@ -482,8 +484,8 @@ export function AdminDashboard(props: AdminDashboardProps) {
                             promptCount={promptCount}
                             assetStats={assetStats}
                             enabledProducts={setupSummary?.enabledProducts || 0}
-                            loading={generationLogsLoading}
-                            onRefresh={() => void loadGenerationLogs(1, { pageSize: 80 })}
+                            loading={operationsSummaryLoading}
+                            onRefresh={() => void loadOperationsSummary()}
                         />
                     ) : null}
                     {activeSection === "site" ? <AdminSiteSection controller={controller} /> : null}

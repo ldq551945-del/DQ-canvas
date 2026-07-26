@@ -1,6 +1,7 @@
 .next/
 out/
 node_modules/
+.pnpm-store/
 .env*
 !.env.example
 .data/
@@ -19,6 +20,7 @@ VOZEB-PRO-审计报告.md
 VOZEB-PRO项目缺陷检查报告.md
 修复验证报告.md
 商业落地和用户体验评估报告.md
+商业版功能缺口分析报告.md
 项目文件流程图.md
 scripts/capture-readme-screenshots.mjs
 **/__pycache__/

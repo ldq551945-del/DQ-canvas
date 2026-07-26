@@ -134,38 +134,24 @@ export async function listLocalMediaRegistrationPage(input: { page?: number; pag
     const source = isMediaSourceGroup(input.source) ? input.source : null;
     const search = (input.search || "").trim().slice(0, 160);
     const params = [storageClass, type, source, search];
-    const [itemsResult, totalResult, summaryResult] = await Promise.all([
+    const [itemsResult, totalResult, summary] = await Promise.all([
         postgresQuery(`${localMediaPageSelect()} ${localMediaPageWhere()} ORDER BY created_at DESC LIMIT $5 OFFSET $6`, [...params, pageSize, (page - 1) * pageSize]),
         postgresQuery<{ total: string | number }>(`SELECT count(*) AS total FROM local_media_assets ${localMediaPageWhere()}`, params),
-        postgresQuery<Record<string, unknown>>(
-            `SELECT
-                count(*)::int AS total_files,
-                coalesce(sum(bytes), 0) AS total_bytes,
-                count(*) FILTER (WHERE storage_class = 'temporary')::int AS temporary_files,
-                coalesce(sum(bytes) FILTER (WHERE storage_class = 'temporary'), 0) AS temporary_bytes,
-                count(*) FILTER (WHERE storage_class = 'permanent')::int AS permanent_files,
-                coalesce(sum(bytes) FILTER (WHERE storage_class = 'permanent'), 0) AS permanent_bytes,
-                count(*) FILTER (WHERE storage_class = 'temporary' AND expires_at <= now())::int AS expired_temporary_files
-             FROM local_media_assets
-             WHERE storage_provider = 'local'`,
-        ),
+        queryPostgresLocalMediaRegistrationSummary(),
     ]);
-    const summary = summaryResult.rows[0] || {};
     return {
         items: itemsResult.rows.map(mapRegistration),
         total: Number(totalResult.rows[0]?.total || 0),
         page,
         pageSize,
-        summary: {
-            totalFiles: Number(summary.total_files || 0),
-            totalBytes: Number(summary.total_bytes || 0),
-            temporaryFiles: Number(summary.temporary_files || 0),
-            temporaryBytes: Number(summary.temporary_bytes || 0),
-            permanentFiles: Number(summary.permanent_files || 0),
-            permanentBytes: Number(summary.permanent_bytes || 0),
-            expiredTemporaryFiles: Number(summary.expired_temporary_files || 0),
-        },
+        summary,
     };
+}
+
+export async function getLocalMediaRegistrationSummary(): Promise<LocalMediaRegistrationPage["summary"]> {
+    if (getDatabaseProvider() !== "postgres") return summarizeLocalRegistrations((await readRegistry()).assets);
+    await ensurePostgresSchema();
+    return queryPostgresLocalMediaRegistrationSummary();
 }
 
 export async function listMediaRegistrationsByExternalObjectKeys(objectKeys: string[]) {
@@ -309,6 +295,31 @@ function summarizeLocalRegistrations(items: LocalMediaRegistration[]) {
         permanentFiles: permanent.length,
         permanentBytes: sumRegistrationBytes(permanent),
         expiredTemporaryFiles: temporary.filter((item) => item.expiresAt && Date.parse(item.expiresAt) <= Date.now()).length,
+    };
+}
+
+async function queryPostgresLocalMediaRegistrationSummary(): Promise<LocalMediaRegistrationPage["summary"]> {
+    const result = await postgresQuery<Record<string, unknown>>(
+        `SELECT
+            count(*)::int AS total_files,
+            coalesce(sum(bytes), 0) AS total_bytes,
+            count(*) FILTER (WHERE storage_class = 'temporary')::int AS temporary_files,
+            coalesce(sum(bytes) FILTER (WHERE storage_class = 'temporary'), 0) AS temporary_bytes,
+            count(*) FILTER (WHERE storage_class = 'permanent')::int AS permanent_files,
+            coalesce(sum(bytes) FILTER (WHERE storage_class = 'permanent'), 0) AS permanent_bytes,
+            count(*) FILTER (WHERE storage_class = 'temporary' AND expires_at <= now())::int AS expired_temporary_files
+         FROM local_media_assets
+         WHERE storage_provider = 'local'`,
+    );
+    const row = result.rows[0] || {};
+    return {
+        totalFiles: Number(row.total_files || 0),
+        totalBytes: Number(row.total_bytes || 0),
+        temporaryFiles: Number(row.temporary_files || 0),
+        temporaryBytes: Number(row.temporary_bytes || 0),
+        permanentFiles: Number(row.permanent_files || 0),
+        permanentBytes: Number(row.permanent_bytes || 0),
+        expiredTemporaryFiles: Number(row.expired_temporary_files || 0),
     };
 }
 

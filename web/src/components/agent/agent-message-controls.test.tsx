@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { agentMediaDownloadName } from "./agent-media-download";
 import { formatAgentMessageText } from "./agent-message-format";
-import { AgentMediaPreview } from "./agent-media-preview";
+import { agentMediaPreviewPopupStyles, AgentMediaPreview } from "./agent-media-preview";
 import { AgentMessageActions } from "./agent-message-actions";
 
 describe("agent message controls", () => {
@@ -28,9 +28,10 @@ describe("agent message controls", () => {
     });
 
     it("renders clickable image and video preview entries", () => {
+        const onDimensions = vi.fn();
         const image = renderToStaticMarkup(
             <App>
-                <AgentMediaPreview type="image" url="/generated/image.png" title="生成图片" fit="contain" />
+                <AgentMediaPreview type="image" url="/generated/image.png" title="生成图片" fit="contain" onDimensions={onDimensions} />
             </App>,
         );
         const video = renderToStaticMarkup(
@@ -44,6 +45,10 @@ describe("agent message controls", () => {
         expect(image).toContain("object-contain");
         expect(image).toContain("max-h-[min(42dvh,360px)]");
         expect(image).not.toContain("object-cover");
+        expect(agentMediaPreviewPopupStyles.popup.root).toMatchObject({ position: "fixed", inset: 0, width: "100vw", height: "100dvh" });
+        expect(agentMediaPreviewPopupStyles.popup.mask).toMatchObject({ position: "fixed", inset: 0 });
+        expect(agentMediaPreviewPopupStyles.popup.body).toMatchObject({ position: "fixed", inset: 0, alignItems: "center", justifyContent: "center" });
+        expect(image).not.toContain("rootClassName");
         expect(video).toContain('aria-label="打开视频：生成视频"');
         expect(video).toContain('src="/generated/video.mp4"');
     });

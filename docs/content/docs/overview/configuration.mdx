@@ -22,6 +22,7 @@ description: VOZEB PRO 环境变量、模型渠道、服务器媒体与支付配
 | `VOZEB_PRO_COOKIE_SECURE`      | 否              | 留空自动判断；特殊代理可强制 `true/false`                                     |
 | `VOZEB_PRO_TRUSTED_PROXY_HOPS` | 否              | 速率限制读取代理 IP 时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1` |
 | `VOZEB_PRO_MAINTENANCE_TOKEN`  | 推荐            | 外部计划任务调用维护接口的 Bearer Token，至少 32 个字符                       |
+| `VOZEB_PRO_APP_URL`            | 文档站可选      | 独立文档站使用的主应用地址，使文档 favicon 跟随后台站点图标                   |
 | `FFMPEG_PATH`                  | 否              | 本机 FFmpeg 不在 PATH 时填写；Docker 已内置 FFmpeg                            |
 
 ## PostgreSQL
@@ -54,6 +55,14 @@ POSTGRES_PASSWORD=replace-with-a-strong-database-password
 ```dotenv
 NEXT_PUBLIC_SITE_URL=https://vozeb-pro.example.com
 ```
+
+独立部署文档站时，可在文档容器设置主应用地址：
+
+```dotenv
+VOZEB_PRO_APP_URL=https://vozeb-pro.example.com
+```
+
+文档站的 `/favicon.ico` 会通过主应用同名入口读取后台配置的站点图标；未配置时继续使用文档镜像内置 Logo，不会连接主应用数据库。
 
 上游模型需要网络代理时：
 

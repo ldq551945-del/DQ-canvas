@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
     appendCreativeConversationExchange: vi.fn(),
     getCreativeConversation: vi.fn(),
     registerCreativeAssets: vi.fn(),
+    getCreativeWorkbenchSessionDetail: vi.fn(),
+    listCreativeWorkbenchSessionSummaries: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
 }));
 
@@ -19,8 +21,12 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     updateCreativeConversation: vi.fn(),
 }));
 vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writePersistentMediaDataUrl }));
+vi.mock("@/lib/server/creative-workbench-session-store", () => ({
+    getCreativeWorkbenchSessionDetail: mocks.getCreativeWorkbenchSessionDetail,
+    listCreativeWorkbenchSessionSummaries: mocks.listCreativeWorkbenchSessionSummaries,
+}));
 
-import { appendWorkbenchExchangeForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
+import { appendWorkbenchExchangeForUser, getWorkbenchSessionForUser, listWorkbenchSessionsForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
 
 function file(name: string, type: string, size = 4): File {
     return { name, type, size, arrayBuffer: async () => new Uint8Array(Math.min(size, 4)).buffer } as File;
@@ -30,6 +36,8 @@ describe("创作会话素材上传", () => {
     beforeEach(() => {
         mocks.appendCreativeConversationExchange.mockReset().mockResolvedValue({});
         mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active" });
+        mocks.getCreativeWorkbenchSessionDetail.mockReset().mockResolvedValue({ id: "conversation-one", messages: [], hasMore: false });
+        mocks.listCreativeWorkbenchSessionSummaries.mockReset().mockResolvedValue([]);
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.registerCreativeAssets.mockReset().mockImplementation(async ([input]) => [{ ...input, id: "asset-one", status: "ready", metadata: input.metadata || {}, createdAt: 1, updatedAt: 1 }]);
     });
@@ -91,5 +99,16 @@ describe("创作会话素材上传", () => {
         });
         expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("workbenchPlan");
         expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("resolvedPrompt");
+    });
+
+    it("validates workbench summary and detail boundaries", async () => {
+        await listWorkbenchSessionsForUser("user-one", "image", 101);
+        await getWorkbenchSessionForUser("user-one", "conversation-one", "video");
+
+        expect(mocks.listCreativeWorkbenchSessionSummaries).toHaveBeenCalledWith("user-one", "image", 101);
+        expect(mocks.getCreativeWorkbenchSessionDetail).toHaveBeenCalledWith("user-one", "conversation-one", "video", 0);
+        expect(() => listWorkbenchSessionsForUser("user-one", "audio", 10)).toThrow("工作台类型不正确");
+        mocks.getCreativeWorkbenchSessionDetail.mockResolvedValueOnce(null);
+        await expect(getWorkbenchSessionForUser("user-one", "missing", "image")).rejects.toMatchObject({ status: 404 });
     });
 });

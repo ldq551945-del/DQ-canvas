@@ -12,6 +12,8 @@ import {
     updateCreativeConversation,
 } from "@/lib/server/creative-runtime-store";
 import { writePersistentMediaDataUrl } from "@/lib/server/reference-asset-store";
+import { getCreativeWorkbenchSessionDetail, listCreativeWorkbenchSessionSummaries } from "@/lib/server/creative-workbench-session-store";
+import type { WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 
 export class CreativeRuntimeServiceError extends Error {
     constructor(
@@ -42,6 +44,20 @@ export function listConversationsForUser(userId: string, input: { surface?: stri
     if (input.source && !source) throw new CreativeRuntimeServiceError("创作会话来源不正确", 400);
     const status = normalizeStatus(input.status);
     return listCreativeConversations(userId, { surface: surface || undefined, source: source || undefined, status, limit: Number(input.limit), offset: Number(input.offset) });
+}
+
+export function listWorkbenchSessionsForUser(userId: string, workspaceValue: unknown, limit: number) {
+    const workspace = normalizeWorkbenchWorkspace(workspaceValue);
+    if (!workspace) throw new CreativeRuntimeServiceError("工作台类型不正确", 400);
+    return listCreativeWorkbenchSessionSummaries(userId, workspace, limit);
+}
+
+export async function getWorkbenchSessionForUser(userId: string, id: string, workspaceValue: unknown, beforeSequence = 0) {
+    const workspace = normalizeWorkbenchWorkspace(workspaceValue);
+    if (!workspace) throw new CreativeRuntimeServiceError("工作台类型不正确", 400);
+    const session = await getCreativeWorkbenchSessionDetail(userId, id, workspace, Math.max(0, Math.floor(beforeSequence)));
+    if (!session) throw new CreativeRuntimeServiceError("工作台会话不存在", 404);
+    return session;
 }
 
 export async function getConversationForUser(userId: string, id: string) {
@@ -203,6 +219,10 @@ export async function registerGenerationTaskAssetsForUser(
 
 function normalizeStatus(value: unknown): CreativeConversationStatus | undefined {
     return value === "active" || value === "archived" ? value : undefined;
+}
+
+function normalizeWorkbenchWorkspace(value: unknown): WorkbenchWorkspace | null {
+    return value === "image" || value === "video" ? value : null;
 }
 
 function creativeAssetType(mimeType: string): Exclude<CreativeAssetType, "text"> | null {

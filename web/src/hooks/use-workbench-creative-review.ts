@@ -18,7 +18,7 @@ export function useWorkbenchCreativeReview(input: { workspace: "image" | "video"
         const key = input.recordId;
         if (requested.current.has(key)) return;
         requested.current.add(key);
-        void reviewWorkbenchCreativeOutput({ workspace: input.workspace, foundation: context.foundation, deliverables: context.deliverables, assets: assetsRef.current })
+        void reviewWorkbenchCreativeOutput({ recordId: input.recordId, workspace: input.workspace, foundation: context.foundation, deliverables: context.deliverables, assets: assetsRef.current })
             .then((review) => reviews.current.set(key, review))
             .catch(() => undefined);
     }, [assetKey, input.completed, input.recordId, input.reviewContext, input.workspace]);

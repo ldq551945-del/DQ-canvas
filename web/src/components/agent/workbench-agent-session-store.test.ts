@@ -2,14 +2,21 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkbenchAgentSession } from "./workbench-agent-panel";
 
 const mocks = vi.hoisted(() => ({
-    listCreativeAssets: vi.fn(),
-    listCreativeConversations: vi.fn(),
-    listCreativeMessages: vi.fn(),
+    getCreativeWorkbenchSession: vi.fn(),
+    listCreativeWorkbenchSessions: vi.fn(),
 }));
 
 vi.mock("@/services/api/creative", () => mocks);
 
-import { findWorkbenchAgentSessionForRecord, loadWorkbenchAgentSessions, matchesWorkbenchHistoryQuery, normalizeWorkbenchAgentSessions, removeWorkbenchAgentSessionsForRecords } from "./workbench-agent-session-store";
+import {
+    findWorkbenchAgentSessionForRecord,
+    loadOlderWorkbenchAgentSession,
+    loadWorkbenchAgentSession,
+    loadWorkbenchAgentSessions,
+    matchesWorkbenchHistoryQuery,
+    normalizeWorkbenchAgentSessions,
+    removeWorkbenchAgentSessionsForRecords,
+} from "./workbench-agent-session-store";
 
 const sessions: WorkbenchAgentSession[] = [
     { id: "linked", recordId: "record-1", title: "已关联", messages: [], prompt: "提示词一", lastPrompt: "提示词一", updatedAt: 2 },
@@ -30,30 +37,67 @@ describe("工作台会话与生成记录", () => {
     });
 
     it("loads video sessions only from the video workbench source", async () => {
-        mocks.listCreativeConversations.mockResolvedValue([
-            { id: "video-conversation", title: "视频工作台对话", updatedAt: 9 },
-            { id: "other-title", title: "普通 Agent 对话", updatedAt: 8 },
-        ]);
-        mocks.listCreativeMessages.mockResolvedValue([
-            { id: "user-message", role: "user", status: "completed", content: "生成产品视频", metadata: { workspace: "video" } },
-            {
-                id: "assistant-message",
-                role: "assistant",
-                status: "completed",
-                content: "已收到生成需求。",
-                metadata: { workspace: "video", workbenchPlan: { resolvedPrompt: "内部提示词", decisions: [{ label: "模型" }], foundation: { brief: {} } } },
-            },
-        ]);
-        mocks.listCreativeAssets.mockResolvedValue([{ metadata: { generationLogId: "video-workbench:record-1" } }]);
+        mocks.listCreativeWorkbenchSessions.mockResolvedValue([{ id: "video-conversation", title: "生成产品视频", lastPrompt: "生成产品视频", searchText: "生成产品视频 已收到生成需求。", recordId: "video-workbench:record-1", updatedAt: 9 }]);
 
         const result = await loadWorkbenchAgentSessions("video", "user-1");
 
-        expect(mocks.listCreativeConversations).toHaveBeenCalledWith("video-workbench");
-        expect(result).toEqual([expect.objectContaining({ id: "video-conversation", recordId: "record-1", lastPrompt: "生成产品视频" })]);
-        expect(result[0].messages[1]).toEqual(expect.objectContaining({ text: "已收到生成需求。" }));
-        expect(result[0].messages[1]).not.toHaveProperty("foundation");
-        expect(result[0].messages[1]).not.toHaveProperty("decisions");
-        expect(mocks.listCreativeMessages).toHaveBeenCalledTimes(1);
+        expect(mocks.listCreativeWorkbenchSessions).toHaveBeenCalledWith("video");
+        expect(result).toEqual([expect.objectContaining({ id: "video-conversation", recordId: "record-1", lastPrompt: "生成产品视频", searchText: "生成产品视频 已收到生成需求。", loaded: false })]);
+        expect(result[0].messages).toEqual([]);
+    });
+
+    it("loads complete messages only after a history item is opened", async () => {
+        mocks.getCreativeWorkbenchSession.mockResolvedValue({
+            id: "video-conversation",
+            recordId: "video-workbench:record-1",
+            hasMore: false,
+            messages: [
+                { id: "user-message", role: "user", status: "completed", content: "生成产品视频", metadata: { workspace: "video" } },
+                { id: "assistant-message", role: "assistant", status: "completed", content: "已收到生成需求。", metadata: { workspace: "video" } },
+            ],
+        });
+
+        const result = await loadWorkbenchAgentSession("video", {
+            id: "video-conversation",
+            creativeConversationId: "video-conversation",
+            title: "生成产品视频",
+            messages: [],
+            prompt: "",
+            lastPrompt: "生成产品视频",
+            updatedAt: 9,
+        });
+
+        expect(mocks.getCreativeWorkbenchSession).toHaveBeenCalledWith("video-conversation", "video");
+        expect(result).toMatchObject({ recordId: "record-1", loaded: true });
+        expect(result.messages).toEqual([expect.objectContaining({ role: "user", text: "生成产品视频" }), expect.objectContaining({ role: "assistant", text: "已收到生成需求。" })]);
+    });
+
+    it("prepends an older page without duplicating messages", async () => {
+        mocks.getCreativeWorkbenchSession.mockResolvedValue({
+            id: "video-conversation",
+            hasMore: false,
+            nextBeforeSequence: 1,
+            messages: [
+                { id: "older", sequence: 1, role: "user", status: "completed", content: "最早需求", metadata: { workspace: "video" } },
+                { id: "existing", sequence: 2, role: "assistant", status: "completed", content: "已确认", metadata: { workspace: "video" } },
+            ],
+        });
+
+        const result = await loadOlderWorkbenchAgentSession("video", {
+            id: "video-conversation",
+            title: "视频会话",
+            messages: [{ id: "existing", sequence: 2, role: "assistant", text: "已确认" }],
+            prompt: "",
+            lastPrompt: "最早需求",
+            loaded: true,
+            hasOlderMessages: true,
+            oldestSequence: 2,
+            updatedAt: 9,
+        });
+
+        expect(mocks.getCreativeWorkbenchSession).toHaveBeenCalledWith("video-conversation", "video", 2);
+        expect(result.messages.map((message) => message.id)).toEqual(["older", "existing"]);
+        expect(result.hasOlderMessages).toBe(false);
     });
 
     it("finds the linked session first and falls back to an exact legacy prompt", () => {

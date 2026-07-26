@@ -35,5 +35,7 @@ export function generateMetadata(): Metadata {
   return {
     title,
     description,
+    alternates: { canonical: "/docs/progress/changelog" },
+    openGraph: { url: "/docs/progress/changelog", title, description },
   };
 }

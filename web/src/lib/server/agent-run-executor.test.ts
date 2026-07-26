@@ -598,6 +598,38 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 2, "text", 1, undefined, "points-agent-plan");
         expect(mocks.run?.status).toBe("failed");
     });
+
+    it("refunds a zero-cost planning record when persisting the conversation reply fails", async () => {
+        mocks.run = planningRun("你在吗？");
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "在的。" }] }] }, { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-agent-free" } }));
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch, event, allowedStatuses, expectedExecutionId) => {
+            if (!mocks.run || (allowedStatuses && !allowedStatuses.includes(mocks.run.status)) || (expectedExecutionId && mocks.run.executionId !== expectedExecutionId)) return null;
+            if (event?.type === "run.completed") throw new Error("conversation persistence failed");
+            mocks.run = { ...mocks.run, ...patch };
+            if (event) mocks.events.push(event);
+            return mocks.run;
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 0, "text", 1, undefined, "points-agent-free");
+        expect(mocks.run?.status).toBe("failed");
+    });
+
+    it("refunds a completed planning call when the run is cancelled before persistence", async () => {
+        mocks.run = planningRun("你在吗？");
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async () => {
+            mocks.run = mocks.run ? { ...mocks.run, status: "cancelled" } : null;
+            return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "在的。" }] }] }, { headers: { "x-vozeb-pro-points-cost": "3", "x-vozeb-pro-points-record-id": "points-agent-cancelled" } });
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 3, "text", 1, undefined, "points-agent-cancelled");
+        expect(mocks.run?.status).toBe("cancelled");
+    });
 });
 
 function runWithTasks(tasks: AgentRunTask[]): AgentRun {

@@ -176,7 +176,9 @@ export function generationKindLabel(value: string) {
 }
 
 export function generationSourceLabel(value: string) {
+    if (value === "agent") return "Agent 工作台";
     if (value === "canvas") return "画布";
+    if (value === "drama") return "短剧";
     if (value === "video-workbench") return "视频创作台";
     if (value === "image-workbench") return "生图工作台";
     return "未知入口";

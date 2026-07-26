@@ -10,6 +10,7 @@ import { resolveLogicalBillingModel } from "@/lib/server/logical-model-router";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
+import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER } from "@/lib/server/system-ai-billing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,8 +92,9 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         classifyPointsRequest(request.method, channel.apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
         classifyConfiguredPointsRequest(request.method, path, contentType, requestBody.pointsPayload, channel.id, globalPreset?.createPath || channel.advancedConfig?.createPath, settings.logicalModels, settings.generationPointMultipliers);
     if (pointsRequest?.model && !channelHasModel(channel.models, pointsRequest.model)) return NextResponse.json({ error: "该模型未在后台渠道中启用" }, { status: 403 });
-    const billingModel = pointsRequest && pointsRequest.usageKind !== "api" ? resolveLogicalBillingModel(settings.logicalModels, pointsRequest.usageKind, channel.id, pointsRequest.model) : pointsRequest?.model;
-    const pointsIdempotencyBase = normalizePointsIdempotencyKey(request.headers.get("x-vozeb-pro-points-idempotency-key"));
+    const billingModel =
+        pointsRequest && pointsRequest.usageKind !== "api" ? resolveLogicalBillingModel(settings.logicalModels, pointsRequest.usageKind, channel.id, pointsRequest.model, request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "") : pointsRequest?.model;
+    const pointsIdempotencyBase = normalizePointsIdempotencyKey(request.headers.get(SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER));
     const pointsIdempotencyKey = pointsIdempotencyBase ? `system-ai:${pointsIdempotencyBase}:${path.join("/")}` : undefined;
     let pointsResult: Awaited<ReturnType<typeof consumeUserPoints>> | null = null;
     let refundedPointsRemaining: number | null = null;

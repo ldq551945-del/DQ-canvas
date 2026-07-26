@@ -19,6 +19,7 @@ import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-o
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { fetchOptionalResponses } from "@/lib/server/responses-request";
 import { checkRateLimit } from "@/lib/server/security";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 
 export const runtime = "nodejs";
 
@@ -77,7 +78,7 @@ export async function POST(request: Request) {
         let latestError: unknown;
         for (const candidate of candidates) {
             try {
-                const call = await requestFunctionCall(resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || "", candidate.channel.id, candidate.upstreamModel, messages, user.id, tool);
+                const call = await requestFunctionCall(resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || "", candidate.channel.id, candidate.upstreamModel, model, messages, user.id, tool);
                 try {
                     const parsed = JSON.parse(call.args);
                     const data = phase === "visual" ? normalizeDramaVisualAnalysis(parsed, visualInput!.shotIds) : normalizeDramaContentAnalysis(parsed, settings.generationDefaults.videoSeconds, script);
@@ -91,7 +92,7 @@ export async function POST(request: Request) {
                     if (typeof call.pointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(call.pointsRemaining));
                     return response;
                 } catch (error) {
-                    if (call.pointsCost) refundedPointsRemaining = (await refund(user.id, model, call))?.pointsBalance;
+                    if (hasSystemAiCharge(call)) refundedPointsRemaining = (await refund(user.id, model, call))?.pointsBalance;
                     throw error;
                 }
             } catch (error) {
@@ -106,9 +107,18 @@ export async function POST(request: Request) {
     }
 }
 
-async function requestFunctionCall(origin: string, cookie: string, channelId: string, model: string, messages: Array<{ role: string; content: string }>, userId: string, tool: { name: string; description: string; parameters: Record<string, unknown> }) {
+async function requestFunctionCall(
+    origin: string,
+    cookie: string,
+    channelId: string,
+    model: string,
+    billingModel: string,
+    messages: Array<{ role: string; content: string }>,
+    userId: string,
+    tool: { name: string; description: string; parameters: Record<string, unknown> },
+) {
     const base = `${origin}/api/ai/system/${encodeURIComponent(channelId)}`;
-    const headers = { "Content-Type": "application/json", cookie };
+    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel) };
     const response = await fetchOptionalResponses(`${base}/responses`, {
         method: "POST",
         headers,
@@ -212,12 +222,10 @@ function normalizeVisualAssets(value: unknown) {
 
 function readCallResult(args: string, headers: Headers) {
     const remaining = Number(headers.get("x-vozeb-pro-points-remaining"));
-    const cost = Number(headers.get("x-vozeb-pro-points-cost"));
     return {
         args,
         pointsRemaining: Number.isFinite(remaining) ? remaining : undefined,
-        pointsCost: Number.isFinite(cost) && cost > 0 ? cost : undefined,
-        pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
+        ...readSystemAiBilling(headers),
     };
 }
 
@@ -230,10 +238,9 @@ function describeArgumentsText(value: string) {
     }
 }
 
-async function refund(userId: string, model: string, source: Headers | { pointsCost?: number; pointsRecordId?: string }) {
-    const cost = source instanceof Headers ? Number(source.get("x-vozeb-pro-points-cost")) : source.pointsCost;
-    const pointsRecordId = source instanceof Headers ? source.get("x-vozeb-pro-points-record-id") || undefined : source.pointsRecordId;
-    return Number.isFinite(cost) && Number(cost) > 0 && pointsRecordId ? refundUserPoints(userId, model, Number(cost), "text", 1, undefined, pointsRecordId) : null;
+async function refund(userId: string, model: string, source: Headers | SystemAiBilling) {
+    const billing = source instanceof Headers ? readSystemAiBilling(source) : source;
+    return hasSystemAiCharge(billing) ? refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId) : null;
 }
 
 function texts(value: unknown, limit: number) {

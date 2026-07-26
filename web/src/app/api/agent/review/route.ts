@@ -9,7 +9,7 @@ import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { checkRateLimit } from "@/lib/server/security";
 import { normalizeCreativeReviewAssets } from "./creative-review-assets";
 
-type ReviewBody = { workspace?: unknown; foundation?: unknown; deliverables?: unknown; assets?: unknown };
+type ReviewBody = { recordId?: unknown; workspace?: unknown; foundation?: unknown; deliverables?: unknown; assets?: unknown };
 
 export async function POST(request: Request) {
     const user = await getCurrentUser();
@@ -24,6 +24,8 @@ export async function POST(request: Request) {
         throw error;
     }
     const workspace = body.workspace === "video" ? "video" : "image";
+    const recordId = typeof body.recordId === "string" ? body.recordId.trim() : "";
+    if (!recordId || recordId.length > 160) return NextResponse.json({ code: 400, data: null, msg: "复盘记录标识无效" }, { status: 400 });
     const foundation = normalizeCreativeFoundation(body.foundation, workspace === "image" ? "检查当前图片结果" : "检查当前视频结果");
     const deliverables = normalizeCreativeDeliverables(body.deliverables, { title: workspace === "image" ? "当前图片" : "当前视频", type: workspace, role: "当前创作结果" });
     const assets = normalizeCreativeReviewAssets(body.assets, workspace);
@@ -31,6 +33,7 @@ export async function POST(request: Request) {
         origin: resolveInternalOrigin(new URL(request.url).origin),
         cookie: request.headers.get("cookie") || "",
         userId: user.id,
+        billingId: recordId,
         foundation,
         tasks: [
             {

@@ -78,6 +78,17 @@ describe("workbench agent model routing", () => {
         expect(userMessage?.content).not.toContain("forged.example.com");
     });
 
+    it("sends the logical billing model, stable request key, and cancellation signal", async () => {
+        const response = await POST(workbenchRequest({ requestId: "request-one", prompt: "生成商品图", workspace: "image" }));
+        const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
+        const headers = new Headers(init.headers);
+
+        expect(response.status).toBe(200);
+        expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
+        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
     it("loads and records the shared creative conversation", async () => {
         mocks.getCreativeConversationContext.mockResolvedValue({
             summary: "用户正在制作咖啡品牌视觉。",
@@ -206,6 +217,39 @@ describe("workbench agent model routing", () => {
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/backup/"))).toBe(true);
     });
 
+    it("uses distinct idempotency keys for different planner bindings on the same channel", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [{ ...settings.systemChannels[0], models: [...settings.systemChannels[0].models, "vendor/planner-backup"] }],
+            logicalModels: settings.logicalModels.map((model) =>
+                model.id === "planner"
+                    ? {
+                          ...model,
+                          bindings: [...model.bindings, { id: "planner-backup-binding", channelId: "main", upstreamModel: "vendor/planner-backup", enabled: true, priority: 2 }],
+                      }
+                    : model,
+            ),
+        });
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => {
+            const body = JSON.parse(String(init?.body)) as { model?: string };
+            if (body.model === "vendor/planner") return new Response("provider unavailable", { status: 503 });
+            return Response.json({
+                output: [{ type: "function_call", name: "plan_workbench_action", arguments: JSON.stringify({ parameterPatch: { model: "image-logical" }, resolvedPrompt: "备用模型规划", shouldGenerate: false, reply: "备用模型已接管。" }) }],
+            });
+        });
+
+        const response = await POST(workbenchRequest({ requestId: "same-channel-failover", prompt: "规划商品图", workspace: "image" }));
+        const calls = mocks.fetchInternalApi.mock.calls.map(([, init]) => ({
+            model: (JSON.parse(String(init?.body)) as { model?: string }).model,
+            key: new Headers(init?.headers).get("x-vozeb-pro-points-idempotency-key"),
+        }));
+
+        expect(response.status).toBe(200);
+        expect(calls.find((call) => call.model === "vendor/planner")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
+        expect(calls.find((call) => call.model === "vendor/planner-backup")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
+        expect(calls.find((call) => call.model === "vendor/planner")?.key).not.toBe(calls.find((call) => call.model === "vendor/planner-backup")?.key);
+    });
+
     it("accepts strict JSON from chat providers that do not support tool calls", async () => {
         mocks.fetchInternalApi.mockResolvedValueOnce(new Response("responses unavailable", { status: 502 })).mockResolvedValueOnce(
             Response.json({
@@ -248,6 +292,40 @@ describe("workbench agent model routing", () => {
         expect(response.status).toBe(502);
         expect(await response.json()).toMatchObject({ data: null, msg: "文本模型没有返回工作台执行计划" });
         expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 1, "text", 1, undefined, "points-workbench-1");
+    });
+
+    it("refunds the free-text quota when a zero-cost planner response is invalid", async () => {
+        mocks.fetchInternalApi
+            .mockResolvedValueOnce(new Response("responses unavailable", { status: 502 }))
+            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "not structured" } }] }, { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-workbench-free" } }));
+
+        const response = await POST(workbenchRequest({ requestId: "free-plan", prompt: "规划咖啡海报", workspace: "image" }));
+
+        expect(response.status).toBe(502);
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 0, "text", 1, undefined, "points-workbench-free");
+    });
+
+    it("refunds a valid planner call when conversation persistence fails", async () => {
+        mocks.fetchInternalApi.mockResolvedValueOnce(
+            Response.json(
+                {
+                    output: [
+                        {
+                            type: "function_call",
+                            name: "plan_workbench_action",
+                            arguments: JSON.stringify({ parameterPatch: { model: "image-logical" }, resolvedPrompt: "商品主图", shouldGenerate: true, reply: "开始" }),
+                        },
+                    ],
+                },
+                { headers: { "x-vozeb-pro-points-cost": "2", "x-vozeb-pro-points-record-id": "points-save-failed" } },
+            ),
+        );
+        mocks.appendWorkbenchExchangeForUser.mockRejectedValueOnce(new Error("会话写入失败"));
+
+        const response = await POST(workbenchRequest({ requestId: "save-failed", conversationId: "conversation-one", prompt: "生成商品图", workspace: "image" }));
+
+        expect(response.status).toBe(500);
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 2, "text", 1, undefined, "points-save-failed");
     });
 
     it("offers actionable alternatives when a matched skill requires a reference", async () => {

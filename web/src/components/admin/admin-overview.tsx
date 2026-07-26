@@ -7,6 +7,7 @@ import { generationKindLabel, generationSourceLabel } from "@/components/admin/a
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { formatAdminMoney } from "@/components/admin/admin-values";
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
+import type { AdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
 import type { SystemModelChannel } from "@/lib/auth/store";
 import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 
@@ -14,7 +15,7 @@ type OverviewStats = { total: number; active: number; admins: number };
 type SettingsSummary = { totalChannels: number; enabledChannels: number };
 type WalletSummary = { enabledPlans: number; usersWithPlan: number };
 type DistributionItem = { label: string; value: number; percent: number };
-type OperationsSummary = ReturnType<typeof buildOperationsSummary>;
+type OperationsSummary = AdminGenerationOverviewSummary;
 type AdminOverviewProps = {
     stats: OverviewStats;
     settingsSummary: SettingsSummary;
@@ -35,7 +36,7 @@ export function AdminOverview({ stats, settingsSummary, walletSummary, billingSu
                 <Metric label="用户总数" value={stats.total} detail={stats.active + " 个可用账号"} icon={<UsersRound className="size-5" />} tone="slate" />
                 <Metric label="接口配置" value={settingsSummary.enabledChannels} detail={"共 " + settingsSummary.totalChannels + " 个渠道"} icon={<PlugZap className="size-5" />} tone="emerald" />
                 <Metric label="实收金额" value={formatAdminMoney(billingSummary?.orders.paidAmountCents || 0)} detail={(billingSummary?.orders.paid || 0) + " 笔已支付订单"} icon={<CircleDollarSign className="size-5" />} tone="slate" />
-                <Metric label="今日调用" value={operationsSummary.dailyCalls.at(-1)?.value || 0} detail={"最近 " + operationsSummary.totalCalls + " 次调用"} icon={<Database className="size-5" />} tone="slate" />
+                <Metric label="今日调用" value={operationsSummary.dailyCalls.at(-1)?.value || 0} detail={`近 ${operationsSummary.windowDays} 日 ${operationsSummary.totalCalls} 次调用`} icon={<Database className="size-5" />} tone="slate" />
             </section>
             <Panel>
                 <PanelHeader
@@ -51,7 +52,7 @@ export function AdminOverview({ stats, settingsSummary, walletSummary, billingSu
                 />
                 <div className="admin-resource-grid grid grid-cols-2 lg:grid-cols-4">
                     <ResourceStat label="成功调用" value={operationsSummary.successCalls + " 次"} detail={"成功率 " + operationsSummary.successRate + "%"} />
-                    <ResourceStat label="活跃用户" value={operationsSummary.activeUsers + " 人"} detail="来自最近生成日志" />
+                    <ResourceStat label="活跃用户" value={operationsSummary.activeUsers + " 人"} detail={`近 ${operationsSummary.windowDays} 日去重用户`} />
                     <ResourceStat label="上架商品" value={enabledProducts + " 个"} detail={walletSummary.enabledPlans + " 个在售套餐"} />
                     <ResourceStat label="本地预览资源" value={assetStats ? assetStats.totalFiles + " 个" : "-"} detail={assetStats ? formatBytes(assetStats.totalBytes) : "等待统计"} />
                 </div>
@@ -80,7 +81,7 @@ function ModelDistributionPanel({ items, emptyText }: { items: DistributionItem[
     const displayItems = items.length ? items : [{ label: emptyText, value: 0, percent: 100 }];
     return (
         <Panel>
-            <PanelHeader title="模型分布" description="统计最近调用中不同模型的请求占比，便于调整默认模型和套餐成本。" />
+            <PanelHeader title="模型分布" description="统计近 7 日不同模型的请求占比，便于调整默认模型和套餐成本。" />
             <div className="grid gap-3 p-3 sm:gap-6 sm:p-5 lg:grid-cols-[220px_minmax(0,1fr)]">
                 <div className="flex items-center justify-center">
                     <DonutChart items={items} emptyText={emptyText} totalLabel="请求总量" variant="large" />

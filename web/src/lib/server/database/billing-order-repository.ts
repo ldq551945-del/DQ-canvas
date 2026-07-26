@@ -1,6 +1,6 @@
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type { BillingOrderRecord, BillingOrderStatus, BillingSummaryRecord, PageInput, PageResult } from "./repository-shared";
-import { jsonParam, mapBillingOrder, normalizePage, normalizePageSize, numberValue, pageResult, stringValue } from "./repository-shared";
+import { jsonParam, jsonValue, mapBillingOrder, normalizePage, normalizePageSize, numberValue, pageResult, stringValue } from "./repository-shared";
 
 export class BillingOrderRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -77,10 +77,21 @@ export class BillingOrderRepository {
     }
 
     async getSummary(input: { startDate?: string; endDate?: string } = {}): Promise<BillingSummaryRecord> {
-        const params = [input.startDate || null, input.endDate || null];
-        const [orders, payments, providers, reconciliation] = await Promise.all([
-            this.db.query(
-                `
+        const result = await this.db.query<Record<string, unknown>>(
+            `
+            WITH scoped_orders AS MATERIALIZED (
+                SELECT id, provider, status, amount_cents
+                FROM billing_orders
+                WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+                  AND ($2::timestamptz IS NULL OR created_at <= $2)
+            ),
+            scoped_payments AS MATERIALIZED (
+                SELECT order_id, status, amount_cents
+                FROM payment_transactions
+                WHERE ($1::timestamptz IS NULL OR created_at >= $1)
+                  AND ($2::timestamptz IS NULL OR created_at <= $2)
+            ),
+            order_summary AS (
                 SELECT
                     count(*) AS total,
                     count(*) FILTER (WHERE status = 'pending') AS pending,
@@ -92,27 +103,17 @@ export class BillingOrderRepository {
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0) AS paid_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'pending'), 0) AS pending_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount_cents
-                FROM billing_orders
-                WHERE ($1::timestamptz IS NULL OR created_at >= $1)
-                  AND ($2::timestamptz IS NULL OR created_at <= $2)
-                `,
-                params,
+                FROM scoped_orders
             ),
-            this.db.query(
-                `
+            payment_summary AS (
                 SELECT
                     count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
                     count(*) FILTER (WHERE status = 'refunded') AS refunded,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'succeeded'), 0) AS succeeded_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount_cents
-                FROM payment_transactions
-                WHERE ($1::timestamptz IS NULL OR created_at >= $1)
-                  AND ($2::timestamptz IS NULL OR created_at <= $2)
-                `,
-                params,
+                FROM scoped_payments
             ),
-            this.db.query(
-                `
+            provider_summary AS (
                 SELECT
                     provider,
                     count(*) AS total_orders,
@@ -121,74 +122,115 @@ export class BillingOrderRepository {
                     count(*) FILTER (WHERE status = 'refunded') AS refunded_orders,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'paid'), 0) AS paid_amount_cents,
                     coalesce(sum(amount_cents) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount_cents
-                FROM billing_orders
-                WHERE ($1::timestamptz IS NULL OR created_at >= $1)
-                  AND ($2::timestamptz IS NULL OR created_at <= $2)
+                FROM scoped_orders
                 GROUP BY provider
-                ORDER BY paid_amount_cents DESC, total_orders DESC
-                `,
-                params,
             ),
-            this.db.query(
-                `
+            reconciliation_summary AS (
                 SELECT
-                    count(*) FILTER (
-                        WHERE bo.status = 'paid'
+                    (
+                        SELECT count(*)
+                        FROM scoped_orders order_row
+                        WHERE order_row.status = 'paid'
                           AND NOT EXISTS (
-                              SELECT 1 FROM payment_transactions pt
-                              WHERE pt.order_id = bo.id AND pt.status = 'succeeded'
+                              SELECT 1
+                              FROM payment_transactions payment_row
+                              WHERE payment_row.order_id = order_row.id AND payment_row.status = 'succeeded'
                           )
                     ) AS paid_orders_without_succeeded_payment,
-                    count(*) FILTER (
-                        WHERE pt.status = 'succeeded' AND bo.status <> 'paid'
+                    (
+                        SELECT count(*)
+                        FROM payment_transactions payment_row
+                        JOIN scoped_orders order_row ON order_row.id = payment_row.order_id
+                        WHERE payment_row.status = 'succeeded' AND order_row.status NOT IN ('paid', 'refunded')
                     ) AS succeeded_payments_without_paid_order,
-                    count(*) FILTER (
-                        WHERE pt.status IN ('succeeded', 'refunded') AND pt.amount_cents <> bo.amount_cents
+                    (
+                        SELECT count(*)
+                        FROM payment_transactions payment_row
+                        JOIN scoped_orders order_row ON order_row.id = payment_row.order_id
+                        WHERE payment_row.status IN ('succeeded', 'refunded') AND payment_row.amount_cents <> order_row.amount_cents
                     ) AS amount_mismatch_payments
-                FROM billing_orders bo
-                LEFT JOIN payment_transactions pt ON pt.order_id = bo.id
-                WHERE ($1::timestamptz IS NULL OR bo.created_at >= $1)
-                  AND ($2::timestamptz IS NULL OR bo.created_at <= $2)
-                `,
-                params,
-            ),
-        ]);
+            )
+            SELECT
+                order_summary.total AS order_total,
+                order_summary.pending AS order_pending,
+                order_summary.paid AS order_paid,
+                order_summary.closed AS order_closed,
+                order_summary.canceled AS order_canceled,
+                order_summary.refunded AS order_refunded,
+                order_summary.gross_amount_cents AS order_gross_amount_cents,
+                order_summary.paid_amount_cents AS order_paid_amount_cents,
+                order_summary.pending_amount_cents AS order_pending_amount_cents,
+                order_summary.refunded_amount_cents AS order_refunded_amount_cents,
+                payment_summary.succeeded AS payment_succeeded,
+                payment_summary.refunded AS payment_refunded,
+                payment_summary.succeeded_amount_cents AS payment_succeeded_amount_cents,
+                payment_summary.refunded_amount_cents AS payment_refunded_amount_cents,
+                coalesce((
+                    SELECT jsonb_agg(
+                        jsonb_build_object(
+                            'provider', provider,
+                            'totalOrders', total_orders,
+                            'pendingOrders', pending_orders,
+                            'paidOrders', paid_orders,
+                            'refundedOrders', refunded_orders,
+                            'paidAmountCents', paid_amount_cents,
+                            'refundedAmountCents', refunded_amount_cents
+                        )
+                        ORDER BY paid_amount_cents DESC, total_orders DESC, provider ASC
+                    )
+                    FROM provider_summary
+                ), '[]'::jsonb) AS providers,
+                reconciliation_summary.paid_orders_without_succeeded_payment,
+                reconciliation_summary.succeeded_payments_without_paid_order,
+                reconciliation_summary.amount_mismatch_payments
+            FROM order_summary
+            CROSS JOIN payment_summary
+            CROSS JOIN reconciliation_summary
+            `,
+            [input.startDate || null, input.endDate || null],
+        );
 
-        const orderRow = orders.rows[0] || {};
-        const paymentRow = payments.rows[0] || {};
-        const reconciliationRow = reconciliation.rows[0] || {};
+        const row = result.rows[0] || {};
+        const providers = jsonValue(row.providers);
         return {
             orders: {
-                total: numberValue(orderRow.total),
-                pending: numberValue(orderRow.pending),
-                paid: numberValue(orderRow.paid),
-                closed: numberValue(orderRow.closed),
-                canceled: numberValue(orderRow.canceled),
-                refunded: numberValue(orderRow.refunded),
-                grossAmountCents: numberValue(orderRow.gross_amount_cents),
-                paidAmountCents: numberValue(orderRow.paid_amount_cents),
-                pendingAmountCents: numberValue(orderRow.pending_amount_cents),
-                refundedAmountCents: numberValue(orderRow.refunded_amount_cents),
+                total: numberValue(row.order_total),
+                pending: numberValue(row.order_pending),
+                paid: numberValue(row.order_paid),
+                closed: numberValue(row.order_closed),
+                canceled: numberValue(row.order_canceled),
+                refunded: numberValue(row.order_refunded),
+                grossAmountCents: numberValue(row.order_gross_amount_cents),
+                paidAmountCents: numberValue(row.order_paid_amount_cents),
+                pendingAmountCents: numberValue(row.order_pending_amount_cents),
+                refundedAmountCents: numberValue(row.order_refunded_amount_cents),
             },
             payments: {
-                succeeded: numberValue(paymentRow.succeeded),
-                refunded: numberValue(paymentRow.refunded),
-                succeededAmountCents: numberValue(paymentRow.succeeded_amount_cents),
-                refundedAmountCents: numberValue(paymentRow.refunded_amount_cents),
+                succeeded: numberValue(row.payment_succeeded),
+                refunded: numberValue(row.payment_refunded),
+                succeededAmountCents: numberValue(row.payment_succeeded_amount_cents),
+                refundedAmountCents: numberValue(row.payment_refunded_amount_cents),
             },
-            providers: providers.rows.map((row) => ({
-                provider: stringValue(row.provider) || "unknown",
-                totalOrders: numberValue(row.total_orders),
-                pendingOrders: numberValue(row.pending_orders),
-                paidOrders: numberValue(row.paid_orders),
-                refundedOrders: numberValue(row.refunded_orders),
-                paidAmountCents: numberValue(row.paid_amount_cents),
-                refundedAmountCents: numberValue(row.refunded_amount_cents),
-            })),
+            providers: Array.isArray(providers)
+                ? providers.flatMap((item): BillingSummaryRecord["providers"] => {
+                      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+                      return [
+                          {
+                              provider: stringValue(item.provider) || "unknown",
+                              totalOrders: numberValue(item.totalOrders),
+                              pendingOrders: numberValue(item.pendingOrders),
+                              paidOrders: numberValue(item.paidOrders),
+                              refundedOrders: numberValue(item.refundedOrders),
+                              paidAmountCents: numberValue(item.paidAmountCents),
+                              refundedAmountCents: numberValue(item.refundedAmountCents),
+                          },
+                      ];
+                  })
+                : [],
             reconciliation: {
-                paidOrdersWithoutSucceededPayment: numberValue(reconciliationRow.paid_orders_without_succeeded_payment),
-                succeededPaymentsWithoutPaidOrder: numberValue(reconciliationRow.succeeded_payments_without_paid_order),
-                amountMismatchPayments: numberValue(reconciliationRow.amount_mismatch_payments),
+                paidOrdersWithoutSucceededPayment: numberValue(row.paid_orders_without_succeeded_payment),
+                succeededPaymentsWithoutPaidOrder: numberValue(row.succeeded_payments_without_paid_order),
+                amountMismatchPayments: numberValue(row.amount_mismatch_payments),
             },
         };
     }

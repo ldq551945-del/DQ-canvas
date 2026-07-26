@@ -41,5 +41,7 @@ export function getDocPageMetadata(page: DocPageData): Metadata {
   return {
     title: page.data.title,
     description: page.data.description,
+    alternates: { canonical: page.url },
+    openGraph: { url: page.url, title: page.data.title, description: page.data.description },
   };
 }

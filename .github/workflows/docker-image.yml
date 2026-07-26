@@ -4,7 +4,7 @@ run-name: 主应用多架构镜像 · ${{ github.ref_name }}
 on:
   push:
     branches: ["main"]
-    tags: ["v*"]
+    tags: ["v*", "VOZEB-PRO-v*"]
   workflow_dispatch:
 
 permissions:

@@ -7,7 +7,7 @@ import { classifyManagedMediaType, isManagedMediaType, isMediaSourceGroup, media
 import { resolveServerDataPath } from "@/lib/server/data-dir";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
-import { deleteLocalMediaRegistrations, getLocalMediaRegistration, listLocalMediaRegistrationPage, listLocalMediaRegistrations, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { deleteLocalMediaRegistrations, getLocalMediaRegistration, getLocalMediaRegistrationSummary, listLocalMediaRegistrationPage, listLocalMediaRegistrations, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
 import { deleteExternalMediaObject } from "@/lib/server/object-storage-service";
 
 export const GENERATION_MEDIA_ROOT = resolveServerDataPath("generation-assets");
@@ -62,6 +62,11 @@ export async function listLocalMediaAssets(input: { page?: number; pageSize?: nu
             expiredTemporaryFiles: all.filter((asset) => asset.storageClass === "temporary" && asset.expiresAt && Date.parse(asset.expiresAt) <= Date.now()).length,
         },
     };
+}
+
+export async function getLocalMediaAssetSummary() {
+    if (getDatabaseProvider() === "postgres") return getLocalMediaRegistrationSummary();
+    return (await listLocalMediaAssets({ page: 1, pageSize: 1 })).summary;
 }
 
 async function listRegisteredLocalMediaAssets(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string }) {

@@ -16,6 +16,7 @@ import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
 import type { AgentFunctionCallResult } from "./agent-function-call";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
 
 const AGENT_WORK_COLUMN_X = 400;
 const AGENT_NODE_START_Y = 96;
@@ -416,6 +417,7 @@ async function reviewCompletedTasks(run: AgentRun, origin: string, cookie: strin
         origin,
         cookie,
         userId: run.userId,
+        billingId: run.id,
         foundation,
         tasks: run.tasks.map((task) => ({ id: task.id, title: task.title, type: task.type, prompt: task.prompt, resultSummary: resultSummary(task.result), imageUrls: task.type === "image" ? taskImageUrls(task.result) : [] })),
     });
@@ -436,7 +438,7 @@ export async function requestFunctionCall(
     pointsIdempotencyKey?: string,
 ) {
     const base = `${origin}/api/ai/system/${encodeURIComponent(channelId)}`;
-    const requestHeaders = { "Content-Type": "application/json", cookie, ...(pointsIdempotencyKey ? { "x-vozeb-pro-points-idempotency-key": pointsIdempotencyKey } : {}) };
+    const requestHeaders = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, pointsIdempotencyKey) };
     const response = await fetchOptionalResponses(`${base}/responses`, {
         method: "POST",
         headers: requestHeaders,
@@ -482,24 +484,21 @@ export function responseOutputText(payload: { output_text?: string; output?: Arr
 }
 
 export function readFunctionCallResult(argumentsText: string, headers: Headers): AgentFunctionCallResult {
-    const pointsCost = Number(headers.get("x-vozeb-pro-points-cost"));
     const pointsRemaining = Number(headers.get("x-vozeb-pro-points-remaining"));
     return {
         arguments: argumentsText,
-        pointsCost: Number.isFinite(pointsCost) && pointsCost > 0 ? pointsCost : undefined,
         pointsRemaining: Number.isFinite(pointsRemaining) ? pointsRemaining : undefined,
-        pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
+        ...readSystemAiBilling(headers),
     };
 }
 
 export async function refundFunctionCall(userId: string, model: string, call: AgentFunctionCallResult) {
-    if (call.pointsCost && call.pointsRecordId) await refundUserPoints(userId, model, call.pointsCost, "text", 1, undefined, call.pointsRecordId);
+    if (hasSystemAiCharge(call)) await refundUserPoints(userId, model, call.pointsCost, "text", 1, undefined, call.pointsRecordId);
 }
 
 export async function refundTextResponse(userId: string, model: string, headers: Headers) {
-    const cost = Number(headers.get("x-vozeb-pro-points-cost"));
-    const pointsRecordId = headers.get("x-vozeb-pro-points-record-id") || undefined;
-    if (Number.isFinite(cost) && cost > 0 && pointsRecordId) await refundUserPoints(userId, model, cost, "text", 1, undefined, pointsRecordId);
+    const billing = readSystemAiBilling(headers);
+    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }
 
 export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin: string, cookie: string, executionId: string) {

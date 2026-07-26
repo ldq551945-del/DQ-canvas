@@ -4,6 +4,7 @@ import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveLogicalModel } from "@/lib/server/logical-model-router";
 import { fetchOptionalResponses } from "@/lib/server/responses-request";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 
 export type CreativeReviewTaskInput = {
     id: string;
@@ -14,9 +15,9 @@ export type CreativeReviewTaskInput = {
     imageUrls?: string[];
 };
 
-type ReviewCall = { arguments: string; pointsCost?: number; pointsRecordId?: string };
+type ReviewCall = { arguments: string } & SystemAiBilling;
 
-export async function reviewCreativeOutputs(input: { origin: string; cookie: string; userId: string; foundation: CreativeFoundation; tasks: CreativeReviewTaskInput[] }): Promise<CreativeReview> {
+export async function reviewCreativeOutputs(input: { origin: string; cookie: string; userId: string; billingId?: string; foundation: CreativeFoundation; tasks: CreativeReviewTaskInput[] }): Promise<CreativeReview> {
     const validTaskIds = new Set(input.tasks.map((task) => task.id));
     const imageInputs = await reviewImages(input.tasks, input.origin, input.cookie);
     const hasTextResult = input.tasks.some((task) => task.type === "text" && task.resultSummary.trim());
@@ -40,7 +41,8 @@ export async function reviewCreativeOutputs(input: { origin: string; cookie: str
     ];
 
     try {
-        const headers = { "Content-Type": "application/json", cookie: input.cookie };
+        const idempotencyKey = input.billingId ? systemAiIdempotencyKey("creative-review", input.userId, input.billingId, resolved.channel.id) : undefined;
+        const headers = { "Content-Type": "application/json", cookie: input.cookie, ...systemAiBillingHeaders(model, idempotencyKey) };
         let call = await callResponses(input.origin, resolved.channel.id, resolved.upstreamModel, responsesInput, headers, input.userId, model);
         if (!call) call = await callChat(input.origin, resolved.channel.id, resolved.upstreamModel, chatMessages, headers, input.userId, model);
         if (!call) return unavailableCreativeReview("默认文本模型没有返回有效复盘结果，生成结果已保留。");
@@ -51,7 +53,7 @@ export async function reviewCreativeOutputs(input: { origin: string; cookie: str
             review = null;
         }
         if (review) return { ...review, mode };
-        if (call.pointsCost && call.pointsRecordId) await refundUserPoints(input.userId, model, call.pointsCost, "text", 1, undefined, call.pointsRecordId);
+        if (hasSystemAiCharge(call)) await refundUserPoints(input.userId, model, call.pointsCost, "text", 1, undefined, call.pointsRecordId);
         return unavailableCreativeReview("默认文本模型返回了无效复盘结构，相关积分已退款，生成结果已保留。");
     } catch {
         return unavailableCreativeReview("自动复盘服务暂时不可用，生成结果已保留，可稍后根据实际画面继续调整。");
@@ -119,18 +121,15 @@ async function normalizeReviewImage(value: string, origin: string, cookie: strin
 }
 
 function readCall(argumentsText: string, headers: Headers): ReviewCall {
-    const pointsCost = Number(headers.get("x-vozeb-pro-points-cost"));
     return {
         arguments: argumentsText,
-        pointsCost: Number.isFinite(pointsCost) && pointsCost > 0 ? pointsCost : undefined,
-        pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
+        ...readSystemAiBilling(headers),
     };
 }
 
 async function refundResponse(userId: string, model: string, headers: Headers) {
-    const cost = Number(headers.get("x-vozeb-pro-points-cost"));
-    const pointsRecordId = headers.get("x-vozeb-pro-points-record-id") || undefined;
-    if (Number.isFinite(cost) && cost > 0 && pointsRecordId) await refundUserPoints(userId, model, cost, "text", 1, undefined, pointsRecordId);
+    const billing = readSystemAiBilling(headers);
+    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }
 
 const reviewTool = {

@@ -600,6 +600,7 @@ CREATE TABLE IF NOT EXISTS billing_orders (
 
 CREATE INDEX IF NOT EXISTS billing_orders_user_created_idx ON billing_orders (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_orders_status_created_idx ON billing_orders (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS billing_orders_created_idx ON billing_orders (created_at DESC);
 CREATE INDEX IF NOT EXISTS billing_orders_pending_expires_idx ON billing_orders (expires_at, id) WHERE status = 'pending' AND expires_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS billing_orders_provider_idx ON billing_orders (provider, provider_order_id);
 
@@ -638,6 +639,7 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
 
 CREATE INDEX IF NOT EXISTS payment_transactions_order_idx ON payment_transactions (order_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS payment_transactions_user_idx ON payment_transactions (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS payment_transactions_created_idx ON payment_transactions (created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_provider_trade_idx ON payment_transactions (provider, provider_trade_id) WHERE provider_trade_id IS NOT NULL AND provider_trade_id <> '';
 
 CREATE TABLE IF NOT EXISTS billing_reconciliation_runs (
@@ -842,6 +844,7 @@ WHERE conversation.id = log.conversation_id
   AND log.source IN ('image-workbench', 'video-workbench');
 
 CREATE INDEX IF NOT EXISTS generation_logs_user_created_idx ON generation_logs (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS generation_logs_created_idx ON generation_logs (created_at DESC);
 CREATE INDEX IF NOT EXISTS generation_logs_admin_filter_idx ON generation_logs (kind, source, status, created_at DESC);
 CREATE INDEX IF NOT EXISTS generation_logs_conversation_idx ON generation_logs (conversation_id, created_at DESC) WHERE conversation_id IS NOT NULL;
 

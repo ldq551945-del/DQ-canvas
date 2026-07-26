@@ -88,6 +88,10 @@ export function useVideoWorkbenchController() {
         setLastAgentPrompt,
         availableSkills,
         agentSessionByRecordId,
+        loadAgentSession,
+        hasOlderAgentMessages,
+        olderAgentMessagesLoading,
+        loadOlderAgentMessages,
     } = useWorkbenchAgentSessions("video", userId);
     const [selectedSkill, setSelectedSkill] = useState<AgentSkillSummary>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
@@ -698,7 +702,7 @@ export function useVideoWorkbenchController() {
         setActiveAgentRecordId(log.id);
         setActiveAgentSessionId(session?.id || `log-${log.id}`);
         setActiveCreativeConversationId(session?.creativeConversationId || log.creativeConversationId);
-        setAgentMessages(session?.messages || fallbackMessages);
+        setAgentMessages(session?.loaded && session.messages.length ? session.messages : fallbackMessages);
         setPrompt(session?.prompt || "");
         setLastAgentPrompt(session?.lastPrompt || log.prompt);
         setSelectedSkill(undefined);
@@ -714,6 +718,19 @@ export function useVideoWorkbenchController() {
         if (log.config.videoGenerateAudio) updateConfig("videoGenerateAudio", log.config.videoGenerateAudio);
         if (log.config.videoWatermark) updateConfig("videoWatermark", log.config.videoWatermark);
         setResults(resultsFromLog(log));
+        if (session && !session.loaded)
+            void loadAgentSession(session)
+                .then((loaded) => {
+                    if (!loaded || activeLogIdRef.current !== log.id) return;
+                    setActiveAgentRecordId(loaded.recordId || log.id);
+                    setActiveAgentSessionId(loaded.id);
+                    setActiveCreativeConversationId(loaded.creativeConversationId);
+                    setAgentMessages(loaded.messages.length ? loaded.messages : fallbackMessages);
+                    setLastAgentPrompt(loaded.lastPrompt || log.prompt);
+                })
+                .catch(() => {
+                    if (activeLogIdRef.current === log.id) message.warning("完整对话加载失败，已显示当前生成记录");
+                });
     };
 
     const currentResultIds = results.map((result) => result.id);
@@ -813,6 +830,9 @@ export function useVideoWorkbenchController() {
         selectSkill,
         selectVideoModelOption,
         agentSessionByRecordId,
+        hasOlderAgentMessages,
+        olderAgentMessagesLoading,
+        loadOlderAgentMessages,
         importedPromptRef,
         references,
         setReferences,

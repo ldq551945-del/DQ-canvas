@@ -183,7 +183,7 @@ export function useAdminDashboardEffects({ state, data, settingsActions }: { sta
         setActiveSection,
         setAgentReadiness,
     } = state;
-    const { loadBillingSummary, loadGenerationAssetStats, loadPrompts, loadGenerationLogs, loadPaymentConfig, loadCdkCodes, loadAnnouncements, loadUsers } = data;
+    const { loadBillingSummary, loadOperationsSummary, loadGenerationAssetStats, loadPrompts, loadGenerationLogs, loadPaymentConfig, loadCdkCodes, loadAnnouncements, loadUsers } = data;
     const {} = settingsActions;
 
     useEffect(() => {
@@ -228,8 +228,7 @@ export function useAdminDashboardEffects({ state, data, settingsActions }: { sta
     useEffect(() => {
         if (activeSection !== "overview") return;
         void loadGenerationAssetStats();
-        void loadGenerationLogs(1, { pageSize: 80 });
-        void loadPrompts(1, "");
+        void loadOperationsSummary();
     }, [activeSection]);
 
     useEffect(() => {

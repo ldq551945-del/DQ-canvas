@@ -161,6 +161,32 @@ describe("GlobalAiOpc native text proxy", () => {
         expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer", 1, "text", undefined);
     });
 
+    it("uses the validated preferred logical model and stable idempotency key when aliases are shared", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                { id: "writer-basic", name: "基础写作", capability: "text", enabled: true, bindings: [{ id: "basic", channelId: "channel-one", upstreamModel: "vendor-shared", enabled: true, priority: 1 }] },
+                { id: "writer-pro", name: "专业写作", capability: "text", enabled: true, bindings: [{ id: "pro", channelId: "channel-one", upstreamModel: "vendor-shared", enabled: true, priority: 2 }] },
+            ],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-shared"] }],
+        });
+        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
+            method: "POST",
+            headers: {
+                "content-type": "application/json",
+                "x-vozeb-pro-logical-model": "writer-pro",
+                "x-vozeb-pro-points-idempotency-key": "text-task:one:attempt:1",
+            },
+            body: JSON.stringify({ model: "vendor-shared", messages: [{ role: "user", content: "hello" }] }),
+        });
+
+        const response = await POST(request, textContext());
+
+        expect(response.status).toBe(200);
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer-pro", 1, "text", "system-ai:text-task:one:attempt:1:chat/completions");
+    });
+
     it("routes GlobalAiOpc media models from one catalog channel to the matching service endpoint", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},

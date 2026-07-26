@@ -11,6 +11,7 @@ const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() 
 const localChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
 const buildCpus = Math.max(1, Number.parseInt(process.env.NEXT_BUILD_CPUS || "1", 10) || 1);
 const nodeProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
+const privatePageSource = "/:section(api|admin|assets|billing|canvas|create|drama|forgot-password|help|image|install|login|my-prompts|profile|prompts|register|video)/:path*";
 if (nodeProxy) setGlobalDispatcher(new ProxyAgent(nodeProxy));
 
 export default function nextConfig(phase: string): NextConfig {
@@ -57,6 +58,10 @@ export default function nextConfig(phase: string): NextConfig {
                         { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
                         ...(isProduction ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }] : []),
                     ],
+                },
+                {
+                    source: privatePageSource,
+                    headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow, noarchive, nosnippet, noimageindex" }],
                 },
             ];
         },

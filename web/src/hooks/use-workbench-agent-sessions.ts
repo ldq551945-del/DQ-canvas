@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { nanoid } from "nanoid";
 
 import type { WorkbenchAgentMessage, WorkbenchAgentSession } from "@/components/agent/workbench-agent-panel";
-import { loadWorkbenchAgentSessions } from "@/components/agent/workbench-agent-session-store";
+import { loadOlderWorkbenchAgentSession, loadWorkbenchAgentSession, loadWorkbenchAgentSessions } from "@/components/agent/workbench-agent-session-store";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { createCreativeConversation } from "@/services/api/creative";
 
@@ -21,14 +21,17 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const [agentSessionsHydrated, setAgentSessionsHydrated] = useState(false);
     const [lastAgentPrompt, setLastAgentPrompt] = useState("");
     const [availableSkills, setAvailableSkills] = useState<AgentSkillSummary[]>([]);
+    const [olderAgentMessagesLoading, setOlderAgentMessagesLoading] = useState(false);
     const contextRef = useRef<WorkbenchContext>({ key: contextKey, generation: 0 });
     const agentSessionsRef = useRef<WorkbenchAgentSession[]>([]);
     const activeConversationRef = useRef<{ key: string; id: string } | undefined>(undefined);
     const conversationRequestRef = useRef<(WorkbenchContext & { promise: Promise<string> }) | null>(null);
+    const olderMessagesRequestRef = useRef<string | undefined>(undefined);
     if (contextRef.current.key !== contextKey) {
         contextRef.current = { key: contextKey, generation: contextRef.current.generation + 1 };
         activeConversationRef.current = undefined;
         conversationRequestRef.current = null;
+        olderMessagesRequestRef.current = undefined;
     }
 
     useEffect(() => {
@@ -43,6 +46,8 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         setActiveCreativeConversationId(undefined);
         activeConversationRef.current = undefined;
         conversationRequestRef.current = null;
+        olderMessagesRequestRef.current = undefined;
+        setOlderAgentMessagesLoading(false);
         setAgentSessionsHydrated(false);
         void loadWorkbenchAgentSessions(workspace, userId)
             .then((sessions) => {
@@ -108,6 +113,41 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         setActiveCreativeConversationId(id);
     }, []);
 
+    const loadAgentSession = useCallback(
+        async (session: WorkbenchAgentSession) => {
+            const context = { ...contextRef.current };
+            const loaded = await loadWorkbenchAgentSession(workspace, session);
+            if (!isCurrentContext(contextRef.current, context)) return null;
+            const next = agentSessionsRef.current.map((item) => (item.id === loaded.id ? loaded : item));
+            agentSessionsRef.current = next;
+            setAgentSessions(next);
+            return loaded;
+        },
+        [workspace],
+    );
+
+    const hasOlderAgentMessages = Boolean(agentSessions.find((session) => session.id === activeAgentSessionId)?.hasOlderMessages);
+    const loadOlderAgentMessages = useCallback(async () => {
+        const context = { ...contextRef.current };
+        const session = agentSessionsRef.current.find((item) => item.id === activeAgentSessionId);
+        if (!session?.hasOlderMessages || !session.oldestSequence || olderMessagesRequestRef.current === session.id) return;
+        olderMessagesRequestRef.current = session.id;
+        setOlderAgentMessagesLoading(true);
+        try {
+            const loaded = await loadOlderWorkbenchAgentSession(workspace, session);
+            if (!isCurrentContext(contextRef.current, context)) return;
+            const next = agentSessionsRef.current.map((item) => (item.id === loaded.id ? loaded : item));
+            agentSessionsRef.current = next;
+            setAgentSessions(next);
+            if (activeAgentSessionId === loaded.id) setAgentMessages(loaded.messages);
+        } catch (error) {
+            console.error("Workbench history pagination failed", error instanceof Error ? error.message : error);
+        } finally {
+            if (olderMessagesRequestRef.current === session.id) olderMessagesRequestRef.current = undefined;
+            if (isCurrentContext(contextRef.current, context)) setOlderAgentMessagesLoading(false);
+        }
+    }, [activeAgentSessionId, workspace]);
+
     const ensureCreativeConversation = useCallback(async () => {
         const context = { ...contextRef.current };
         const active = activeConversationRef.current;
@@ -147,6 +187,10 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         setLastAgentPrompt,
         availableSkills,
         agentSessionByRecordId,
+        loadAgentSession,
+        hasOlderAgentMessages,
+        olderAgentMessagesLoading,
+        loadOlderAgentMessages,
     };
 }
 

@@ -1,7 +1,21 @@
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type { AnnouncementRecord, GenerationKind, GenerationLogAssetRecord, GenerationLogRecord, GenerationStatus, PageInput, PageResult, PromptRecord, PromptScope } from "./repository-shared";
+import type { CreateOverviewAsset, CreateOverviewTask } from "@/lib/create-workbench-overview";
 import { mapAnnouncement, mapGenerationLog, mapGenerationLogAsset, mapPrompt } from "./repository-record-mappers";
 import { jsonParam, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
+
+export type GenerationLogOverviewBucket = { key: string; value: number };
+export type GenerationLogOverviewAggregate = {
+    totalCalls: number;
+    successCalls: number;
+    failedCalls: number;
+    activeUsers: number;
+    daily: GenerationLogOverviewBucket[];
+    models: GenerationLogOverviewBucket[];
+    sources: GenerationLogOverviewBucket[];
+    kinds: GenerationLogOverviewBucket[];
+};
+export type GenerationLogCreateOverview = { runningTasks: CreateOverviewTask[]; recentAssets: CreateOverviewAsset[] };
 
 export class AnnouncementsRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -178,6 +192,144 @@ export class GenerationLogsRepository {
         return pageResult(logs, Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
 
+    async getOverviewAggregate(input: { startAt: string; endAt: string; timeZone: string }): Promise<GenerationLogOverviewAggregate> {
+        const result = await this.db.query<Record<string, unknown>>(
+            `
+            WITH scoped AS MATERIALIZED (
+                SELECT
+                    user_id,
+                    status,
+                    coalesce(nullif(btrim(model), ''), '未记录模型') AS model_key,
+                    source AS source_key,
+                    kind AS kind_key,
+                    to_char(created_at AT TIME ZONE $3::text, 'YYYY-MM-DD') AS day_key
+                FROM generation_logs
+                WHERE created_at >= $1::timestamptz AND created_at < $2::timestamptz
+            )
+            SELECT
+                count(*)::int AS total_calls,
+                count(*) FILTER (WHERE status = 'success')::int AS success_calls,
+                count(*) FILTER (WHERE status = 'failed')::int AS failed_calls,
+                count(DISTINCT nullif(user_id, ''))::int AS active_users,
+                (
+                    SELECT coalesce(jsonb_agg(jsonb_build_object('key', bucket_key, 'value', bucket_value) ORDER BY bucket_key), '[]'::jsonb)
+                    FROM (SELECT day_key AS bucket_key, count(*)::int AS bucket_value FROM scoped GROUP BY day_key) buckets
+                ) AS daily,
+                (
+                    SELECT coalesce(jsonb_agg(jsonb_build_object('key', bucket_key, 'value', bucket_value) ORDER BY bucket_value DESC, bucket_key), '[]'::jsonb)
+                    FROM (
+                        SELECT model_key AS bucket_key, count(*)::int AS bucket_value
+                        FROM scoped
+                        GROUP BY model_key
+                        ORDER BY bucket_value DESC, bucket_key
+                        LIMIT 6
+                    ) buckets
+                ) AS models,
+                (
+                    SELECT coalesce(jsonb_agg(jsonb_build_object('key', bucket_key, 'value', bucket_value) ORDER BY bucket_value DESC, bucket_key), '[]'::jsonb)
+                    FROM (SELECT source_key AS bucket_key, count(*)::int AS bucket_value FROM scoped GROUP BY source_key) buckets
+                ) AS sources,
+                (
+                    SELECT coalesce(jsonb_agg(jsonb_build_object('key', bucket_key, 'value', bucket_value) ORDER BY bucket_value DESC, bucket_key), '[]'::jsonb)
+                    FROM (SELECT kind_key AS bucket_key, count(*)::int AS bucket_value FROM scoped GROUP BY kind_key) buckets
+                ) AS kinds
+            FROM scoped
+            `,
+            [input.startAt, input.endAt, input.timeZone],
+        );
+        const row = result.rows[0] || {};
+        return {
+            totalCalls: Number(row.total_calls || 0),
+            successCalls: Number(row.success_calls || 0),
+            failedCalls: Number(row.failed_calls || 0),
+            activeUsers: Number(row.active_users || 0),
+            daily: overviewBuckets(row.daily),
+            models: overviewBuckets(row.models),
+            sources: overviewBuckets(row.sources),
+            kinds: overviewBuckets(row.kinds),
+        };
+    }
+
+    async getCreateOverview(userId: string): Promise<GenerationLogCreateOverview> {
+        const result = await this.db.query<Record<string, unknown>>(
+            `
+            WITH running_rows AS (
+                SELECT
+                    id,
+                    kind,
+                    source,
+                    COALESCE(NULLIF(btrim(title), ''), CASE WHEN kind = 'video' THEN '视频生成' ELSE '图片生成' END) AS title,
+                    created_at
+                FROM generation_logs
+                WHERE user_id = $1 AND status = 'pending'
+                ORDER BY created_at DESC
+                LIMIT 4
+            ),
+            asset_candidates AS (
+                SELECT
+                    CONCAT(log.id, '-', asset.sort_order) AS id,
+                    asset.type AS kind,
+                    COALESCE(NULLIF(btrim(log.title), ''), CASE WHEN asset.type = 'video' THEN '生成视频' ELSE '生成图片' END) AS title,
+                    COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) AS url,
+                    log.created_at,
+                    asset.sort_order
+                FROM generation_logs log
+                JOIN generation_log_assets asset ON asset.generation_log_id = log.id
+                WHERE log.user_id = $1
+                  AND log.status = 'success'
+                  AND COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) IS NOT NULL
+                  AND COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) !~* '^(data|blob):'
+            ),
+            ranked_assets AS (
+                SELECT
+                    id,
+                    kind,
+                    title,
+                    url,
+                    created_at,
+                    sort_order,
+                    ROW_NUMBER() OVER (PARTITION BY url ORDER BY created_at DESC, sort_order ASC) AS duplicate_rank
+                FROM asset_candidates
+            ),
+            recent_rows AS (
+                SELECT id, kind, title, url, created_at, sort_order
+                FROM ranked_assets
+                WHERE duplicate_rank = 1
+                ORDER BY created_at DESC, sort_order ASC
+                LIMIT 8
+            )
+            SELECT
+                COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'source', source, 'title', title, 'createdAt', created_at) ORDER BY created_at DESC)
+                    FROM running_rows
+                ), '[]'::jsonb) AS running_tasks,
+                COALESCE((
+                    SELECT jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'title', title, 'url', url, 'createdAt', created_at) ORDER BY created_at DESC, sort_order ASC)
+                    FROM recent_rows
+                ), '[]'::jsonb) AS recent_assets
+            `,
+            [userId],
+        );
+        const row = result.rows[0] || {};
+        return {
+            runningTasks: jsonObjects(row.running_tasks)
+                .flatMap((item): CreateOverviewTask[] => {
+                    const id = textValue(item.id);
+                    if (!id) return [];
+                    return [{ id, kind: item.kind === "video" ? "video" : "image", source: textValue(item.source), title: textValue(item.title), createdAt: isoValue(item.createdAt) }];
+                })
+                .slice(0, 4),
+            recentAssets: jsonObjects(row.recent_assets)
+                .flatMap((item): CreateOverviewAsset[] => {
+                    const id = textValue(item.id);
+                    const url = textValue(item.url);
+                    if (!id || !url || /^(data|blob):/i.test(url)) return [];
+                    return [{ id, kind: item.kind === "video" ? "video" : "image", title: textValue(item.title), url, createdAt: isoValue(item.createdAt) }];
+                })
+                .slice(0, 8),
+        };
+    }
+
     async getById(id: string, forUpdate = false) {
         const result = await this.db.query(`SELECT * FROM generation_logs WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`, [id]);
         return (await this.attachAssets(result.rows.map(mapGenerationLog)))[0] || null;
@@ -291,5 +443,39 @@ export class GenerationLogsRepository {
                 [logId, asset.type, asset.url, asset.remoteUrl || null, asset.serverUrl || null, asset.mimeType || null, asset.width || null, asset.height || null, asset.bytes || null, index],
             );
         }
+    }
+}
+
+function overviewBuckets(value: unknown): GenerationLogOverviewBucket[] {
+    const items = typeof value === "string" ? safeJsonArray(value) : value;
+    if (!Array.isArray(items)) return [];
+    return items
+        .map((item) => {
+            const source = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : {};
+            return { key: String(source.key || "").trim(), value: Math.max(0, Number(source.value) || 0) };
+        })
+        .filter((item) => Boolean(item.key) && item.value > 0);
+}
+
+function jsonObjects(value: unknown): Record<string, unknown>[] {
+    const items = typeof value === "string" ? safeJsonArray(value) : value;
+    return Array.isArray(items) ? items.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object" && !Array.isArray(item))) : [];
+}
+
+function textValue(value: unknown) {
+    return typeof value === "string" ? value.trim() : value === null || value === undefined ? "" : String(value);
+}
+
+function isoValue(value: unknown) {
+    const date = value instanceof Date ? value : new Date(textValue(value));
+    return Number.isFinite(date.getTime()) ? date.toISOString() : new Date(0).toISOString();
+}
+
+function safeJsonArray(value: string) {
+    try {
+        const parsed: unknown = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
     }
 }

@@ -7,6 +7,7 @@ export type WorkbenchWorkspace = "image" | "video";
 export type WorkbenchReferenceType = "image" | "video" | "audio";
 export type WorkbenchModelOption = { id: string; name: string };
 export type WorkbenchRequestBody = {
+    requestId?: string;
     conversationId?: string;
     prompt?: string;
     previousPrompt?: string;

@@ -32,11 +32,11 @@ describe("site metadata routes", () => {
         expect(sitemap().map((entry) => entry.url)).toEqual(["https://example.com/", "https://example.com/announcements", "https://example.com/terms", "https://example.com/privacy"]);
     });
 
-    it("uses the backend browser icon in the web manifest", async () => {
+    it("routes the web manifest icon through the backend-controlled favicon", async () => {
         const result = await manifest();
 
         expect(result.name).toBe("自定义站点");
-        expect(result.icons).toEqual([{ src: "https://cdn.example.com/favicon.ico", sizes: "any", purpose: "any" }]);
+        expect(result.icons).toEqual([{ src: "/favicon.ico", sizes: "any", purpose: "any" }]);
     });
 
     it("redirects the standard favicon route to the configured browser icon", async () => {

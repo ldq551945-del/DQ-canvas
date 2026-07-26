@@ -2,18 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CanvasProject } from "@/lib/canvas-project-contract";
 
-const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>() }));
+const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>(), provider: "file", postgresQuery: vi.fn() }));
 
-vi.mock("@/lib/server/database", () => ({ ensurePostgresSchema: vi.fn(), getDatabaseProvider: vi.fn(() => "file"), postgresQuery: vi.fn() }));
+vi.mock("@/lib/server/database", () => ({ ensurePostgresSchema: vi.fn(), getDatabaseProvider: vi.fn(() => mocks.provider), postgresQuery: mocks.postgresQuery }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async (name: string, fallback: unknown) => structuredClone(mocks.files.has(name) ? mocks.files.get(name) : fallback)),
     writeJsonDataFile: vi.fn(async (name: string, value: unknown) => mocks.files.set(name, structuredClone(value))),
 }));
 
-import { createCanvasProject, deleteCanvasProjects, getCanvasProject, listCanvasProjects, updateCanvasProject } from "./canvas-project-store";
+import { createCanvasProject, deleteCanvasProjects, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, updateCanvasProject } from "./canvas-project-store";
 
 describe("canvas project file provider", () => {
-    beforeEach(() => mocks.files.clear());
+    beforeEach(() => {
+        mocks.files.clear();
+        mocks.provider = "file";
+        mocks.postgresQuery.mockReset();
+    });
 
     it("persists the complete project snapshot and isolates users", async () => {
         await createCanvasProject("user-one", project("one", "项目一"));
@@ -27,6 +31,35 @@ describe("canvas project file provider", () => {
         await updateCanvasProject("user-one", updated);
         expect(await getCanvasProject("one", "user-one")).toMatchObject({ title: "已更新", nodes: [{ id: "node-one" }] });
         expect(await deleteCanvasProjects("user-one", ["one", "two"])).toBe(1);
+    });
+
+    it("returns only the latest file-provider project summary", async () => {
+        const older = { ...project("older", "旧项目"), updatedAt: "2026-07-20T00:00:00.000Z" };
+        const latest = {
+            ...project("latest", "最近项目"),
+            updatedAt: "2026-07-22T00:00:00.000Z",
+            nodes: [{ id: "image", type: "image", metadata: { status: "success", serverUrl: "/api/media/latest.webp" } }] as CanvasProject["nodes"],
+            connections: [{ id: "edge" }] as CanvasProject["connections"],
+        };
+        await createCanvasProject("user-one", older);
+        await createCanvasProject("user-one", latest);
+
+        await expect(getLatestCanvasProjectOverview("user-one")).resolves.toMatchObject({ id: "latest", nodeCount: 1, connectionCount: 1, previews: [{ kind: "image", url: "/api/media/latest.webp" }] });
+    });
+
+    it("uses one bounded PostgreSQL projection instead of returning project_json", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValue({
+            rows: [{ id: "latest", title: "最近项目", updated_at: "2026-07-22T00:00:00.000Z", node_count: 9, connection_count: 4, previews: [{ kind: "image", url: "/api/media/cover.webp" }] }],
+            rowCount: 1,
+        });
+
+        await expect(getLatestCanvasProjectOverview("user-one")).resolves.toMatchObject({ id: "latest", nodeCount: 9, connectionCount: 4 });
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("jsonb_array_length");
+        expect(statement).toContain("LIMIT 1");
+        expect(statement).not.toMatch(/SELECT\s+project_json/i);
+        expect(params).toEqual(["user-one"]);
     });
 });
 

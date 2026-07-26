@@ -19,6 +19,7 @@ export type WorkbenchAgentChoice = {
 
 export type WorkbenchAgentMessage = {
     id: string;
+    sequence?: number;
     role: "user" | "assistant" | "warning" | "error";
     text: string;
     progress?: WorkbenchAgentProgress;
@@ -33,6 +34,10 @@ export type WorkbenchAgentSession = {
     messages: WorkbenchAgentMessage[];
     prompt: string;
     lastPrompt: string;
+    searchText?: string;
+    loaded?: boolean;
+    hasOlderMessages?: boolean;
+    oldestSequence?: number;
     updatedAt: number;
 };
 

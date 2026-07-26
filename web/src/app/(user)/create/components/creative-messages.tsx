@@ -3,7 +3,7 @@
 import { Button, Tooltip } from "antd";
 import { Check, Clapperboard, ExternalLink, LoaderCircle, PanelsTopLeft, Plus, RotateCcw } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import type { AgentMediaDownload } from "@/components/agent/agent-media-download";
@@ -16,6 +16,8 @@ import { userAvatarFallback } from "@/lib/user-avatar";
 import type { MaterializedCreativeProject } from "@/services/creative-project-handoff";
 import type { CreativeAgentRun } from "@/services/api/creative";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
+
+import { creativeAssetCardLayout } from "./creative-asset-layout";
 
 export function CreativeMessages({
     messages,
@@ -185,27 +187,36 @@ function ProjectHandoffAction({ handoff, project, error, loading, onMaterialize 
 }
 
 function CreativeAssetGrid({ assets, selectedAssetIds, onToggleAsset }: { assets: CreativeAsset[]; selectedAssetIds: string[]; onToggleAsset: (id: string) => void }) {
+    const [loadedDimensions, setLoadedDimensions] = useState<Record<string, { width: number; height: number }>>({});
     const media = assets.filter((asset) => asset.type !== "text" && assetUrl(asset));
+    const updateDimensions = useCallback((id: string, width: number, height: number) => {
+        if (width <= 0 || height <= 0) return;
+        setLoadedDimensions((current) => (current[id]?.width === width && current[id]?.height === height ? current : { ...current, [id]: { width, height } }));
+    }, []);
     if (!media.length) return null;
     return (
-        <div className={cn("mt-3 grid w-full max-w-[280px] grid-cols-1 gap-2 sm:mt-4 sm:gap-3", media.length > 1 && "sm:max-w-[572px] sm:grid-cols-[repeat(2,minmax(0,280px))]")}>
+        <div className={cn("mt-3 grid w-full max-w-[280px] grid-cols-1 justify-items-start gap-2 sm:mt-4 sm:gap-3", media.length > 1 && "sm:max-w-[572px] sm:grid-cols-[repeat(2,minmax(0,280px))]")}>
             {media.map((asset) => {
                 const url = assetUrl(asset)!;
                 const selected = selectedAssetIds.includes(asset.id);
+                const layout = creativeAssetCardLayout(loadedDimensions[asset.id] || asset);
                 return (
-                    <figure key={asset.id} className="overflow-hidden rounded-lg border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
+                    <figure key={asset.id} style={layout?.card} className={cn("max-w-full overflow-hidden rounded-lg border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900", !layout && "w-full")}>
                         {asset.type === "audio" ? (
                             <div className="p-3 sm:p-4">
                                 <AgentMediaPreview type={asset.type} url={url} title={asset.title || "生成音频"} />
                             </div>
                         ) : (
-                            <AgentMediaPreview
-                                type={asset.type}
-                                url={url}
-                                title={asset.title || (asset.type === "video" ? "生成视频" : "生成图片")}
-                                className={asset.type === "video" ? "aspect-video" : "flex items-center justify-center bg-stone-100 dark:bg-stone-950"}
-                                fit={asset.type === "image" ? "contain" : "cover"}
-                            />
+                            <div style={layout?.media} className={cn("w-full overflow-hidden", !layout && asset.type === "video" && "aspect-video")}>
+                                <AgentMediaPreview
+                                    type={asset.type}
+                                    url={url}
+                                    title={asset.title || (asset.type === "video" ? "生成视频" : "生成图片")}
+                                    className={cn("size-full", asset.type === "image" && "flex items-center justify-center bg-stone-100 dark:bg-stone-950")}
+                                    fit={asset.type === "image" ? "contain" : "cover"}
+                                    onDimensions={(width, height) => updateDimensions(asset.id, width, height)}
+                                />
+                            </div>
                         )}
                         <figcaption className="flex min-w-0 items-center gap-2 border-t border-stone-200 px-3 py-2 dark:border-stone-700">
                             <span className="min-w-0 flex-1 truncate text-xs text-stone-500 dark:text-stone-400">{asset.title}</span>

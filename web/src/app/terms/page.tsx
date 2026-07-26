@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, CheckCircle2, CloudCog, DatabaseBackup, Scale } from "lucide-react";
 
@@ -23,6 +24,12 @@ const terms = [
         icon: <DatabaseBackup className="size-5" />,
     },
 ];
+
+export const metadata: Metadata = {
+    title: "使用条款",
+    description: "查看 VOZEB PRO 的开源协议、服务配置、内容管理与备份使用说明。",
+    alternates: { canonical: "/terms" },
+};
 
 export default function TermsPage() {
     return (

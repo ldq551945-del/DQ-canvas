@@ -5,6 +5,7 @@ import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-o
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { fetchOptionalResponses } from "@/lib/server/responses-request";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { parseWorkbenchPlanCall, type WorkbenchFunctionCallResult } from "./workbench-agent-plan";
 import { createWorkbenchPlanningMessages, workbenchTool } from "./workbench-agent-prompt";
 import { analyzeWorkbenchRequest, buildTrustedWorkbenchBody, directWorkbenchPlan, finalizeWorkbenchPlan, type WorkbenchRequestBody } from "./workbench-agent-policy";
@@ -20,7 +21,7 @@ export class WorkbenchPlanningError extends Error {
     }
 }
 
-export async function planWorkbenchAgent(input: { requestUrl: string; cookie: string; userId: string; body: WorkbenchRequestBody; prompt: string }) {
+export async function planWorkbenchAgent(input: { requestUrl: string; cookie: string; userId: string; body: WorkbenchRequestBody; prompt: string; signal?: AbortSignal }) {
     const settings = await getAuthSettings();
     const body = buildTrustedWorkbenchBody(settings, input.body);
     const workspace = body.workspace || "image";
@@ -48,22 +49,41 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     const origin = resolveInternalOrigin(new URL(input.requestUrl).origin);
     const headers = { "Content-Type": "application/json", cookie: input.cookie };
     let finalized: ReturnType<typeof finalizeWorkbenchPlan> | undefined;
+    let acceptedBilling: SystemAiBilling | undefined;
     let latestError: unknown;
     for (const candidate of candidates) {
         try {
-            let call = await callResponsesPlanner(origin, candidate.channel.id, candidate.upstreamModel, messages, headers, input.userId, model);
-            if (!call) call = await callChatPlanner(origin, candidate.channel.id, candidate.upstreamModel, messages, headers, input.userId, model);
+            const idempotencyKey = body.requestId ? systemAiIdempotencyKey("workbench-plan", input.userId, body.requestId, workspace, candidate.channel.id, candidate.upstreamModel) : undefined;
+            const requestHeaders = { ...headers, ...systemAiBillingHeaders(model, idempotencyKey) };
+            let call = await callResponsesPlanner(origin, candidate.channel.id, candidate.upstreamModel, messages, requestHeaders, input.userId, model, input.signal);
+            if (!call) call = await callChatPlanner(origin, candidate.channel.id, candidate.upstreamModel, messages, requestHeaders, input.userId, model, input.signal);
             if (!call) throw new WorkbenchPlanningError("文本模型没有返回工作台执行计划");
             const plan = await parseWorkbenchPlanCall(call, { workspace, prompt: input.prompt, models: body.models || [], skillIds }, () => refundTextCost(input.userId, model, call.pointsCost, call.pointsRecordId));
             if (!plan) throw new WorkbenchPlanningError("文本模型返回的工作台计划无效，相关积分已退款");
-            finalized = finalizeWorkbenchPlan(plan, { body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly });
+            try {
+                finalized = finalizeWorkbenchPlan(plan, { body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly });
+            } catch (error) {
+                await refundTextCost(input.userId, model, call.pointsCost, call.pointsRecordId);
+                throw error;
+            }
+            acceptedBilling = call;
             break;
         } catch (error) {
+            if (input.signal?.aborted) throw error;
             latestError = error;
         }
     }
     if (!finalized) throw latestError instanceof WorkbenchPlanningError ? latestError : new WorkbenchPlanningError(latestError instanceof Error ? latestError.message : "没有可用的文本模型渠道");
-    await saveWorkbenchExchange(input, conversationId, workspace, finalized);
+    if (input.signal?.aborted) {
+        if (acceptedBilling) await refundTextCost(input.userId, model, acceptedBilling.pointsCost, acceptedBilling.pointsRecordId);
+        throw new WorkbenchPlanningError("本次 Agent 规划已取消", 499);
+    }
+    try {
+        await saveWorkbenchExchange(input, conversationId, workspace, finalized);
+    } catch (error) {
+        if (acceptedBilling) await refundTextCost(input.userId, model, acceptedBilling.pointsCost, acceptedBilling.pointsRecordId);
+        throw error;
+    }
     return { ...finalized, ...(conversationId ? { conversationId } : {}) };
 }
 
@@ -85,11 +105,12 @@ function errorStatus(error: unknown, fallback: number) {
     return Number.isInteger(status) && status >= 400 && status < 600 ? status : fallback;
 }
 
-async function callResponsesPlanner(origin: string, channelId: string, upstreamModel: string, messages: Array<{ role: string; content: string }>, headers: Record<string, string>, userId: string, model: string) {
+async function callResponsesPlanner(origin: string, channelId: string, upstreamModel: string, messages: Array<{ role: string; content: string }>, headers: Record<string, string>, userId: string, model: string, signal?: AbortSignal) {
     const response = await fetchOptionalResponses(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/responses`, {
         method: "POST",
         headers,
         cache: "no-store",
+        signal,
         body: JSON.stringify({ model: upstreamModel, input: messages, tools: [workbenchTool], tool_choice: { type: "function", name: "plan_workbench_action" } }),
     });
     if (!response?.ok) return null;
@@ -100,11 +121,12 @@ async function callResponsesPlanner(origin: string, channelId: string, upstreamM
     return null;
 }
 
-async function callChatPlanner(origin: string, channelId: string, upstreamModel: string, messages: Array<{ role: string; content: string }>, headers: Record<string, string>, userId: string, model: string) {
+async function callChatPlanner(origin: string, channelId: string, upstreamModel: string, messages: Array<{ role: string; content: string }>, headers: Record<string, string>, userId: string, model: string, signal?: AbortSignal) {
     const fallback = await fetchInternalApi(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/chat/completions`, {
         method: "POST",
         headers,
         cache: "no-store",
+        signal,
         body: JSON.stringify({
             model: upstreamModel,
             messages,
@@ -122,20 +144,18 @@ async function callChatPlanner(origin: string, channelId: string, upstreamModel:
 }
 
 function readFunctionCallResult(argumentsText: string, headers: Headers): WorkbenchFunctionCallResult {
-    const pointsCost = Number(headers.get("x-vozeb-pro-points-cost"));
     return {
         arguments: argumentsText,
-        pointsCost: Number.isFinite(pointsCost) && pointsCost > 0 ? pointsCost : undefined,
-        pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
+        ...readSystemAiBilling(headers),
     };
 }
 
 async function refundTextCost(userId: string, model: string, cost?: number, pointsRecordId?: string) {
-    if (cost && pointsRecordId) await refundUserPoints(userId, model, cost, "text", 1, undefined, pointsRecordId);
+    const billing = { pointsCost: cost, pointsRecordId };
+    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }
 
 async function refundTextResponse(userId: string, model: string, headers: Headers) {
-    const cost = Number(headers.get("x-vozeb-pro-points-cost"));
-    const pointsRecordId = headers.get("x-vozeb-pro-points-record-id") || undefined;
-    if (Number.isFinite(cost) && cost > 0 && pointsRecordId) await refundUserPoints(userId, model, cost, "text", 1, undefined, pointsRecordId);
+    const billing = readSystemAiBilling(headers);
+    if (hasSystemAiCharge(billing)) await refundUserPoints(userId, model, billing.pointsCost, "text", 1, undefined, billing.pointsRecordId);
 }

@@ -62,7 +62,7 @@ const defaultSite: {
 } = {
     title: "VOZEB PRO",
     logoUrl: "/logo.svg",
-    seoDescription: "面向 AI 图片创作与管理的 VOZEB PRO 工作台",
+    seoDescription: "面向 Agent、图片、视频、画布与短剧生产的一体化 AI 创作工作台",
     footerCopyright: "© 2026 VOZEB PRO. All rights reserved.",
     termsUrl: "/terms",
     privacyUrl: "/privacy",

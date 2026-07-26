@@ -169,7 +169,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     <Input.TextArea value={settings.site.seoDescription} maxLength={180} rows={4} placeholder="用于搜索结果和社交分享摘要" onChange={(event) => updateSiteSetting("seoDescription", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 关键词">
-                                    <Input value={settings.site.seoKeywords} maxLength={240} placeholder="VOZEB PRO,AI 绘图,画布" onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)} />
+                                    <Input value={settings.site.seoKeywords} maxLength={240} placeholder="VOZEB PRO,AI Agent,AI 绘图,AI 视频,画布,短剧" onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)} />
                                 </LabeledControl>
                             </div>
                         </div>

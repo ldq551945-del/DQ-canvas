@@ -15,7 +15,7 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/data-adapter", () => ({ readJsonDataFile: mocks.readJsonDataFile, writeJsonDataFile: mocks.writeJsonDataFile }));
 
-import { listLocalMediaRegistrationPage, listLocalMediaRegistrationsForUser } from "./local-media-registry";
+import { getLocalMediaRegistrationSummary, listLocalMediaRegistrationPage, listLocalMediaRegistrationsForUser } from "./local-media-registry";
 
 describe("listLocalMediaRegistrationsForUser", () => {
     beforeEach(() => vi.clearAllMocks());
@@ -59,5 +59,17 @@ describe("listLocalMediaRegistrationsForUser", () => {
         expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("LIMIT $5 OFFSET $6"), [null, "image", "agent", "cover", 10, 10]);
         expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("count(*) AS total"), [null, "image", "agent", "cover"]);
         expect(page).toMatchObject({ total: 42, items: [{ storageKey: "permanent/image.png" }], summary: { totalFiles: 42, expiredTemporaryFiles: 1 } });
+    });
+
+    it("loads only the PostgreSQL media summary for the dashboard", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        mocks.postgresQuery.mockResolvedValue({ rows: [{ total_files: "42", total_bytes: "512", temporary_files: "2", temporary_bytes: "12", permanent_files: "40", permanent_bytes: "500", expired_temporary_files: "1" }] });
+
+        const summary = await getLocalMediaRegistrationSummary();
+
+        expect(summary).toMatchObject({ totalFiles: 42, totalBytes: 512, permanentFiles: 40, expiredTemporaryFiles: 1 });
+        expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("FROM local_media_assets");
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).not.toContain("ORDER BY");
     });
 });

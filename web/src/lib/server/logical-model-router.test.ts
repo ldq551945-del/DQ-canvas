@@ -105,4 +105,14 @@ describe("resolveLogicalModel", () => {
 
         expect(resolveLogicalBillingModel(logicalModels, "text", "primary", "gemini-2.5")).toBe("gemini");
     });
+
+    it("honors a validated preferred logical model when bindings share an upstream alias", () => {
+        const logicalModels = [
+            { id: "writer-basic", name: "Basic", capability: "text" as const, enabled: true, bindings: [{ id: "one", channelId: "primary", upstreamModel: "vendor/shared", enabled: true, priority: 1 }] },
+            { id: "writer-pro", name: "Pro", capability: "text" as const, enabled: true, bindings: [{ id: "two", channelId: "primary", upstreamModel: "vendor/shared", enabled: true, priority: 1 }] },
+        ];
+
+        expect(resolveLogicalBillingModel(logicalModels, "text", "primary", "vendor/shared", "writer-pro")).toBe("writer-pro");
+        expect(resolveLogicalBillingModel(logicalModels, "text", "primary", "vendor/shared", "forged-model")).toBe("writer-basic");
+    });
 });

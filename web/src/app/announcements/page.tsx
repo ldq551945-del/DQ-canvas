@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Megaphone } from "lucide-react";
 
 import { listAnnouncements } from "@/lib/auth/store";
 
 export const dynamic = "force-dynamic";
+export const metadata: Metadata = {
+    title: "网站公告",
+    description: "查看站点通知、维护说明和功能更新。",
+    alternates: { canonical: "/announcements" },
+};
 
 export default async function AnnouncementsPage() {
     const announcements = await listAnnouncements(false);

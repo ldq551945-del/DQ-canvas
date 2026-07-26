@@ -6,6 +6,7 @@ import dayjs from "dayjs";
 import type { ReactNode } from "react";
 
 import type { AdminBillingSummary } from "@/lib/admin-billing-types";
+import type { AdminGenerationOverviewSummary } from "@/lib/admin-generation-overview";
 import type { AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, PublicUserSummary, UserRole, UserStatus } from "@/lib/auth/store";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
@@ -58,6 +59,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         promptRequestIdRef,
         userRequestIdRef,
         generationLogRequestIdRef,
+        operationsSummaryRequestIdRef,
         setUsers,
         setUserSummary,
         setUsersLoading,
@@ -74,6 +76,8 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         setUpdatingUserId,
         setSettingsLoading,
         setAssetStats,
+        setOperationsSummary,
+        setOperationsSummaryLoading,
         promptSaving,
         setPromptSaving,
         setPromptsLoading,
@@ -208,9 +212,25 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         }
     };
 
+    const loadOperationsSummary = async () => {
+        const requestId = operationsSummaryRequestIdRef.current + 1;
+        operationsSummaryRequestIdRef.current = requestId;
+        setOperationsSummaryLoading(true);
+        try {
+            const response = await fetch("/api/admin/generation-overview", { cache: "no-store" });
+            const payload = (await response.json().catch(() => null)) as { data?: AdminGenerationOverviewSummary; msg?: string } | null;
+            if (!response.ok || !payload?.data) throw new Error(payload?.msg || "加载生成运营摘要失败");
+            if (requestId === operationsSummaryRequestIdRef.current) setOperationsSummary(payload.data);
+        } catch (error) {
+            if (requestId === operationsSummaryRequestIdRef.current) message.error(error instanceof Error ? error.message : "加载生成运营摘要失败");
+        } finally {
+            if (requestId === operationsSummaryRequestIdRef.current) setOperationsSummaryLoading(false);
+        }
+    };
+
     const loadGenerationAssetStats = async () => {
         try {
-            const response = await fetch("/api/admin/generation-assets", { cache: "no-store" });
+            const response = await fetch("/api/admin/generation-assets?summaryOnly=1", { cache: "no-store" });
             const payload = (await response.json().catch(() => null)) as {
                 data?: { summary?: { totalFiles: number; totalBytes: number; permanentFiles: number; permanentBytes: number; temporaryFiles: number; temporaryBytes: number } };
                 msg?: string;
@@ -737,6 +757,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         loadUsers,
         saveSettings,
         loadBillingSummary,
+        loadOperationsSummary,
         loadGenerationAssetStats,
         updateUser,
         createUser,

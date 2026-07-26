@@ -45,6 +45,7 @@ describe("creative review service", () => {
             origin: "http://localhost:3000",
             cookie: "session=1",
             userId: "user",
+            billingId: "record-one",
             foundation,
             tasks: [{ id: "image-1", title: "主图", type: "image", prompt: "生成主图", resultSummary: "已生成", imageUrls: ["data:image/png;base64,AA=="] }],
         });
@@ -52,6 +53,9 @@ describe("creative review service", () => {
         expect(review).toMatchObject({ mode: "visual", status: "passed", score: 92 });
         expect(fetchInternalApi).toHaveBeenCalledWith("http://localhost:3000/api/ai/system/text-channel/responses", expect.objectContaining({ body: expect.stringContaining('"type":"input_image"') }));
         expect(JSON.parse(fetchInternalApi.mock.calls[0][1].body).model).toBe("vendor-planner");
+        const headers = new Headers(fetchInternalApi.mock.calls[0][1].headers);
+        expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
+        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^creative-review:[a-f0-9]{32}$/);
     });
 
     it("refunds an invalid structured review and preserves the result as unavailable", async () => {
@@ -78,7 +82,7 @@ describe("creative review service", () => {
         fetchInternalApi.mockResolvedValueOnce(
             new Response(JSON.stringify({ output: [{ type: "function_call", name: "review_creative_outputs", arguments: "{" }] }), {
                 status: 200,
-                headers: { "Content-Type": "application/json", "x-vozeb-pro-points-cost": "4", "x-vozeb-pro-points-record-id": "points-review-4" },
+                headers: { "Content-Type": "application/json", "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-review-free" },
             }),
         );
 
@@ -91,6 +95,6 @@ describe("creative review service", () => {
         });
 
         expect(review.status).toBe("unavailable");
-        expect(refundUserPoints).toHaveBeenCalledWith("user", "planner", 4, "text", 1, undefined, "points-review-4");
+        expect(refundUserPoints).toHaveBeenCalledWith("user", "planner", 0, "text", 1, undefined, "points-review-free");
     });
 });

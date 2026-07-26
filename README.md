@@ -19,7 +19,6 @@
   <a href="docs/index.md">文档索引</a> ·
   <a href="docs/content/docs/overview/project-structure.mdx">项目结构</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
-  <a href="#社区交流">QQ 交流群</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
   <a href="CONTRIBUTING.md">参与贡献</a> ·
   <a href="CHANGELOG.md">更新记录</a>

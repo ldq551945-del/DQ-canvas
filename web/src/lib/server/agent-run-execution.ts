@@ -16,6 +16,7 @@ import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
 import type { AgentFunctionCallResult } from "./agent-function-call";
+import { agentSurfaceImageSize, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId } from "./agent-run-task-input";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "./system-ai-billing";
 
 const AGENT_WORK_COLUMN_X = 400;
@@ -138,6 +139,8 @@ export const agentPlanTool = {
 };
 
 export function planToOps(plan: AgentPlan, tasks: AgentRunTask[], runId: string, snapshot: unknown) {
+    const snapshotNodeMap = canvasSnapshotNodes(snapshot);
+    if (tasks.length === 1 && tasks[0]?.type === "text" && tasks[0].targetNodeId && snapshotNodeMap.get(tasks[0].targetNodeId)?.type === "text") return [];
     const briefId = `brief-${runId}`;
     const brandId = `brand-${runId}`;
     const ops: unknown[] = [
@@ -152,7 +155,7 @@ export function planToOps(plan: AgentPlan, tasks: AgentRunTask[], runId: string,
         { type: "add_node", id: brandId, nodeType: "brand-kit", title: "视觉方向", position: { x: 0, y: AGENT_NODE_START_Y + 320 }, metadata: { agentRunId: runId, brandKit: { ...plan.foundation.direction, approvedNodeIds: [], rejectedNodeIds: [] } } },
     ];
     const taskNodeIds = new Map(plan.deliverables.map((item, index) => [item.id?.trim() || `task-${index}`, `task-${runId}-${index}`]));
-    const existingNodeIds = new Set(snapshotNodes(snapshot).keys());
+    const existingNodeIds = new Set(snapshotNodeMap.keys());
     plan.deliverables.forEach((item, index) => {
         const logicalId = item.id?.trim() || `task-${index}`;
         const taskId = taskNodeIds.get(logicalId)!;
@@ -191,15 +194,16 @@ export function normalizeTasks(
 ): AgentRunTask[] {
     const defaults = Object.assign({}, ...skills.map((skill) => skill.defaultConfig || {})) as Record<string, unknown>;
     const globalDefaults = settings.generationDefaults;
-    const nodes = snapshotNodes(snapshot);
+    const nodes = canvasSnapshotNodes(snapshot);
     const selectedNodeIds = new Set(selectedCanvasNodeIds(snapshot).filter((id) => nodes.has(id)));
     const assets = new Map(referencedAssets.map((asset) => [asset.id, asset]));
+    const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
     return plan.deliverables.map((item, index) => {
-        const targetNodeId = surface === "canvas" ? resolveCanvasTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
+        const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
         const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
         const selectedAssets = target ? [] : resolveTaskReferences(item.assetIds, assets, item.type);
         const references = [
-            ...(target?.url && target.type ? [{ url: target.url, type: target.type }] : []),
+            ...(target?.url && isMediaReferenceType(target.type) ? [{ url: target.url, type: target.type }] : []),
             ...selectedAssets.flatMap((asset) => {
                 const url = assetAccessUrl(asset);
                 return url && asset.type !== "text" ? [{ assetId: asset.id, url, type: asset.type }] : [];
@@ -219,7 +223,15 @@ export function normalizeTasks(
             model: resolvePlannedModel(settings, item.type, item.model),
             prompt: `${withCreativeFoundation(item.prompt.trim(), plan.foundation)}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
             count: resolveAgentTaskCount(item.type, item.count, defaults.count, globalDefaults.canvasImageCount),
-            ratio: item.type === "image" && requestedImageSize ? requestedImageSize : item.ratio?.trim() || textDefault(defaults.size) || (["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined),
+            ratio: resolveAgentTaskRatio({
+                type: item.type,
+                requestedImageSize,
+                configuredImageSize,
+                plannedRatio: item.ratio,
+                defaultSize: textDefault(defaults.size),
+                globalSize: ["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined,
+                reference: target || (selectedAssets[0]?.type === "image" ? selectedAssets[0] : undefined),
+            }),
             quality: item.quality?.trim() || textDefault(item.type === "video" ? defaults.vquality : defaults.quality) || (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined),
             seconds: resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
             voice: item.voice?.trim() || textDefault(defaults.voice) || (item.type === "audio" ? globalDefaults.audioVoice : undefined),
@@ -326,35 +338,6 @@ export function agentPlanFallbackExample(models: ReturnType<typeof agentModelOpt
             },
         ],
     });
-}
-
-function snapshotNodes(snapshot: unknown) {
-    const map = new Map<string, { summary: string; url?: string; type?: "image" | "video" | "audio" }>();
-    const nodes = snapshot && typeof snapshot === "object" && Array.isArray((snapshot as { nodes?: unknown }).nodes) ? (snapshot as { nodes: Array<Record<string, unknown>> }).nodes : [];
-    for (const node of nodes) {
-        if (typeof node.id !== "string") continue;
-        const metadata = node.metadata && typeof node.metadata === "object" ? (node.metadata as Record<string, unknown>) : {};
-        const content = [metadata.content, metadata.prompt].find((item) => typeof item === "string" && item);
-        const url = [metadata.remoteUrl, metadata.serverUrl, metadata.url, metadata.dataUrl].find((item) => typeof item === "string" && item) as string | undefined;
-        const type = node.type === "panorama" ? "image" : node.type === "image" || node.type === "video" || node.type === "audio" ? node.type : undefined;
-        map.set(node.id, { summary: `${String(node.title || node.type || "节点").slice(0, 200)}${content ? `；内容：${String(content).slice(0, 2000)}` : ""}${url && !url.startsWith("data:") ? `；素材：${url.slice(0, 2000)}` : ""}`, url, type });
-    }
-    return map;
-}
-
-function resolveCanvasTargetNodeId(plannedTargetNodeId: string | undefined, taskType: AgentRunTask["type"], selectedNodeIds: Set<string>, nodes: Map<string, { type?: "image" | "video" | "audio" }>) {
-    const planned = plannedTargetNodeId?.trim();
-    if (!planned) return undefined;
-    if (!selectedNodeIds.size) return nodes.has(planned) ? planned : undefined;
-    if (selectedNodeIds.has(planned) && nodeSupportsTaskReference(nodes.get(planned)?.type, taskType)) return planned;
-    return Array.from(selectedNodeIds).find((id) => nodeSupportsTaskReference(nodes.get(id)?.type, taskType));
-}
-
-function nodeSupportsTaskReference(nodeType: "image" | "video" | "audio" | undefined, taskType: AgentRunTask["type"]) {
-    if (taskType === "image") return nodeType === "image";
-    if (taskType === "video") return nodeType === "image" || nodeType === "video";
-    if (taskType === "audio") return nodeType === "audio";
-    return false;
 }
 
 function textDefault(value: unknown) {
@@ -806,6 +789,17 @@ export async function patchTask(runId: string, taskId: string, patch: Partial<Ag
 export function taskResultOps(runId: string, index: number, task: AgentRunTask) {
     const taskNodeId = `task-${runId}-${index}`;
     const results = taskResultItems(task.result);
+    if (task.type === "text" && task.targetNodeId) {
+        const content = String(results[0]?.content || "").trim();
+        const nodeIds = [task.targetNodeId];
+        return {
+            nodeIds,
+            ops: [
+                { type: "update_node", id: task.targetNodeId, metadata: { content, prompt: content, status: "success", agentRunId: runId } },
+                { type: "select_nodes", ids: nodeIds },
+            ],
+        };
+    }
     const nodeIds = results.map((_, resultIndex) => `output-${runId}-${index}-${resultIndex}`);
     const ops: Array<Record<string, unknown>> = results.flatMap((record, resultIndex) => {
         const outputNodeId = nodeIds[resultIndex];
@@ -835,7 +829,7 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
         ];
     });
     ops.push({ type: "update_node", id: taskNodeId, metadata: { agentTaskStatus: "completed", agentTaskOutputNodeIds: nodeIds, agentTaskAttempts: task.attempts } });
-    if (nodeIds.length) ops.push({ type: "select_nodes", ids: nodeIds });
+    if (task.type === "text" && nodeIds.length) ops.push({ type: "select_nodes", ids: nodeIds });
     return { nodeIds, ops };
 }
 

@@ -2,15 +2,29 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { compactMetadata } from "./canvas-assistant-elements";
+import { CanvasNodeType } from "../types";
+import { assistantMessageToChatMessage, compactMetadata, compactSnapshot } from "./canvas-assistant-elements";
 
 describe("Canvas Agent current-turn references", () => {
     it("renders the current-turn references before the user text", async () => {
-        const source = await readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-assistant-panel.tsx"), "utf8");
-        const messageSource = source.slice(source.indexOf("messages.map((message)"), source.indexOf("<AgentChatComposer"));
+        const item = assistantMessageToChatMessage({ id: "message", role: "user", text: "修改颜色", references: [{ id: "reference", type: CanvasNodeType.Image, title: "参考图", dataUrl: "/api/reference-assets/reference.webp" }] });
+        expect(item.attachments).toEqual([{ id: "reference", name: "参考图", url: "/api/reference-assets/reference.webp" }]);
 
-        expect(messageSource.indexOf("<MessageReferences")).toBeGreaterThanOrEqual(0);
-        expect(messageSource.indexOf("<MessageReferences")).toBeLessThan(messageSource.indexOf("<AgentChatMessage"));
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-agent-chat-ui.tsx"), "utf8");
+        const userMessageStart = source.indexOf("if (isUser)");
+        const messageSource = source.slice(userMessageStart, source.indexOf("return (", source.indexOf("return (", userMessageStart) + 1));
+
+        expect(messageSource.indexOf("<AgentMessageAttachments")).toBeGreaterThanOrEqual(0);
+        expect(messageSource.indexOf("<AgentMessageAttachments")).toBeLessThan(messageSource.indexOf("item.text"));
+        expect(messageSource.indexOf("<AgentUserAvatar")).toBeGreaterThan(messageSource.indexOf("item.text"));
+    });
+
+    it("clears submitted references before creating the backend run", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-assistant-panel.tsx"), "utf8");
+        const sendSource = source.slice(source.indexOf("const sendMessage"), source.indexOf("const waitForBackendAgent"));
+
+        expect(sendSource.indexOf("setRemovedReferenceIds")).toBeGreaterThanOrEqual(0);
+        expect(sendSource.indexOf("setRemovedReferenceIds")).toBeLessThan(sendSource.indexOf('fetch("/api/agent/runs"'));
     });
 
     it("keeps an uploaded canvas image as a stable Run reference URL", () => {
@@ -30,5 +44,19 @@ describe("Canvas Agent current-turn references", () => {
                 storageKey: "permanent/2026/07/28/images/person.png",
             }),
         ).toMatchObject({ url: "/api/generation-log-assets/permanent/2026/07/28/images/person.png" });
+    });
+
+    it("keeps the current custom image dimensions in the backend Run snapshot", () => {
+        expect(
+            compactSnapshot({
+                projectId: "canvas-one",
+                title: "画布",
+                imageSize: "1824x1024",
+                nodes: [],
+                connections: [],
+                selectedNodeIds: [],
+                viewport: { x: 0, y: 0, k: 1 },
+            }),
+        ).toMatchObject({ imageSize: "1824x1024" });
     });
 });

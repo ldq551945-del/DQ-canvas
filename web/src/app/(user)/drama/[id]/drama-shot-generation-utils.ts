@@ -1,31 +1,38 @@
-import type { DramaProject, DramaShot } from "../types";
+import type { DramaAssetReference, DramaProject, DramaShot } from "../types";
 import type { useEffectiveConfig } from "@/stores/use-config-store";
+import { resolveDramaGenerationSize } from "@/lib/drama-image-size";
+import type { ReferenceImage } from "@/types/image";
 
 export function shotReferenceImages(project: DramaProject, shot: DramaShot) {
-    const assetUrls = [...project.characters.filter((item) => shot.characterIds.includes(item.id)), ...project.scenes.filter((item) => item.id === shot.sceneId), ...project.props.filter((item) => shot.propIds.includes(item.id))].flatMap((item) =>
-        primaryAssetReference(item) ? [referenceImage(item.id, `${item.name}.png`, primaryAssetReference(item)!)] : [],
-    );
+    const assetUrls = [...project.characters.filter((item) => shot.characterIds.includes(item.id)), ...project.scenes.filter((item) => item.id === shot.sceneId), ...project.props.filter((item) => shot.propIds.includes(item.id))].flatMap((item) => {
+        const reference = primaryAssetReference(item);
+        return reference ? [referenceImage(item.id, `${item.name}.png`, reference.url, "image/png", reference.width, reference.height)] : [];
+    });
     const sourceUrls = (project.sourceAssets || []).flatMap((item) => {
         if (item.type !== "image") return [];
         const url = item.serverUrl || item.remoteUrl;
-        return url ? [referenceImage(item.id, item.title, url, item.mimeType)] : [];
+        return url ? [referenceImage(item.id, item.title, url, item.mimeType, item.width, item.height)] : [];
     });
     return [...assetUrls, ...sourceUrls].slice(0, 4);
 }
 
 export function storyboardReferenceImages(shot: DramaShot) {
     return [
-        shot.storyboardImageUrl ? referenceImage(`storyboard-start-${shot.id}`, `${shot.title}-起始帧.png`, shot.storyboardImageUrl) : null,
-        shot.storyboardEndImageUrl ? referenceImage(`storyboard-end-${shot.id}`, `${shot.title}-结束帧.png`, shot.storyboardEndImageUrl) : null,
+        shot.storyboardImageUrl ? referenceImage(`storyboard-start-${shot.id}`, `${shot.title}-起始帧.png`, shot.storyboardImageUrl, "image/png", shot.storyboardImageWidth, shot.storyboardImageHeight) : null,
+        shot.storyboardEndImageUrl ? referenceImage(`storyboard-end-${shot.id}`, `${shot.title}-结束帧.png`, shot.storyboardEndImageUrl, "image/png", shot.storyboardEndImageWidth, shot.storyboardEndImageHeight) : null,
     ].filter((item): item is ReturnType<typeof referenceImage> => Boolean(item));
 }
 
-function primaryAssetReference(item: DramaProject["characters"][number]) {
-    return item.references?.find((reference) => reference.id === item.primaryReferenceId)?.url || item.references?.[0]?.url || item.referenceImageUrl;
+function primaryAssetReference(item: DramaProject["characters"][number]): Pick<DramaAssetReference, "url" | "width" | "height"> | undefined {
+    return item.references?.find((reference) => reference.id === item.primaryReferenceId) || item.references?.[0] || (item.referenceImageUrl ? { url: item.referenceImageUrl } : undefined);
 }
 
-export function referenceImage(id: string, name: string, url: string, type = "image/png") {
-    return { id, name, type, dataUrl: url, url, ...(url.startsWith("/") ? { serverUrl: url } : /^https?:\/\//i.test(url) ? { remoteUrl: url } : {}) };
+export function referenceImage(id: string, name: string, url: string, type = "image/png", width?: number, height?: number): ReferenceImage {
+    return { id, name, type, dataUrl: url, url, width, height, ...(url.startsWith("/") ? { serverUrl: url } : /^https?:\/\//i.test(url) ? { remoteUrl: url } : {}) };
+}
+
+export function dramaGenerationSize(project: DramaProject, prompt: string, references: ReferenceImage[] = []) {
+    return resolveDramaGenerationSize({ projectSize: project.ratio, prompt, references });
 }
 
 export function estimateTaskPoints(config: ReturnType<typeof useEffectiveConfig>, type: "image" | "video" | "audio", duration = 5) {

@@ -1,4 +1,4 @@
-const TECHNICAL_ERROR_PATTERN = /\{\s*"error"|request id|new_api_error|convert_request_failed|not available|backend-anon\/conversation failed/i;
+const TECHNICAL_ERROR_PATTERN = /\{\s*"error"|request id|new_api_error|convert_request_failed|not available|backend-anon\/conversation failed|<!doctype\s+html|<html\b|\bnginx\b/i;
 const ACTIONABLE_ERROR_PATTERN = /积分不足|余额不足|请先登录|登录(?:状态)?(?:已)?失效|没有权限|无权访问|请求过于频繁|内容(?:不符合|未通过).*审核/;
 
 export function friendlyAgentError(value: unknown, fallback = "Agent 暂时无法完成这次任务，请切换模型或稍后重试。") {
@@ -19,7 +19,9 @@ export function formatAgentMessageText(text: string) {
     if (/^正在执行任务 task-[^（]+（第 \d+ 次）…?$/.test(text.trim())) return "正在执行创作任务…";
     if (text.trim() === "任务依赖无法继续执行") return "部分创作任务未能完成，请调整需求后重试。";
     if (text.trim() === "创作计划与后台生成任务已全部完成。") return "创作任务已完成。";
-    return text
+    const planningBoundary = ["\n\n我的选择：", "\n\n已安排 "].map((value) => text.indexOf(value)).filter((index) => index >= 0);
+    const visibleText = planningBoundary.length ? text.slice(0, Math.min(...planningBoundary)) : text;
+    return visibleText
         .split("\n")
         .filter((line) => !/^「[^」]+」已生成(?:并返回画布)?。$/.test(line.trim()))
         .join("\n")

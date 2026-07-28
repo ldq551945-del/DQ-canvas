@@ -26,7 +26,7 @@ describe("Agent child task retry concurrency", () => {
         vi.clearAllMocks();
         mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [{ id: "task", status: "failed" }] });
         mocks.countActive.mockResolvedValue(1);
-        mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 1 } });
+        mocks.getAuthSettings.mockResolvedValue({ generationConcurrency: { agent: 1 }, generationDefaults: { imageSize: "1:1" } });
     });
 
     it("uses the current backend limit before changing the failed task", async () => {
@@ -64,5 +64,39 @@ describe("Agent child task retry concurrency", () => {
         const tasks = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
         expect(tasks).toEqual([expect.objectContaining({ id: "task", status: "ready", attempts: 3, taskId: undefined, taskIds: undefined, childTasks: undefined, result: undefined, error: undefined })]);
         expect(mocks.executeAgentRun).toHaveBeenCalledWith(expect.objectContaining({ id: "run", status: "running", tasks }), "http://localhost", "");
+    });
+
+    it("repairs legacy canvas image references and invalid ratios before retrying", async () => {
+        const run = {
+            id: "run",
+            userId: "user",
+            surface: "canvas",
+            status: "failed",
+            requestedImageSize: undefined,
+            snapshot: {
+                selectedNodeIds: ["reference"],
+                nodes: [{ id: "reference", type: "image", title: "当前参考图", metadata: { url: "/api/reference-assets/current.webp", naturalWidth: 360, naturalHeight: 640 } }],
+            },
+            tasks: [{ id: "task", title: "编辑图片", type: "image", prompt: "换成紫色毛发", count: 1, ratio: "原图比例", dependencies: [], status: "failed", attempts: 1, references: [], error: "尺寸无效" }],
+        };
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/tasks/task/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", taskId: "task" }) });
+
+        expect(response.status).toBe(200);
+        const [retried] = mocks.updateAgentRunById.mock.calls[0]?.[1]?.tasks;
+        expect(retried).toMatchObject({ status: "ready", targetNodeId: "reference", referenceUrl: "/api/reference-assets/current.webp", referenceType: "image", ratio: "9:16" });
+        expect(mocks.updateAgentRunById.mock.calls[0]?.[2]).toEqual({
+            type: "task.retry.requested",
+            data: {
+                taskId: "task",
+                ops: [
+                    { type: "update_node", id: "task-run-0", metadata: { targetNodeId: "reference", agentTaskStatus: "ready", agentTaskError: undefined, agentTaskAttempts: 1 } },
+                    { type: "connect_nodes", fromNodeId: "reference", toNodeId: "task-run-0" },
+                ],
+            },
+        });
     });
 });

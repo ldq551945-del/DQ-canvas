@@ -80,6 +80,34 @@ describe("drama project service updates", () => {
         expect(mocks.updateDramaProject).toHaveBeenCalledWith("user-one", expect.objectContaining({ id: current.id, title: "新标题", updatedAt: "2026-07-19T08:00:02.000Z" }), current.updatedAt);
     });
 
+    it("preserves exact project dimensions and reference metadata", async () => {
+        const current = project("2026-07-19T08:00:01.000Z", "旧标题");
+        mocks.getDramaProject.mockResolvedValue(current);
+        const input = {
+            ...project("2026-07-19T08:00:02.000Z", "新标题"),
+            ratio: "1080x1920",
+            characters: [
+                {
+                    id: "character-one",
+                    name: "主角",
+                    description: "",
+                    references: [{ id: "reference-one", url: "/api/reference-assets/hero.png", source: "upload", label: "主角", width: 1080, height: 1920, createdAt: "2026-07-19T08:00:00.000Z" }],
+                },
+            ],
+        };
+
+        const saved = await updateDramaProjectForUser("user-one", current.id, input);
+
+        expect(saved).toMatchObject({ ratio: "1080x1920", characters: [{ references: [{ width: 1080, height: 1920 }] }] });
+    });
+
+    it("rejects unsafe exact project dimensions", async () => {
+        const current = project("2026-07-19T08:00:01.000Z", "旧标题");
+        mocks.getDramaProject.mockResolvedValue(current);
+
+        await expect(updateDramaProjectForUser("user-one", current.id, { ...project("2026-07-19T08:00:02.000Z", "新标题"), ratio: "5000x5000" })).rejects.toBeInstanceOf(DramaProjectServiceError);
+    });
+
     it("archives the new conversation when project creation fails", async () => {
         const error = new Error("write failed");
         mocks.createDramaProject.mockRejectedValue(error);

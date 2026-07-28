@@ -24,7 +24,7 @@ import { DramaAssetsPanel } from "./drama-assets-panel";
 import { DramaReviewPanel } from "./drama-review-panel";
 import { DramaStoryboardShotCard } from "./drama-storyboard-shot-card";
 import { DramaJianyingModal, DramaSubtitleModal, DramaVersionModal } from "./drama-project-modals";
-import { estimateEpisodePoints, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
+import { dramaGenerationSize, estimateEpisodePoints, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
 
 type Stage = "script" | "review" | "assets" | "storyboard" | "generate";
 
@@ -247,6 +247,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                     updateShot(project.id, episode.id, runningEnd.id, {
                         storyboardEndStatus: "success",
                         storyboardEndImageUrl: imageUrl,
+                        storyboardEndImageWidth: result.width,
+                        storyboardEndImageHeight: result.height,
                         storyboardEndError: undefined,
                         generationStatus: "queued",
                     });
@@ -271,6 +273,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                     updateShot(project.id, episode.id, running.id, {
                         storyboardStatus: "success",
                         storyboardImageUrl: imageUrl,
+                        storyboardImageWidth: result.width,
+                        storyboardImageHeight: result.height,
                         storyboardError: undefined,
                         storyboardEndStatus: running.storyboardFrameMode === "first_last" ? (hasEndFrame ? "success" : "queued") : "idle",
                         generationStatus: running.storyboardFrameMode === "first_last" && !hasEndFrame ? "idle" : "queued",
@@ -285,9 +289,9 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         const nextEnd = episode.shots.find((shot) => shot.storyboardEndStatus === "queued" && shot.storyboardImageUrl);
         if (nextEnd && !storyboardTaskRef.current) {
             storyboardTaskRef.current = `${episode.id}:${nextEnd.id}:creating-end`;
-            const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: project.ratio, count: "1" };
             const prompt = compileDramaShotPrompts(project, episode, nextEnd).endFramePrompt;
-            const references = [referenceImage(`storyboard-start-${nextEnd.id}`, `${nextEnd.title}-起始帧.png`, nextEnd.storyboardImageUrl!)];
+            const references = [referenceImage(`storyboard-start-${nextEnd.id}`, `${nextEnd.title}-起始帧.png`, nextEnd.storyboardImageUrl!, "image/png", nextEnd.storyboardImageWidth, nextEnd.storyboardImageHeight)];
+            const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompt, references), count: "1" };
             void createImageGenerationTask(imageConfig, prompt, references, undefined, {
                 logSource: "drama",
                 logTitle: `${project.title} · ${nextEnd.title}尾帧`,
@@ -310,9 +314,10 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         const next = episode.shots.find((shot) => shot.storyboardStatus === "queued");
         if (!next || storyboardTaskRef.current) return;
         storyboardTaskRef.current = `${episode.id}:${next.id}:creating`;
-        const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: project.ratio, count: "1" };
         const prompts = compileDramaShotPrompts(project, episode, next);
-        void createImageGenerationTask(imageConfig, prompts.imagePrompt, [], undefined, {
+        const references = shotReferenceImages(project, next);
+        const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompts.imagePrompt, references), count: "1" };
+        void createImageGenerationTask(imageConfig, prompts.imagePrompt, references, undefined, {
             logSource: "drama",
             logTitle: `${project.title} · ${next.title}`,
             conversationId: project.creativeConversationId,
@@ -365,7 +370,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             return;
         }
         void createServerVideoGenerationTask(
-            { ...config, model: config.videoModel || config.model, size: project.ratio, videoSeconds: String(next.duration), videoGenerateAudio: String((next.audioMode || "source") === "source") },
+            { ...config, model: config.videoModel || config.model, size: dramaGenerationSize(project, prompts.videoPrompt, references), videoSeconds: String(next.duration), videoGenerateAudio: String((next.audioMode || "source") === "source") },
             prompts.videoPrompt,
             references,
             [],

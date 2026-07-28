@@ -7,7 +7,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
-import { parseImageDimensions } from "@/lib/image-size";
+import { closestImageAspectRatio, parseImageDimensions } from "@/lib/image-size";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
@@ -716,6 +716,13 @@ export function resolveRequestSize(quality: string | undefined, size: string) {
     }
     if (value.includes(":")) return resolveSize(quality, value);
     throw new Error("图片尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
+}
+
+export function imageRequestAspectRatio(size: string) {
+    const value = size.trim();
+    if (/^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(value)) return value;
+    const dimensions = parseImageDimensions(value);
+    return (dimensions && closestImageAspectRatio(dimensions.width, dimensions.height)) || "1:1";
 }
 
 export function resolveSize(quality: string | undefined, ratio: string): string {

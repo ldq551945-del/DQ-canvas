@@ -32,8 +32,16 @@ export function DramaShotFrameEditor({ projectId, episodeId, shot }: { projectId
             const url = stored.serverUrl || stored.url;
             updateShot(projectId, episodeId, shot.id, {
                 ...(uploadTarget === "start"
-                    ? { storyboardStatus: "success" as const, storyboardTaskId: undefined, storyboardError: undefined, storyboardImageUrl: url }
-                    : { storyboardFrameMode: "first_last" as const, storyboardEndStatus: "success" as const, storyboardEndTaskId: undefined, storyboardEndError: undefined, storyboardEndImageUrl: url }),
+                    ? { storyboardStatus: "success" as const, storyboardTaskId: undefined, storyboardError: undefined, storyboardImageUrl: url, storyboardImageWidth: stored.width, storyboardImageHeight: stored.height }
+                    : {
+                          storyboardFrameMode: "first_last" as const,
+                          storyboardEndStatus: "success" as const,
+                          storyboardEndTaskId: undefined,
+                          storyboardEndError: undefined,
+                          storyboardEndImageUrl: url,
+                          storyboardEndImageWidth: stored.width,
+                          storyboardEndImageHeight: stored.height,
+                      }),
                 ...clearedGeneratedMedia,
             });
             message.success(`${uploadTarget === "start" ? "起始帧" : "结束帧"}已上传`);
@@ -46,7 +54,9 @@ export function DramaShotFrameEditor({ projectId, episodeId, shot }: { projectId
     };
     const removeFrame = (kind: FrameKind) => {
         updateShot(projectId, episodeId, shot.id, {
-            ...(kind === "start" ? { storyboardStatus: "idle" as const, storyboardImageUrl: undefined } : { storyboardEndStatus: "idle" as const, storyboardEndImageUrl: undefined }),
+            ...(kind === "start"
+                ? { storyboardStatus: "idle" as const, storyboardImageUrl: undefined, storyboardImageWidth: undefined, storyboardImageHeight: undefined }
+                : { storyboardEndStatus: "idle" as const, storyboardEndImageUrl: undefined, storyboardEndImageWidth: undefined, storyboardEndImageHeight: undefined }),
             ...clearedGeneratedMedia,
         });
     };

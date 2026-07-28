@@ -6,6 +6,7 @@ import { AudioMaterial, AudioSegment, ClipSettings, DraftFolder, TextSegment, Te
 import { zipSync } from "fflate";
 
 import type { DramaEpisode, DramaProject } from "@/lib/drama-project-contract";
+import { dramaOutputDimensions } from "@/lib/drama-image-size";
 import { downloadMediaToFile } from "@/lib/server/media-download";
 
 const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
@@ -20,7 +21,7 @@ export async function exportDramaEpisodeAsJianying(input: { project: DramaProjec
         const draftRoot = join(root, "drafts");
         await mkdir(draftRoot, { recursive: true });
         const folder = new DraftFolder(draftRoot);
-        const [width, height] = input.project.ratio === "9:16" ? [1080, 1920] : [1920, 1080];
+        const { width, height } = dramaOutputDimensions(input.project.ratio, 1920, 1080);
         const script = folder.createDraft(draftName, width, height, { allowReplace: true });
         const draftDir = join(draftRoot, draftName);
         const assetsDir = join(draftDir, "assets");

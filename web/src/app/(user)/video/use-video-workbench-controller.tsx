@@ -16,7 +16,7 @@ import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentPara
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
-import { closestImageAspectRatio } from "@/lib/image-size";
+import { closestImageAspectRatio, resolveImageRequestSize } from "@/lib/image-size";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
@@ -393,6 +393,14 @@ export function useVideoWorkbenchController() {
             return null;
         }
         const requestConfig = mergeWorkbenchAgentPatch(effectiveConfig, parameterPatch, "video");
+        requestConfig.size = resolveImageRequestSize({
+            prompt: text,
+            configuredSize: effectiveConfig.size,
+            referenceWidth: references[0]?.width || videoReferences[0]?.width,
+            referenceHeight: references[0]?.height || videoReferences[0]?.height,
+            plannedSize: parameterPatch?.size,
+            defaultSize: requestConfig.size,
+        });
         const requestModel = selectVideoModel(requestConfig, selectableModelsByCapability(requestConfig, "video"), parameterPatch?.model);
         if (!isAiConfigReady(requestConfig, requestModel)) {
             message.warning("请联系管理员在后台配置可用视频模型");

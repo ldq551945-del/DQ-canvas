@@ -17,6 +17,7 @@ export type CanvasAgentOp =
 export type CanvasAgentSnapshot = {
     projectId: string;
     title: string;
+    imageSize?: string;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
     selectedNodeIds: string[];
@@ -52,7 +53,8 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
                     : nodeType === CanvasNodeType.Image && !op.width && !op.height && metadata.size
                       ? nodeSizeFromRatio(metadata.size, maxEdge, maxEdge) || baseSize
                       : baseSize;
-            const position = op.id?.startsWith("output-agent-") ? findFreeNodePosition(nodes, requestedPosition, size.width, size.height) : requestedPosition;
+            const isAgentNode = Boolean(metadata.agentRunId) || op.id?.startsWith("output-agent-");
+            const position = isAgentNode ? findFreeNodePosition(nodes, requestedPosition, size.width, size.height) : requestedPosition;
             const node: CanvasNodeData = {
                 id: op.id || `${nodeType}-${Date.now()}-${index}`,
                 type: nodeType,

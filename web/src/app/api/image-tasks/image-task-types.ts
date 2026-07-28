@@ -45,7 +45,7 @@ export type ImageApiResponse = {
     code?: number;
     msg?: string;
 };
-export type ImageTaskResult = { dataUrl: string; remoteUrl?: string };
+export type ImageTaskResult = { dataUrl: string; remoteUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
 export type ImageTaskRunResult = ImageTaskResult & { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string };
 
 export type GeminiPart = {

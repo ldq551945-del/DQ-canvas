@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Input, Modal, Segmented } from "antd";
+import { App, Button, Input, InputNumber, Modal, Segmented } from "antd";
 import { Clapperboard, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useUserStore } from "@/stores/use-user-store";
 import { CompactEmptyState } from "@/components/compact-empty-state";
+import { normalizeDramaImageSize } from "@/lib/drama-image-size";
 
 import { DramaProjectCard } from "./components/drama-project-card";
 import { useDramaStore } from "./stores/use-drama-store";
@@ -26,7 +27,9 @@ export default function DramaPage() {
     const [title, setTitle] = useState("");
     const [summary, setSummary] = useState("");
     const [style, setStyle] = useState("电影感国漫");
-    const [ratio, setRatio] = useState<"9:16" | "16:9">("9:16");
+    const [ratio, setRatio] = useState("9:16");
+    const [customWidth, setCustomWidth] = useState(1080);
+    const [customHeight, setCustomHeight] = useState(1920);
     const [creating, setCreating] = useState(false);
     const episodeCount = projects.reduce((total, project) => total + project.episodeCount, 0);
     const pendingCount = projects.reduce((total, project) => total + project.pendingTaskCount, 0);
@@ -35,9 +38,11 @@ export default function DramaPage() {
     }, [hydrate, userId]);
     const create = async () => {
         if (!title.trim()) return message.warning("请输入项目名称");
+        const normalizedSize = normalizeDramaImageSize(ratio);
+        if (!normalizedSize) return message.warning("请输入有效的短剧尺寸");
         setCreating(true);
         try {
-            const id = await createProject({ title: title.trim(), summary: summary.trim(), style: style.trim(), ratio });
+            const id = await createProject({ title: title.trim(), summary: summary.trim(), style: style.trim(), ratio: normalizedSize });
             setOpen(false);
             setTitle("");
             setSummary("");
@@ -113,8 +118,47 @@ export default function DramaPage() {
                         <Input className="!h-10 sm:!h-11" value={style} onChange={(event) => setStyle(event.target.value)} />
                     </label>
                     <label className="block space-y-2.5">
-                        <span className="text-sm font-medium">成片比例</span>
-                        <Segmented block className="!min-h-10 sm:!min-h-11" value={ratio} options={["9:16", "16:9"]} onChange={(value) => setRatio(value as "9:16" | "16:9")} />
+                        <span className="text-sm font-medium">生成尺寸</span>
+                        <Segmented
+                            block
+                            className="!min-h-10 sm:!min-h-11"
+                            value={ratio.includes("x") ? "custom" : ratio}
+                            options={[
+                                { label: "9:16", value: "9:16" },
+                                { label: "16:9", value: "16:9" },
+                                { label: "自定义", value: "custom" },
+                            ]}
+                            onChange={(value) => setRatio(value === "custom" ? `${customWidth}x${customHeight}` : String(value))}
+                        />
+                        {ratio.includes("x") ? (
+                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                                <InputNumber
+                                    className="!w-full"
+                                    min={256}
+                                    max={3840}
+                                    value={customWidth}
+                                    prefix="W"
+                                    onChange={(value) => {
+                                        const width = Number(value) || 256;
+                                        setCustomWidth(width);
+                                        setRatio(`${width}x${customHeight}`);
+                                    }}
+                                />
+                                <span className="text-muted-foreground">×</span>
+                                <InputNumber
+                                    className="!w-full"
+                                    min={256}
+                                    max={3840}
+                                    value={customHeight}
+                                    prefix="H"
+                                    onChange={(value) => {
+                                        const height = Number(value) || 256;
+                                        setCustomHeight(height);
+                                        setRatio(`${customWidth}x${height}`);
+                                    }}
+                                />
+                            </div>
+                        ) : null}
                     </label>
                 </div>
             </Modal>

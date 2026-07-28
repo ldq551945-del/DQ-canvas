@@ -61,8 +61,6 @@ import {
 
 export type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-export const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-
 export function GenerationSettings({ config, model, updateConfig, openConfigDialog, hideModel = false }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; hideModel?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
@@ -105,10 +103,11 @@ export function ResultImageCard({
     onSaveAsset: (image: GeneratedImage, index: number) => void;
 }) {
     const hasImage = Boolean(image.dataUrl) && !missing;
+    const cardWidth = resultImageCardWidth(image.width, image.height, large);
     return (
-        <div className="relative overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
+        <div className="relative max-w-full overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800" style={{ width: cardWidth }}>
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
-            <div className={`${large ? "h-[156px] sm:h-[240px]" : "h-[136px] sm:h-[220px]"} flex w-full items-center justify-center bg-stone-50 dark:bg-stone-950`}>
+            <div className="flex w-full items-center justify-center bg-stone-50 dark:bg-stone-950" style={{ aspectRatio: `${Math.max(1, image.width)} / ${Math.max(1, image.height)}` }}>
                 {hasImage ? (
                     <Image
                         rootClassName="!h-full !w-full"
@@ -126,34 +125,35 @@ export function ResultImageCard({
                     </div>
                 )}
             </div>
-            <div className="space-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
+            <div className="flex min-w-0 items-center justify-between gap-2 border-t border-stone-200 px-2.5 py-2 dark:border-stone-800">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-stone-500 dark:text-stone-400">
                     <span>
                         {image.width}x{image.height}
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
-                <div className="grid min-w-0 grid-cols-3 gap-2">
+                <div className="flex shrink-0 items-center gap-0.5">
                     <Tooltip title="添加到素材">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" disabled={!hasImage} icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)}>
-                            添加到素材
-                        </Button>
+                        <Button type="text" shape="circle" size="small" aria-label="添加到素材" disabled={!hasImage} icon={<FolderPlus className="size-3.5" />} onClick={() => void onSaveAsset(image, index)} />
                     </Tooltip>
                     <Tooltip title="加入参考图">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" disabled={!hasImage} icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)}>
-                            加入参考图
-                        </Button>
+                        <Button type="text" shape="circle" size="small" aria-label="加入参考图" disabled={!hasImage} icon={<PenLine className="size-3.5" />} onClick={() => void onEdit(image, index)} />
                     </Tooltip>
                     <Tooltip title="下载">
-                        <Button className={RESULT_ACTION_BUTTON_CLASS} size="small" disabled={!hasImage} icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)}>
-                            下载
-                        </Button>
+                        <Button type="text" shape="circle" size="small" aria-label="下载" disabled={!hasImage} icon={<Download className="size-3.5" />} onClick={() => onDownload(image, index)} />
                     </Tooltip>
                 </div>
             </div>
         </div>
     );
+}
+
+export function resultImageCardWidth(width: number, height: number, large = false) {
+    const ratio = width > 0 && height > 0 ? width / height : 1;
+    const maxWidth = large ? 320 : 280;
+    const maxHeight = large ? 360 : 300;
+    return Math.max(120, Math.round(Math.min(maxWidth, ratio * maxHeight)));
 }
 
 export function PendingImageCard({ large }: { large?: boolean }) {

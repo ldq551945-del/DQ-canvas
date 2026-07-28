@@ -411,7 +411,7 @@ async function hydrateGeneratedImageUrl(storageKey?: string, fallback = "", remo
     return browserReadableMediaUrl(serverUrl || remoteUrl || (!storageKey && !isLocalImageUrl(fallback) ? fallback : ""));
 }
 
-export async function normalizeGeneratedImage(url: string, remoteFallback = "", serverFallback = "") {
+export async function normalizeGeneratedImage(url: string, remoteFallback = "", serverFallback = "", authoritativeMeta?: { width?: number; height?: number; bytes?: number; mimeType?: string }) {
     const remoteUrl = isRemoteImageUrl(remoteFallback) ? remoteFallback : isRemoteImageUrl(url) ? url : "";
     const serverUrl = isServerImageUrl(serverFallback) ? serverFallback : isServerImageUrl(url) ? url : "";
     const fallbackUrl = serverUrl || (!isLocalImageUrl(url) ? url : "") || remoteUrl;
@@ -421,8 +421,22 @@ export async function normalizeGeneratedImage(url: string, remoteFallback = "", 
         return { url: stored.url, remoteUrl: remoteUrl || undefined, serverUrl: stored.url, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType, storageKey: stored.storageKey };
     }
     const safeUrl = browserReadableMediaUrl(fallbackUrl);
+    const trustedMeta = authoritativeGeneratedImageMeta(authoritativeMeta);
+    if (trustedMeta) return { url: safeUrl, remoteUrl: remoteUrl || undefined, serverUrl: serverUrl || undefined, storageKey: undefined, ...trustedMeta };
     const meta = await readImageMeta(safeUrl);
     return { url: safeUrl, remoteUrl: remoteUrl || undefined, serverUrl: serverUrl || undefined, width: meta.width, height: meta.height, bytes: 0, mimeType: meta.mimeType, storageKey: undefined };
+}
+
+export function authoritativeGeneratedImageMeta(value?: { width?: number; height?: number; bytes?: number; mimeType?: string }) {
+    const width = Math.floor(Number(value?.width) || 0);
+    const height = Math.floor(Number(value?.height) || 0);
+    if (width <= 0 || height <= 0) return null;
+    return {
+        width,
+        height,
+        bytes: Math.max(0, Math.floor(Number(value?.bytes) || 0)),
+        mimeType: typeof value?.mimeType === "string" && value.mimeType.startsWith("image/") ? value.mimeType : "image/png",
+    };
 }
 
 function isStableImageUrl(value?: string) {

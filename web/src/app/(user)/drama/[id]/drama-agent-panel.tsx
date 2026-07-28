@@ -454,8 +454,16 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
         if (!shot || !url) return;
         updateShot(project.id, episode.id, shot.id, {
             ...(frameKind === "start"
-                ? { storyboardStatus: "success" as const, storyboardTaskId: undefined, storyboardError: undefined, storyboardImageUrl: url }
-                : { storyboardFrameMode: "first_last" as const, storyboardEndStatus: "success" as const, storyboardEndTaskId: undefined, storyboardEndError: undefined, storyboardEndImageUrl: url }),
+                ? { storyboardStatus: "success" as const, storyboardTaskId: undefined, storyboardError: undefined, storyboardImageUrl: url, storyboardImageWidth: referenceAsset?.width, storyboardImageHeight: referenceAsset?.height }
+                : {
+                      storyboardFrameMode: "first_last" as const,
+                      storyboardEndStatus: "success" as const,
+                      storyboardEndTaskId: undefined,
+                      storyboardEndError: undefined,
+                      storyboardEndImageUrl: url,
+                      storyboardEndImageWidth: referenceAsset?.width,
+                      storyboardEndImageHeight: referenceAsset?.height,
+                  }),
             generationStatus: "idle",
             generationTaskId: undefined,
             generationError: undefined,
@@ -479,6 +487,8 @@ function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[
             storageKey: sourceAsset.storageKey,
             source: "generated",
             label: sourceAsset.title || "Agent 生成图",
+            width: sourceAsset.width,
+            height: sourceAsset.height,
             createdAt: new Date().toISOString(),
         };
         const selected = project[visualKind].find((item) => item.id === visualAssetId);

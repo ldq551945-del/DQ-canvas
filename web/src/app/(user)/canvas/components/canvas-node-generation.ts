@@ -169,6 +169,8 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
         dataUrl: content,
         storageKey: node.metadata.storageKey,
         url: serverUrl || remoteUrl || undefined,
+        width: node.metadata.naturalWidth || node.width,
+        height: node.metadata.naturalHeight || node.height,
     };
 }
 

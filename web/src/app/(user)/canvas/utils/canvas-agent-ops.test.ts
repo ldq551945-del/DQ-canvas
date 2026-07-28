@@ -5,16 +5,33 @@ import { CanvasNodeType } from "../types";
 const snapshot: CanvasAgentSnapshot = { projectId: "p", title: "画布", nodes: [], connections: [], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } };
 
 describe("Agent 产物排版", () => {
-    it("avoids overlapping output nodes and replays stable ids idempotently", () => {
-        const first = applyCanvasAgentOps(snapshot, [
-            { type: "add_node", id: "output-agent-run-0-0", nodeType: CanvasNodeType.Image, position: { x: 900, y: 0 } },
-            { type: "add_node", id: "output-agent-run-0-1", nodeType: CanvasNodeType.Image, position: { x: 900, y: 0 } },
+    it("places every Agent Run node in a free position and replays stable ids idempotently", () => {
+        const occupied: CanvasAgentSnapshot = {
+            ...snapshot,
+            nodes: [{ id: "existing", type: CanvasNodeType.Image, title: "已有节点", position: { x: 900, y: 0 }, width: 340, height: 340 }],
+        };
+        const first = applyCanvasAgentOps(occupied, [
+            { type: "add_node", id: "brief-run", nodeType: CanvasNodeType.Brief, position: { x: 900, y: 0 }, metadata: { agentRunId: "run" } },
+            { type: "add_node", id: "task-run-0", nodeType: CanvasNodeType.Task, position: { x: 900, y: 0 }, metadata: { agentRunId: "run" } },
         ]);
-        expect(first.nodes).toHaveLength(2);
-        expect(first.nodes[0].position).not.toEqual(first.nodes[1].position);
-        const replay = applyCanvasAgentOps(first, [{ type: "add_node", id: "output-agent-run-0-0", nodeType: CanvasNodeType.Image, title: "已更新" }]);
-        expect(replay.nodes).toHaveLength(2);
-        expect(replay.nodes[0].title).toBe("已更新");
+        expect(first.nodes).toHaveLength(3);
+        expect(first.nodes[1].position).not.toEqual(occupied.nodes[0].position);
+        expect(first.nodes[2].position).not.toEqual(occupied.nodes[0].position);
+        expect(first.nodes[1].position).not.toEqual(first.nodes[2].position);
+
+        const replay = applyCanvasAgentOps(first, [{ type: "add_node", id: "brief-run", nodeType: CanvasNodeType.Brief, title: "已更新", metadata: { agentRunId: "run" } }]);
+        expect(replay.nodes).toHaveLength(3);
+        expect(replay.nodes[1].title).toBe("已更新");
+    });
+
+    it("keeps manually added nodes at their requested position", () => {
+        const occupied: CanvasAgentSnapshot = {
+            ...snapshot,
+            nodes: [{ id: "existing", type: CanvasNodeType.Image, title: "已有节点", position: { x: 20, y: 30 }, width: 340, height: 340 }],
+        };
+        const created = applyCanvasAgentOps(occupied, [{ type: "add_node", id: "manual", nodeType: CanvasNodeType.Text, position: { x: 20, y: 30 } }]);
+
+        expect(created.nodes[1].position).toEqual({ x: 20, y: 30 });
     });
 
     it("sizes image outputs from their natural dimensions", () => {

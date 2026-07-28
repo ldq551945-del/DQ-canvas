@@ -48,7 +48,7 @@ export type ImageTask = GenerationTaskContext & {
     prompt: string;
     references: ImageTaskReference[];
     mask?: ImageTaskReference;
-    result?: { dataUrl: string; remoteUrl?: string; serverUrl?: string };
+    result?: { dataUrl: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
     error?: string;
     pointsRemaining?: number;
     candidateConfigs?: ImageTaskConfig[];

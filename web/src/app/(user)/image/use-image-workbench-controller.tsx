@@ -16,7 +16,7 @@ import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentPara
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
-import { closestImageAspectRatio } from "@/lib/image-size";
+import { closestImageAspectRatio, resolveImageRequestSize } from "@/lib/image-size";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalImageExtension } from "@/lib/media-image-url";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
@@ -330,7 +330,7 @@ export function useImageWorkbenchController() {
 
     async function completeGenerationTask(logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, pendingTask: PendingImageTask, controller?: AbortController) {
         const result = await waitForImageGenerationTask(snapshot.config, { id: pendingTask.taskId, kind: pendingTask.kind, model: pendingTask.model }, { signal: controller?.signal });
-        const imageMeta = await normalizeGeneratedImage(result.dataUrl, result.remoteUrl, result.serverUrl);
+        const imageMeta = await normalizeGeneratedImage(result.dataUrl, result.remoteUrl, result.serverUrl, result);
         const durationMs = Date.now() - pendingTask.startedAt;
         const nextImage: GeneratedImage = {
             id: resultId,
@@ -669,6 +669,14 @@ export function useImageWorkbenchController() {
             return null;
         }
         const requestConfig = mergeWorkbenchAgentPatch(effectiveConfig, parameterPatch, "image");
+        requestConfig.size = resolveImageRequestSize({
+            prompt: text,
+            configuredSize: effectiveConfig.size,
+            referenceWidth: references[0]?.width,
+            referenceHeight: references[0]?.height,
+            plannedSize: parameterPatch?.size,
+            defaultSize: requestConfig.size,
+        });
         const requestModel = String(parameterPatch?.model || requestConfig.imageModel || requestConfig.model || "");
         if (!isAiConfigReady(requestConfig, requestModel)) {
             message.warning("请联系管理员在后台配置可用生图模型");

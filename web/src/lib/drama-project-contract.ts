@@ -10,6 +10,8 @@ export type DramaAssetReference = {
     storageKey?: string;
     source: "upload" | "generated" | "library";
     label: string;
+    width?: number;
+    height?: number;
     createdAt: string;
 };
 
@@ -92,11 +94,15 @@ export type DramaShot = {
     storyboardTaskId?: string;
     storyboardError?: string;
     storyboardImageUrl?: string;
+    storyboardImageWidth?: number;
+    storyboardImageHeight?: number;
     storyboardEndStatus?: DramaTaskStatus;
     storyboardEndAttempt?: number;
     storyboardEndTaskId?: string;
     storyboardEndError?: string;
     storyboardEndImageUrl?: string;
+    storyboardEndImageWidth?: number;
+    storyboardEndImageHeight?: number;
     generationStatus?: DramaTaskStatus;
     generationAttempt?: number;
     generationTaskId?: string;
@@ -150,6 +156,8 @@ export type DramaSourceAsset = {
     remoteUrl?: string;
     serverUrl?: string;
     mimeType?: string;
+    width?: number;
+    height?: number;
 };
 
 export type DramaProject = {
@@ -158,7 +166,7 @@ export type DramaProject = {
     title: string;
     summary: string;
     style: string;
-    ratio: "9:16" | "16:9";
+    ratio: string;
     status: "active" | "archived";
     creativeConversationId?: string;
     activeEpisodeId?: string;

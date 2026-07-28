@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     getAgentRun: vi.fn(),
     setAgentRunStatus: vi.fn(),
+    updateAgentRunById: vi.fn(),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -15,7 +16,7 @@ vi.mock("next/server", async (importOriginal) => {
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user" })) }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/agent-run-executor", () => ({ abortAgentRun: vi.fn(), executeAgentRun: mocks.executeAgentRun }));
-vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, setAgentRunStatus: mocks.setAgentRunStatus }));
+vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, setAgentRunStatus: mocks.setAgentRunStatus, updateAgentRunById: mocks.updateAgentRunById }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler) => ((await mocks.countActive()) >= limit ? null : handler())) }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
@@ -39,6 +40,40 @@ describe("Agent Run resume concurrency", () => {
         expect(second.status).toBe(429);
         expect(mocks.getAuthSettings).toHaveBeenCalledTimes(2);
         expect(mocks.setAgentRunStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries a planning failure in the same run and replaces its assistant state", async () => {
+        const run = { id: "run", userId: "user", status: "failed", tasks: [], assetIds: ["old"] };
+        mocks.getAgentRun.mockResolvedValue(run);
+        mocks.countActive.mockResolvedValue(0);
+        mocks.getAuthSettings.mockReset().mockResolvedValue({ generationConcurrency: { agent: 2 } });
+        mocks.updateAgentRunById.mockImplementation(async (_id, patch) => ({ ...run, ...patch }));
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
+
+        expect(response.status).toBe(200);
+        expect(mocks.updateAgentRunById).toHaveBeenCalledWith("run", expect.objectContaining({ status: "planning", tasks: [], reviewed: false, assetIds: [] }), { type: "run.retry.requested" }, ["failed"]);
+        expect(mocks.executeAgentRun).toHaveBeenCalledWith(expect.objectContaining({ id: "run", status: "planning", tasks: [] }), "http://localhost", "");
+    });
+
+    it("does not use whole-run retry when a failed child task exists", async () => {
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [{ id: "task", status: "failed" }] });
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
+
+        expect(response.status).toBe(409);
+        expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
+    });
+
+    it("checks the latest concurrency limit before retrying a planning failure", async () => {
+        mocks.getAgentRun.mockResolvedValue({ id: "run", userId: "user", status: "failed", tasks: [] });
+        mocks.countActive.mockResolvedValue(1);
+        mocks.getAuthSettings.mockReset().mockResolvedValue({ generationConcurrency: { agent: 1 } });
+
+        const response = await POST(new Request("http://localhost/api/agent/runs/run/retry", { method: "POST" }), { params: Promise.resolve({ id: "run", action: "retry" }) });
+
+        expect(response.status).toBe(429);
+        expect(mocks.updateAgentRunById).not.toHaveBeenCalled();
     });
 });
 

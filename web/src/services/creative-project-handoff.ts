@@ -83,6 +83,8 @@ export function buildDramaHandoffInput(handoff: CreativeProjectHandoff) {
         remoteUrl: asset.remoteUrl,
         serverUrl: asset.serverUrl,
         mimeType: asset.mimeType,
+        width: asset.width,
+        height: asset.height,
     }));
     const textAssets = sourceAssets.filter((asset) => asset.type === "text" && asset.textContent?.trim());
     const initialScript = textAssets.length ? textAssets.map((asset) => `【${asset.title}】\n${asset.textContent}`).join("\n\n") : handoff.summary;

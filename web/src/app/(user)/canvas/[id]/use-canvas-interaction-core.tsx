@@ -270,13 +270,21 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         return map;
     }, [connections, nodes]);
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(
-        () => ({ projectId, title: currentProject?.title || "未命名画布", nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
-        [connections, currentProject?.title, nodes, projectId, selectedNodeIds, viewport],
+        () => ({ projectId, title: currentProject?.title || "未命名画布", imageSize: effectiveConfig.size, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
+        [connections, currentProject?.title, effectiveConfig.size, nodes, projectId, selectedNodeIds, viewport],
     );
     const applyAgentOps = useCallback(
         (ops?: CanvasAgentOp[]) => {
             const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
-            const before = { projectId, title: currentProject?.title || "未命名画布", nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
+            const before = {
+                projectId,
+                title: currentProject?.title || "未命名画布",
+                imageSize: effectiveConfig.size,
+                nodes: nodesRef.current,
+                connections: connectionsRef.current,
+                selectedNodeIds: Array.from(selectedNodeIdsRef.current),
+                viewport: viewportRef.current,
+            };
             const generationOps = safeOps.filter((op): op is Extract<CanvasAgentOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
             const next = applyCanvasAgentOps(
                 before,
@@ -303,7 +311,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
             }
             return { ...next, projectId, title: currentProject?.title || "未命名画布" };
         },
-        [currentProject?.title, projectId],
+        [currentProject?.title, effectiveConfig.size, projectId],
     );
     useCanvasLocalAgentBridge({ snapshot: agentSnapshot, onApplyOps: applyAgentOps });
     return {

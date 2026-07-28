@@ -1,4 +1,5 @@
 import type { DramaProject, DramaProjectSummary, DramaProjectSummaryPage } from "@/lib/drama-project-contract";
+import { normalizeDramaImageSize } from "@/lib/drama-image-size";
 import { summarizeDramaProject } from "@/lib/drama-project-summary";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
@@ -196,7 +197,7 @@ function summaryFromRow(row: DramaProjectSummaryRow): DramaProjectSummary {
         title: row.title,
         summary: row.summary || "",
         style: row.style || "",
-        ratio: row.ratio === "16:9" ? "16:9" : "9:16",
+        ratio: normalizeDramaImageSize(row.ratio) || "9:16",
         status: row.status,
         episodeCount: Number(row.episode_count) || 0,
         characterCount: Number(row.character_count) || 0,

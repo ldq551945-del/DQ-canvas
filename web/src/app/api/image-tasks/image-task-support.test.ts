@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { imageTaskPollAttempts, imageTaskPollUrls, imageTaskRequestTimeoutMs, openAiImageTaskPath, resolveRequestSize, shouldFallbackToJsonImageEdit, shouldRetryJsonImageEditPayload } from "./image-task-support";
+import { imageRequestAspectRatio, imageTaskPollAttempts, imageTaskPollUrls, imageTaskRequestTimeoutMs, openAiImageTaskPath, resolveRequestSize, shouldFallbackToJsonImageEdit, shouldRetryJsonImageEditPayload } from "./image-task-support";
 
 const config = {
     baseUrl: "/api/ai/system/global-image",
@@ -28,6 +28,12 @@ describe("GlobalAiOpc image task paths", () => {
         ["1080 X 1213", "1080x1213"],
     ])("normalizes custom image dimensions written as %s", (input, expected) => {
         expect(resolveRequestSize(undefined, input)).toBe(expected);
+    });
+
+    it("keeps a compatible ratio alongside exact custom dimensions", () => {
+        expect(imageRequestAspectRatio("1824x1024")).toBe("16:9");
+        expect(imageRequestAspectRatio("1024x1536")).toBe("2:3");
+        expect(imageRequestAspectRatio("9:16")).toBe("9:16");
     });
 
     it("uses the configured create and result endpoints instead of OpenAI defaults", async () => {

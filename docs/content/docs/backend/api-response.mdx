@@ -133,7 +133,7 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 
 ## 短剧项目与生成运营
 
-- `GET/POST /api/drama/projects`：列出或创建当前用户的短剧项目。
+- `GET/POST /api/drama/projects`：列出或创建当前用户的短剧项目；`ratio` 支持 `9:16`、`16:9` 或经过边界校验的精确 `宽x高`，镜头图片/视频沿用项目尺寸优先级并可在无精确项目尺寸时继承参考图比例。
 - `GET/PATCH/DELETE /api/drama/projects/{id}`：读取、更新或删除当前用户拥有的短剧项目。
 - `GET /api/admin/generation-operations`：管理员按任务类型、状态、Surface、用户和关键词分页查询统一生成运营数据，并返回任务摘要与可探测渠道。
 

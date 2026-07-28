@@ -163,21 +163,26 @@ export async function runImageTask(task: ImageTask, origin: string, publicOrigin
                 const resultRemoteUrl = (result as { remoteUrl?: unknown }).remoteUrl;
                 const safeResult =
                     directRemoteImageResult(typeof resultRemoteUrl === "string" ? resultRemoteUrl : undefined) || (await inlineRemoteImageResult(result.dataUrl, origin, cookie, typeof resultRemoteUrl === "string" ? resultRemoteUrl : undefined));
-                const log = await writeImageGenerationLog(candidateTask, "success", safeResult, Date.now() - task.createdAt).catch((error) => {
-                    console.error("Image generation log write failed", error);
-                    return null;
-                });
+                const log = await writeImageGenerationLog(candidateTask, "success", safeResult, Date.now() - task.createdAt);
                 const asset = log?.assets[0];
                 const settings = await getAuthSettings().catch(() => null);
                 const current = await getImageTask(task.id);
                 if (current?.status === "cancelled") {
-                    if (result.pointsCost && result.pointsRecordId && settings)
+                    if (typeof result.pointsCost === "number" && result.pointsRecordId && settings)
                         await refundUserPoints(task.userId, generationModelId(config), result.pointsCost, "image", imageUnits(config.quality, settings.generationPointMultipliers.imageQuality), undefined, result.pointsRecordId);
                     return;
                 }
                 const completed = await transitionImageTask(candidateTask, ["running"], {
                     status: "success",
-                    result: { dataUrl: safeResult.dataUrl, remoteUrl: asset?.remoteUrl || safeResult.remoteUrl, serverUrl: asset?.serverUrl },
+                    result: {
+                        dataUrl: safeResult.dataUrl,
+                        remoteUrl: asset?.remoteUrl || safeResult.remoteUrl,
+                        serverUrl: asset?.serverUrl,
+                        width: asset?.width,
+                        height: asset?.height,
+                        bytes: asset?.bytes,
+                        mimeType: asset?.mimeType,
+                    },
                     pointsRemaining: result.pointsRemaining,
                 });
                 attempts = finishGenerationAttempt(attempts, started.attempt.attemptNo, { status: "succeeded", pointsCost: result.pointsCost, pointsRecordId: result.pointsRecordId });
@@ -193,14 +198,14 @@ export async function runImageTask(task: ImageTask, origin: string, publicOrigin
                             assets: [{ type: "image", url }],
                         }).catch((error) => console.error("Creative image asset registration failed", error));
                 }
-                if (!completed && result.pointsCost && result.pointsRecordId && settings)
+                if (!completed && typeof result.pointsCost === "number" && result.pointsRecordId && settings)
                     await refundUserPoints(task.userId, generationModelId(config), result.pointsCost, "image", imageUnits(config.quality, settings.generationPointMultipliers.imageQuality), undefined, result.pointsRecordId);
                 return;
             } catch (error) {
                 lastError = error;
                 const current = await getImageTask(task.id);
                 const settings = await getAuthSettings().catch(() => null);
-                if (chargedResult?.pointsCost && chargedResult.pointsRecordId && current?.status !== "success" && settings)
+                if (typeof chargedResult?.pointsCost === "number" && chargedResult.pointsRecordId && current?.status !== "success" && settings)
                     await refundUserPoints(
                         task.userId,
                         generationModelId(config),
@@ -218,6 +223,7 @@ export async function runImageTask(task: ImageTask, origin: string, publicOrigin
                 });
                 await updateImageTask(task.id, { attempts, attemptNo: started.attempt.attemptNo });
                 if (current?.status === "cancelled" || current?.status === "success") return;
+                if (chargedResult) throw error;
             }
         }
         throw lastError instanceof Error ? lastError : new Error("没有可用的图片渠道");
@@ -258,7 +264,7 @@ export async function writeImageGenerationLog(task: ImageTask, status: "success"
         count: 1,
         successCount: status === "success" ? 1 : 0,
         failCount: status === "failed" ? 1 : 0,
-        assets: resultUrl ? [{ type: "image", url: resultUrl, remoteUrl: typeof result === "string" ? undefined : result.remoteUrl }] : [],
+        assets: resultUrl ? [{ type: "image", url: resultUrl, remoteUrl: typeof result === "string" ? undefined : result.remoteUrl, targetSize: task.config.size }] : [],
         error,
         createdAt: task.createdAt,
         completedAt: Date.now(),

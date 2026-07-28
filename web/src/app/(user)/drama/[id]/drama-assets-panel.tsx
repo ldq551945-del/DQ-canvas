@@ -13,6 +13,7 @@ import { uploadImage } from "@/services/image-storage";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useDramaStore } from "../stores/use-drama-store";
 import { SectionTitle, stableTaskUrl } from "./drama-editor-elements";
+import { dramaGenerationSize } from "./drama-shot-generation-utils";
 
 type AssetKind = "characters" | "scenes" | "props" | "clues";
 
@@ -102,7 +103,7 @@ export function DramaAssetsPanel({ project }: { project: DramaProject }) {
         setUploadingId(item.id);
         try {
             const stored = await uploadImage(file);
-            appendReference(item, { id: `reference-${nanoid()}`, url: stored.serverUrl || stored.url, storageKey: stored.storageKey, source: "upload", label: file.name, createdAt: new Date().toISOString() });
+            appendReference(item, { id: `reference-${nanoid()}`, url: stored.serverUrl || stored.url, storageKey: stored.storageKey, source: "upload", label: file.name, width: stored.width, height: stored.height, createdAt: new Date().toISOString() });
             message.success("参考图已上传并设为基准");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "参考图上传失败");
@@ -117,8 +118,8 @@ export function DramaAssetsPanel({ project }: { project: DramaProject }) {
         if (activeKind === "clues") return message.info("线索参考图建议从剧情画面中截取并上传");
         setGeneratingId(item.id);
         try {
-            const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: project.ratio, count: "1" };
             const prompt = compileDramaAssetReferencePrompt(project, item, activeKind === "characters" ? "角色" : activeKind === "scenes" ? "场景" : "道具");
+            const imageConfig = { ...config, model: config.imageModel || config.model, imageModel: config.imageModel || config.model, size: dramaGenerationSize(project, prompt), count: "1" };
             const task = await createImageGenerationTask(imageConfig, prompt, [], undefined, {
                 logSource: "drama",
                 logTitle: `${project.title} · ${item.name}设定图`,
@@ -130,7 +131,7 @@ export function DramaAssetsPanel({ project }: { project: DramaProject }) {
             const result = await waitForImageGenerationTask(imageConfig, task);
             const url = stableTaskUrl(result.remoteUrl, result.serverUrl, result.dataUrl);
             if (!url) throw new Error("生成结果没有可持久化地址");
-            appendReference(item, { id: `reference-${nanoid()}`, url, source: "generated", label: "AI 候选图", createdAt: new Date().toISOString() });
+            appendReference(item, { id: `reference-${nanoid()}`, url, source: "generated", label: "AI 候选图", width: result.width, height: result.height, createdAt: new Date().toISOString() });
             message.success("候选图已生成并设为基准");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "候选图生成失败");

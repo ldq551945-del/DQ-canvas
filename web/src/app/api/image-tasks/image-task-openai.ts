@@ -116,6 +116,7 @@ import {
     isRemoteMediaUrl,
     normalizeQuality,
     resolveRequestSize,
+    imageRequestAspectRatio,
     resolveSize,
     parseImageRatio,
     parseImageDimensions,
@@ -197,8 +198,7 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
     headers.set("content-type", "application/json");
     const referenceContext = { ownerUserId: task.userId, taskId: task.id };
     const imageUrls = (await Promise.all(task.references.map((reference) => publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext)))).filter(Boolean);
-    const configuredRatio = (config.size || "").trim();
-    const ratio = /^\d+:\d+$/.test(configuredRatio) ? configuredRatio : "1:1";
+    const ratio = imageRequestAspectRatio(config.size || "");
     const response = await taskFetch(config, url, {
         method: "POST",
         headers,

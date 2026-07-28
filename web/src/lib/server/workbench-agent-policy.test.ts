@@ -74,6 +74,49 @@ describe("workbench agent policy", () => {
         expect(result.decisions).toContainEqual(expect.objectContaining({ label: "模型", value: "基础图片模型", reason: "按你在输入区手动选择的模型执行" }));
     });
 
+    it("keeps exact custom dimensions ahead of the planner and reference ratio", () => {
+        const result = finalizeWorkbenchPlan(plan({ model: "image-basic", size: "16:9", quality: "high", count: 1 }), {
+            body: { workspace: "image", currentConfig: { size: "1824x1024", referenceAspectRatio: "9:16" }, hasReferences: true, referenceTypes: ["image"] },
+            prompt: "生成老虎图",
+            workspace: "image",
+            skillIds: [],
+            referenceRequired: false,
+            planOnly: false,
+            conversationOnly: false,
+        });
+
+        expect(result.parameterPatch.size).toBe("1824x1024");
+        expect(result.decisions).toContainEqual(expect.objectContaining({ label: "尺寸", value: "1824x1024" }));
+    });
+
+    it("lets dimensions written in the prompt override the current custom size", () => {
+        const result = finalizeWorkbenchPlan(plan({ model: "image-basic", size: "16:9", quality: "high", count: 1 }), {
+            body: { workspace: "image", currentConfig: { size: "1824x1024", referenceAspectRatio: "9:16" }, hasReferences: true, referenceTypes: ["image"] },
+            prompt: "生成一张 1024×1536 的老虎图",
+            workspace: "image",
+            skillIds: [],
+            referenceRequired: false,
+            planOnly: false,
+            conversationOnly: false,
+        });
+
+        expect(result.parameterPatch.size).toBe("1024x1536");
+    });
+
+    it("uses the same size priority for video workbench planning", () => {
+        const result = finalizeWorkbenchPlan(plan({ model: "video-basic", size: "1:1", vquality: "720", videoSeconds: 5 }), {
+            body: { workspace: "video", currentConfig: { size: "1824x1024", referenceAspectRatio: "9:16" }, hasReferences: true, referenceTypes: ["image"] },
+            prompt: "生成视频",
+            workspace: "video",
+            skillIds: [],
+            referenceRequired: false,
+            planOnly: false,
+            conversationOnly: false,
+        });
+
+        expect(result.parameterPatch.size).toBe("1824x1024");
+    });
+
     it("does not turn a missing manual selection into the current default model", () => {
         const trusted = buildTrustedWorkbenchBody(settings, {
             workspace: "image",

@@ -78,6 +78,7 @@ describe("executeAgentRun backend settings", () => {
             nodeType: "image",
             metadata: { remoteUrl: "https://cdn.example.com/output.png", naturalWidth: 1024, naturalHeight: 1024, mimeType: "image/png", size: task.ratio },
         });
+        expect(output.ops).not.toContainEqual({ type: "select_nodes", ids: ["output-agent-run-0-0"] });
     });
 
     it("uses the latest default logical model and channel for a resumed task", async () => {
@@ -331,8 +332,7 @@ describe("executeAgentRun backend settings", () => {
         const createBody = JSON.parse(String(createCall?.[1]?.body)) as { config: { model: string } };
         expect(createBody.config.model).toBe("image-creative");
         const planEvent = mocks.events.find((event) => event.type === "canvas.ops") as { data?: { reply?: string } } | undefined;
-        expect(planEvent?.data?.reply).toContain("模型：创意图像模型");
-        expect(planEvent?.data?.reply).toContain("主视觉");
+        expect(planEvent?.data?.reply).toBe("已收到，我会按你的要求完成这次画布创作。");
         expect(mocks.run?.status).toBe("completed");
     });
 

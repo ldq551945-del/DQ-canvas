@@ -7,8 +7,13 @@ export function toSafeGenerationErrorMessage(error: unknown, fallback: string) {
     if (hasInsufficientPointsError(error)) return "积分不足";
     if (isTimeoutError(error, message)) return "生成接口响应超时，请稍后重试或检查模型服务。";
     if (isFetchNetworkError(error, message)) return DEFAULT_CHANNEL_CONNECT_ERROR;
+    if (isHtmlGatewayError(message)) return DEFAULT_CHANNEL_CONNECT_ERROR;
     if (containsInfrastructureDetails(message)) return /参考|素材|公网/i.test(message) ? "参考素材暂时无法提交给当前生成渠道，请重新上传或稍后重试。" : DEFAULT_CHANNEL_CONNECT_ERROR;
     return message || fallback;
+}
+
+function isHtmlGatewayError(message: string) {
+    return /<!doctype\s+html|<html\b|<head>\s*<title>\s*\d{3}\b|<center>\s*<h1>\s*\d{3}\b|\bnginx\b/i.test(message);
 }
 
 function containsInfrastructureDetails(message: string) {

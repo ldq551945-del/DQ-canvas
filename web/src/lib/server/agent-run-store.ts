@@ -146,6 +146,7 @@ export async function updateAgentRunById(
 
 function assistantUpdate(run: AgentRun, event?: { type: string; data?: unknown }) {
     const data = event?.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
+    if (event?.type === "run.retry.requested") return { status: "running" as const, content: "正在重新分析并执行这次请求…" };
     if (run.status === "running" && event?.type === "task.retry.requested") return { status: "running" as const, content: "正在重新生成失败任务…" };
     if (run.status === "completed") {
         return {

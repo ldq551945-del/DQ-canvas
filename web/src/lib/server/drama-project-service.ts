@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 
 import type { CreateDramaProjectInput, DramaAssetProfile, DramaAssetReference, DramaEpisode, DramaNamedAsset, DramaProject, DramaShot, DramaShotContinuity, DramaUtterance, DramaVideoMode } from "@/lib/drama-project-contract";
+import { normalizeDramaImageSize } from "@/lib/drama-image-size";
 import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
 import { createDramaProject, deleteDramaProject, DramaProjectStoreError, findDramaProjectBySourceHandoffId, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "@/lib/server/drama-project-store";
 import { createDramaProjectVersion, getDramaProjectVersion, listDramaProjectVersions } from "@/lib/server/drama-project-version-store";
@@ -133,12 +134,14 @@ function normalizeCreateInput(value: unknown): Required<Omit<CreateDramaProjectI
     const input = object(value);
     const title = cleanText(input.title, 120);
     if (!title) throw new DramaProjectServiceError("项目名称不能为空", 400);
+    const ratio = input.ratio === undefined ? "9:16" : normalizeDramaImageSize(input.ratio);
+    if (!ratio) throw new DramaProjectServiceError("短剧尺寸无效", 400);
     return {
         title,
         sourceHandoffId: optionalText(input.sourceHandoffId, 160),
         summary: cleanText(input.summary, 2000),
         style: cleanText(input.style, 500) || "电影感国漫",
-        ratio: input.ratio === "16:9" ? "16:9" : "9:16",
+        ratio,
         initialScript: cleanText(input.initialScript, 100_000),
         sourceAssets: normalizeSourceAssets(input.sourceAssets),
         defaultVideoMode: videoMode(input.defaultVideoMode),
@@ -153,13 +156,15 @@ export function normalizeProject(value: unknown, current: DramaProject): DramaPr
         .filter((episode): episode is DramaEpisode => Boolean(episode));
     if (!episodes.length) throw new DramaProjectServiceError("短剧项目至少需要一集", 400);
     const activeEpisodeId = cleanText(input.activeEpisodeId, 160);
+    const ratio = input.ratio === undefined ? normalizeDramaImageSize(current.ratio) : normalizeDramaImageSize(input.ratio);
+    if (!ratio) throw new DramaProjectServiceError("短剧尺寸无效", 400);
     return {
         id: current.id,
         sourceHandoffId: current.sourceHandoffId,
         title: cleanText(input.title, 120) || current.title,
         summary: cleanText(input.summary, 2000),
         style: cleanText(input.style, 500),
-        ratio: input.ratio === "16:9" ? "16:9" : "9:16",
+        ratio,
         status: input.status === "archived" ? "archived" : "active",
         creativeConversationId: current.creativeConversationId,
         activeEpisodeId: episodes.some((episode) => episode.id === activeEpisodeId) ? activeEpisodeId : episodes[0].id,
@@ -274,11 +279,15 @@ function normalizeShot(value: unknown, index: number): DramaShot {
         storyboardTaskId: optionalText(input.storyboardTaskId, 160),
         storyboardError: optionalText(input.storyboardError, 1000),
         storyboardImageUrl: stableUrl(input.storyboardImageUrl),
+        storyboardImageWidth: optionalPositiveInteger(input.storyboardImageWidth),
+        storyboardImageHeight: optionalPositiveInteger(input.storyboardImageHeight),
         storyboardEndStatus: taskStatus(input.storyboardEndStatus),
         storyboardEndAttempt: optionalPositiveInteger(input.storyboardEndAttempt),
         storyboardEndTaskId: optionalText(input.storyboardEndTaskId, 160),
         storyboardEndError: optionalText(input.storyboardEndError, 1000),
         storyboardEndImageUrl: stableUrl(input.storyboardEndImageUrl),
+        storyboardEndImageWidth: optionalPositiveInteger(input.storyboardEndImageWidth),
+        storyboardEndImageHeight: optionalPositiveInteger(input.storyboardEndImageHeight),
         generationStatus: taskStatus(input.generationStatus),
         generationAttempt: optionalPositiveInteger(input.generationAttempt),
         generationTaskId: optionalText(input.generationTaskId, 160),
@@ -370,12 +379,15 @@ function normalizeAssetReferences(value: unknown, assetId: string, legacyUrl: un
                     storageKey: optionalText(input.storageKey, 500),
                     source,
                     label: cleanText(input.label, 160) || `参考图 ${index + 1}`,
+                    width: optionalPositiveInteger(input.width),
+                    height: optionalPositiveInteger(input.height),
                     createdAt: timestamp(input.createdAt) || new Date(0).toISOString(),
                 },
             ];
         });
     const url = stableUrl(legacyUrl);
-    if (!references.length && url) references.push({ id: `${assetId}-reference-legacy`, url, storageKey: optionalText(legacyStorageKey, 500), source: "library", label: "原参考图", createdAt: new Date(0).toISOString() });
+    if (!references.length && url)
+        references.push({ id: `${assetId}-reference-legacy`, url, storageKey: optionalText(legacyStorageKey, 500), source: "library", label: "原参考图", width: undefined, height: undefined, createdAt: new Date(0).toISOString() });
     return references;
 }
 
@@ -450,6 +462,8 @@ function normalizeSourceAssets(value: unknown) {
                 remoteUrl: stableUrl(asset.remoteUrl),
                 serverUrl: stableUrl(asset.serverUrl),
                 mimeType: optionalText(asset.mimeType, 120),
+                width: optionalPositiveInteger(asset.width),
+                height: optionalPositiveInteger(asset.height),
             };
         });
 }

@@ -10,7 +10,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (!user || !run || run.userId !== user.id) return new Response("Agent 任务不存在", { status: user ? 404 : 401 });
     const encoder = new TextEncoder();
     const requestedEventId = request.headers.get("last-event-id") || new URL(request.url).searchParams.get("lastEventId") || "";
-    const lastEventId = requestedEventId || (await getLatestCreativeRunEventId(run.id, "task.retry.requested"));
+    const retryEventIds = requestedEventId ? [] : await Promise.all([getLatestCreativeRunEventId(run.id, "task.retry.requested"), getLatestCreativeRunEventId(run.id, "run.retry.requested")]);
+    const lastEventId = requestedEventId || retryEventIds.reduce((latest, id) => (Number(id || 0) > Number(latest || 0) ? id : latest), "");
     const body = new ReadableStream({
         start(controller) {
             let closed = false;

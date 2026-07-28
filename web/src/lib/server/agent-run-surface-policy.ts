@@ -25,7 +25,7 @@ export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExamp
               : "你是 VOZEB PRO 统一创作 Agent，负责通过一个对话入口规划并生成文本、图片、视频和音频产物，也能进行普通对话。";
     const surfaceRules =
         surface === "canvas"
-            ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。canvasSnapshot.selectedNodeIds 是用户本轮明确选中并展示在输入框中的附件：非空时，当前编辑任务必须优先且只能从这些节点选择 targetNodeId，禁止被 conversationContext 的上一张、旧主体或其他未选中画布节点覆盖；只有本轮没有选中节点时，才允许结合会话记忆选择旧节点。"
+            ? "明确要求创建、修改、删除、移动、连接画布节点，或生成媒体产物时为 generation。用户要求修改已有画布产物时必须填写该节点真实 targetNodeId。选中文本/提示词节点并要求修改、优化或改写时，只规划一个 type=text 的原位编辑任务，targetNodeId 必须是该文本节点；除非用户同时明确要求生成媒体，否则禁止规划图片、视频或音频任务。canvasSnapshot.selectedNodeIds 是用户本轮明确选中并展示在输入框中的附件：非空时，当前编辑任务必须优先且只能从这些节点选择 targetNodeId，禁止被 conversationContext 的上一张、旧主体或其他未选中画布节点覆盖；只有本轮没有选中节点时，才允许结合会话记忆选择旧节点。"
             : "明确要求生成或修改文本、图片、视频、音频产物时为 generation。禁止创建、更新、删除或连接任何 Canvas 节点，targetNodeId 必须省略。";
     const projectRule =
         surface === "drama" ? "短剧项目中的角色、场景、多镜头和依赖生产默认是 complex，并保持项目视觉与叙事一致。" : surface === "canvas" ? "Canvas 的品牌系列、多物料和依赖生产默认是 complex。" : "多物料、系列内容和依赖生产默认是 complex。";
@@ -118,13 +118,12 @@ export function creativeAssetContext(asset: CreativeAsset) {
     return [`资产 ID：${asset.id}`, `类型：${asset.type}`, `标题：${asset.title}`, content ? `文本：${content.slice(0, 2000)}` : "", url ? `媒体地址：${url}` : ""].filter(Boolean).join("；");
 }
 
-export function agentPlanReply(plan: AgentPlan, tasks: AgentRunTask[], surface: CreativeSurface) {
-    const summary = plan.reply?.trim() || (surface === "canvas" ? "我已经根据你的目标和当前画布整理好执行方案。" : surface === "drama" ? "我已经结合当前短剧项目整理好执行方案。" : "我已经根据你的需求整理好执行方案。");
-    const decisions = (plan.decisions || []).slice(0, 6).map((item) => `- ${item.label}：${item.value}。${item.reason}`);
-    const order = tasks.map((task) => task.title).join(" → ");
-    const taskReply = tasks.length ? `已安排 ${tasks.length} 个创作任务，将按依赖顺序执行：${order}。` : "";
-    const handoffReply = surface === "chat" && plan.projectHandoff ? `完成后将创建${plan.projectHandoff.surface === "canvas" ? "画布" : "短剧"}项目「${plan.projectHandoff.title}」。` : "";
-    return [summary, decisions.length ? `我的选择：\n${decisions.join("\n")}` : "", taskReply, handoffReply].filter(Boolean).join("\n\n");
+export function agentPlanReply(_plan: AgentPlan, tasks: AgentRunTask[], surface: CreativeSurface) {
+    const hasReferences = tasks.some((task) => task.targetNodeId || task.references?.length);
+    if (surface === "canvas" && tasks.length === 1 && tasks[0]?.type === "text" && tasks[0].targetNodeId) return "已收到，我会直接修改当前提示词节点，不会自动生成图片。";
+    if (surface === "canvas") return hasReferences ? "已收到，我会基于当前参考素材完成这次画布创作。" : "已收到，我会按你的要求完成这次画布创作。";
+    if (surface === "drama") return hasReferences ? "已收到，我会基于当前项目素材继续创作。" : "已收到，我会按你的要求继续完成项目创作。";
+    return hasReferences ? "已收到，我会基于当前参考素材完成这次创作。" : "已收到，我会按你的要求完成这次创作。";
 }
 
 function plannerAssetSummary(asset: CreativeAsset) {

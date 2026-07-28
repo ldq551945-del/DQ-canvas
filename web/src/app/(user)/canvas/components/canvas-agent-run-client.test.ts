@@ -77,4 +77,40 @@ describe("Canvas Agent 事件流", () => {
         expect(plans).toHaveLength(1);
         expect(paused).toEqual([true, false]);
     });
+
+    it("keeps failed task identity and applies retry repair operations", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const messages: Array<{ text: string; detail: unknown }> = [];
+        const ops: unknown[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: (text, detail) => messages.push({ text, detail }),
+            onStage: () => undefined,
+            onPaused: () => undefined,
+            onOps: (value) => ops.push(...value),
+        });
+        FakeEventSource.instance.emit("task.retry.requested", { data: { ops: [{ type: "connect_nodes", fromNodeId: "reference", toNodeId: "task-run-0" }] } });
+        FakeEventSource.instance.emit("task.failed", { data: { taskId: "task", title: "编辑图片", error: "生成渠道暂时无法连接" } });
+        FakeEventSource.instance.emit("run.failed", { data: { message: "生成失败" } });
+        await promise;
+
+        expect(ops).toEqual([{ type: "connect_nodes", fromNodeId: "reference", toNodeId: "task-run-0" }]);
+        expect(messages).toEqual([{ text: "「编辑图片」执行失败：生成渠道暂时无法连接", detail: { taskType: undefined, nodeIds: [], taskId: "task", title: "编辑图片", runId: "run" } }]);
+    });
+
+    it("exposes planning failures as retryable run failures", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const messages: Array<{ text: string; detail: unknown }> = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: (text, detail) => messages.push({ text, detail }),
+            onStage: () => undefined,
+            onPaused: () => undefined,
+            onOps: () => undefined,
+        });
+        FakeEventSource.instance.emit("run.failed", { data: { message: "生成渠道暂时无法连接，请稍后重试或联系管理员。" } });
+        await promise;
+
+        expect(messages).toEqual([{ text: "生成渠道暂时无法连接，请稍后重试或联系管理员。", detail: { runId: "run", title: "Agent 执行失败" } }]);
+    });
 });

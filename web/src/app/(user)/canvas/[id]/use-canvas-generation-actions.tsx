@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { useCallback, useEffect } from "react";
 
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
+import { resolveImageRequestSize } from "@/lib/image-size";
 import { readImageMeta } from "@/lib/image-utils";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createTextGenerationTask } from "@/services/api/text";
@@ -120,8 +121,18 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                     const sourceReference = isImageNode && sourceNode?.metadata?.content ? [canvasNodeReferenceImage(sourceNode)] : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+                    const imageGenerationConfig = {
+                        ...generationConfig,
+                        size: resolveImageRequestSize({
+                            prompt,
+                            configuredSize: generationConfig.size,
+                            referenceWidth: referenceImages[0]?.width,
+                            referenceHeight: referenceImages[0]?.height,
+                            defaultSize: effectiveConfig.size,
+                        }),
+                    };
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
-                    const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
+                    const generationMetadata = buildImageGenerationMetadata(generationType, imageGenerationConfig, count, referenceImages);
                     const resultType = isPanoramaNode ? CanvasNodeType.Panorama : CanvasNodeType.Image;
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? resultType : CanvasNodeType.Text];
                     const imageConfig = NODE_DEFAULT_SIZE[resultType];
@@ -225,7 +236,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
-                                await startAndCompleteImageTask(targetId, { ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, controller);
+                                await startAndCompleteImageTask(targetId, { ...imageGenerationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, controller);
                                 hasSuccess = true;
                                 if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
                                 return true;

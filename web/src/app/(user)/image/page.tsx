@@ -61,7 +61,7 @@ import {
     type PendingImageTask,
 } from "./image-workbench-records";
 
-import { UpdateAiConfig, RESULT_ACTION_BUTTON_CLASS, GenerationSettings, ResultImageCard, PendingImageCard, FailedImageCard, LogPanel } from "./image-workbench-panels";
+import { UpdateAiConfig, GenerationSettings, ResultImageCard, PendingImageCard, FailedImageCard, LogPanel } from "./image-workbench-panels";
 
 import { useImageWorkbenchController } from "./use-image-workbench-controller";
 
@@ -412,7 +412,7 @@ export default function ImagePage() {
                             </div>
                         </div>
                         {results.length ? (
-                            <div className={results.length === 1 ? "grid max-w-[360px] gap-2.5 sm:gap-4" : "grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2 sm:gap-4 2xl:grid-cols-3"}>
+                            <div className="flex w-full flex-wrap items-start gap-2.5 sm:gap-4">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
                                         <ResultImageCard

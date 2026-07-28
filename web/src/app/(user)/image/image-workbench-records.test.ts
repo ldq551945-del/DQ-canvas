@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type { GenerationLog, PendingImageTask } from "./image-workbench-records";
-import { buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, resultsFromLog, snapshotFromLog, stableResultImageUrl } from "./image-workbench-records";
+import { authoritativeGeneratedImageMeta, buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, resultsFromLog, snapshotFromLog, stableResultImageUrl } from "./image-workbench-records";
 
 describe("image workbench records", () => {
     it("restores pending, failed, and success results in slot order", () => {
@@ -54,6 +54,11 @@ describe("image workbench records", () => {
     it("maps workbench and task log ids to server ids", () => {
         expect(imageServerLogIds("image-task-abc")).toEqual(["image-task:abc"]);
         expect(imageServerLogIds("workbench-1")).toEqual(["image-workbench:workbench-1"]);
+    });
+
+    it("prefers authoritative dimensions returned by the persisted image task", () => {
+        expect(authoritativeGeneratedImageMeta({ width: 1824, height: 1024, bytes: 2048, mimeType: "image/png" })).toEqual({ width: 1824, height: 1024, bytes: 2048, mimeType: "image/png" });
+        expect(authoritativeGeneratedImageMeta({ width: 0, height: 1024 })).toBeNull();
     });
 
     it("filters local task logs covered by remote workbench logs", () => {

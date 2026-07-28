@@ -1,6 +1,6 @@
 import type { getAuthSettings } from "@/lib/auth/store";
 import { normalizeCreativeDeliverables, normalizeCreativeFoundation, withCreativeFoundation } from "@/lib/creative-agent-contract";
-import { extractImageSizeFromPrompt } from "@/lib/image-size";
+import { extractImageSizeFromPrompt, normalizeImageSizeValue, parseImageDimensions } from "@/lib/image-size";
 import { normalizeWorkbenchAgentAttachments, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import type { WorkbenchPlan, WorkbenchPlanChoice, WorkbenchPlanDecision } from "./workbench-agent-plan";
@@ -102,8 +102,18 @@ export function finalizeWorkbenchPlan(plan: WorkbenchPlan, input: { body: Workbe
         plan.decisions = withLockedModelDecision(plan.decisions, lockedModel, body.modelOptions);
     }
     if (!plan.selectedSkillIds.length) plan.selectedSkillIds = skillIds;
+    const promptSize = extractImageSizeFromPrompt(prompt);
+    const currentSize = normalizeImageSizeValue(body.currentConfig?.size);
+    const configuredImageSize = parseImageDimensions(currentSize) ? currentSize : "";
+    const mediaWorkspace = workspace === "image" || workspace === "video";
     const referenceAspectRatio = String(body.currentConfig?.referenceAspectRatio || "");
-    if (body.hasReferences && body.referenceTypes?.some((type) => type === "image" || type === "video") && referenceAspectRatio && !extractImageSizeFromPrompt(prompt)) {
+    if (mediaWorkspace && promptSize) {
+        plan.parameterPatch.size = promptSize;
+        plan.decisions = withImageSizeDecision(plan.decisions, promptSize, "按输入文字中明确指定的尺寸执行");
+    } else if (mediaWorkspace && configuredImageSize) {
+        plan.parameterPatch.size = configuredImageSize;
+        plan.decisions = withImageSizeDecision(plan.decisions, configuredImageSize, "按你在生成参数中自定义的宽高执行");
+    } else if (body.hasReferences && body.referenceTypes?.some((type) => type === "image" || type === "video") && referenceAspectRatio && !promptSize) {
         plan.parameterPatch.size = referenceAspectRatio;
         plan.decisions = withReferenceAspectRatioDecision(plan.decisions, referenceAspectRatio);
     }
@@ -217,6 +227,10 @@ function workbenchCurrentConfig(value: unknown, workspace: WorkbenchWorkspace, m
 
 function withReferenceAspectRatioDecision(decisions: WorkbenchPlanDecision[] | undefined, ratio: string) {
     return [{ label: "画幅", value: ratio, reason: "继承参考素材的原始构图比例" }, ...(decisions || []).filter((item) => item.label !== "画幅")].slice(0, 5);
+}
+
+function withImageSizeDecision(decisions: WorkbenchPlanDecision[] | undefined, size: string, reason: string) {
+    return [{ label: "尺寸", value: size, reason }, ...(decisions || []).filter((item) => item.label !== "画幅" && item.label !== "尺寸")].slice(0, 5);
 }
 
 function withVideoReferenceDecision(decisions: WorkbenchPlanDecision[] | undefined) {

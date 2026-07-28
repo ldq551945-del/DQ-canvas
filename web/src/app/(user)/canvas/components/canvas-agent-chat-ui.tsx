@@ -43,7 +43,7 @@ export function AgentChatMessage({
     onRejectTool?: (id: string) => void;
     onApproveTool?: (id: string) => void;
     onLocateNode?: (nodeId: string) => void;
-    onRetryTask?: (runId: string, taskId: string) => void;
+    onRetryTask?: (runId: string, taskId?: string) => void;
     onEditMessage?: (text: string) => void;
 }) {
     const isUser = item.role === "user";
@@ -68,47 +68,63 @@ export function AgentChatMessage({
             </div>
         );
     }
-    return (
-        <div className={`canvas-agent-message group/message flex min-w-0 items-start gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-            {!isUser ? <AgentAvatar theme={theme} /> : null}
-            <div className={`min-w-0 max-w-[82%] text-sm leading-6 ${isUser ? "text-right" : "text-left"}`} style={{ color }}>
-                <div className="whitespace-pre-wrap break-words text-left">{item.text}</div>
-                {!isUser && objectStringArray(item.detail, "nodeIds").length && objectField(item.detail, "taskType") !== "text" ? (
-                    <div className="mt-1 flex flex-wrap justify-end gap-0.5">
-                        {objectStringArray(item.detail, "nodeIds").map((nodeId, index, nodeIds) => {
-                            const locateLabel = nodeIds.length > 1 ? `定位结果 ${index + 1}` : "定位到画布结果";
-                            return (
-                                <Tooltip key={nodeId} title={locateLabel} placement="top" mouseEnterDelay={0.2}>
-                                    <button type="button" className="grid size-7 place-items-center opacity-55 transition hover:opacity-100 focus-visible:opacity-100" onClick={() => onLocateNode?.(nodeId)} aria-label={locateLabel}>
-                                        <Crosshair className="size-4" />
-                                    </button>
-                                </Tooltip>
-                            );
-                        })}
+    if (isUser) {
+        return (
+            <div className="canvas-agent-message group/message flex min-w-0 justify-end">
+                <div className="grid min-w-0 max-w-[82%] grid-cols-[minmax(0,1fr)_auto] gap-x-3" style={{ color }}>
+                    {item.attachments?.length ? (
+                        <div className="col-start-1 row-start-1">
+                            <AgentMessageAttachments attachments={item.attachments} align="end" />
+                        </div>
+                    ) : null}
+                    <div className="col-start-1 row-start-2 min-w-0 text-right text-sm leading-6">
+                        <div className="whitespace-pre-wrap break-words text-left">{item.text}</div>
+                        {item.meta ? <div className="mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
+                        <AgentMessageActions text={item.text} onEdit={onEditMessage} align="end" className="text-current" style={{ color: theme.node.muted }} />
                     </div>
-                ) : null}
-                {!isUser && objectField(item.detail, "runId") && objectField(item.detail, "taskId") ? (
+                    <div className="col-start-2 row-start-2">
+                        <AgentUserAvatar user={user} theme={theme} />
+                    </div>
+                </div>
+            </div>
+        );
+    }
+    const resultNodeIds = objectField(item.detail, "taskType") === "text" ? [] : objectStringArray(item.detail, "nodeIds");
+    return (
+        <div className="canvas-agent-message group/message flex min-w-0 items-start justify-start gap-3">
+            <AgentAvatar theme={theme} />
+            <div className="min-w-0 max-w-[82%] text-left text-sm leading-6" style={{ color }}>
+                <div className="flex min-w-0 items-center gap-1">
+                    <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-left">{item.text}</div>
+                    {resultNodeIds.length ? (
+                        <div className="flex shrink-0 items-center gap-0.5">
+                            {resultNodeIds.map((nodeId, index, nodeIds) => {
+                                const locateLabel = nodeIds.length > 1 ? `定位结果 ${index + 1}` : "定位到画布结果";
+                                return (
+                                    <Tooltip key={nodeId} title={locateLabel} placement="top" mouseEnterDelay={0.2}>
+                                        <button type="button" className="grid size-7 place-items-center opacity-55 transition hover:opacity-100 focus-visible:opacity-100" onClick={() => onLocateNode?.(nodeId)} aria-label={locateLabel}>
+                                            <Crosshair className="size-4" />
+                                        </button>
+                                    </Tooltip>
+                                );
+                            })}
+                        </div>
+                    ) : null}
+                </div>
+                {objectField(item.detail, "runId") ? (
                     <button
                         type="button"
                         className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-red-600 transition hover:opacity-70"
-                        onClick={() => onRetryTask?.(String(objectField(item.detail, "runId")), String(objectField(item.detail, "taskId")))}
+                        onClick={() => onRetryTask?.(String(objectField(item.detail, "runId")), objectField(item.detail, "taskId") ? String(objectField(item.detail, "taskId")) : undefined)}
                     >
                         <RotateCcw className="size-3.5" />
-                        只重试此任务
+                        {objectField(item.detail, "taskId") ? "只重试此任务" : "重试"}
                     </button>
                 ) : null}
                 {item.attachments?.length ? <AgentMessageAttachments attachments={item.attachments} /> : null}
                 {item.meta ? <div className="mt-1 text-[11px] opacity-45">{item.meta}</div> : null}
-                <AgentMessageActions
-                    text={item.text}
-                    downloads={item.attachments?.map((attachment) => ({ type: "image", url: attachment.url, title: attachment.name }))}
-                    onEdit={isUser && onEditMessage ? onEditMessage : undefined}
-                    align={isUser ? "end" : "start"}
-                    className="text-current"
-                    style={{ color: theme.node.muted }}
-                />
+                <AgentMessageActions text={item.text} downloads={item.attachments?.map((attachment) => ({ type: "image", url: attachment.url, title: attachment.name }))} align="start" className="text-current" style={{ color: theme.node.muted }} />
             </div>
-            {isUser ? <AgentUserAvatar user={user} theme={theme} /> : null}
         </div>
     );
 }
@@ -418,11 +434,11 @@ function AgentUserAvatar({ user, theme }: { user: LocalUser | null; theme: (type
     );
 }
 
-function AgentMessageAttachments({ attachments }: { attachments: CanvasAgentChatAttachment[] }) {
+function AgentMessageAttachments({ attachments, align = "start" }: { attachments: CanvasAgentChatAttachment[]; align?: "start" | "end" }) {
     return (
-        <div className="mt-2 grid grid-cols-3 gap-1.5">
+        <div className={`mb-2 flex flex-wrap gap-1.5 ${align === "end" ? "justify-end" : "justify-start"}`}>
             {attachments.map((item) => (
-                <AgentMediaPreview key={item.id} type="image" url={item.url} title={item.name} className="aspect-square rounded-lg" />
+                <AgentMediaPreview key={item.id} type="image" url={item.url} title={item.name} className="size-12 rounded-lg" />
             ))}
         </div>
     );

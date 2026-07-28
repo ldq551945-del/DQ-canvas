@@ -116,16 +116,6 @@ export function AssistantHistory({ sessions, activeSession, onOpen, onDelete }: 
     );
 }
 
-export function MessageReferences({ message }: { message: CanvasAssistantMessage }) {
-    return (
-        <div className={`flex max-w-[88%] flex-wrap gap-2 ${message.role === "user" ? "ml-auto justify-end" : "ml-11 justify-start"}`}>
-            {message.references?.map((item, index, references) => (
-                <AssistantReferenceChip key={item.id} item={item} label={assistantImageReferenceLabel(references, index)} />
-            ))}
-        </div>
-    );
-}
-
 export function AssistantReferenceChip({ item, label, onRemove }: { item: CanvasAssistantReference; label?: string; onRemove?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "文";
@@ -163,7 +153,8 @@ export function assistantImageReferenceLabel(references: CanvasAssistantReferenc
 }
 
 export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
-    return { id: message.id, role: message.role, title: message.title, text: formatAgentMessageText(message.text), meta: message.meta, detail: message.detail };
+    const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl }] : []));
+    return { id: message.id, role: message.role, title: message.title, text: formatAgentMessageText(message.text), meta: message.meta, detail: message.detail, ...(attachments?.length ? { attachments } : {}) };
 }
 
 export function formatSessionTime(value?: string) {
@@ -196,6 +187,7 @@ export function buildAssistantReferences(nodes: CanvasNodeData[], selectedNodeId
 export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
     return {
         title: snapshot.title,
+        imageSize: snapshot.imageSize,
         viewport: snapshot.viewport,
         selectedNodeIds: snapshot.selectedNodeIds,
         nodes: snapshot.nodes.map((node) => ({
@@ -221,6 +213,8 @@ export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
         generationMode: metadata?.generationMode,
         model: metadata?.model,
         size: metadata?.size,
+        naturalWidth: metadata?.naturalWidth,
+        naturalHeight: metadata?.naturalHeight,
         url: mediaUrl || undefined,
     };
 }

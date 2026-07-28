@@ -56,7 +56,7 @@ export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskI
     count?: number;
     successCount?: number;
     failCount?: number;
-    assets?: Array<Partial<GenerationLogAsset> & { url?: string }>;
+    assets?: Array<Partial<GenerationLogAsset> & { url?: string; targetSize?: string }>;
     createdAt?: string | number;
     completedAt?: string | number;
 };

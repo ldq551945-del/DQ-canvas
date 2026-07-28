@@ -147,6 +147,8 @@ export function canvasNodeReferenceImage(node: CanvasNodeData): ReferenceImage {
         url: serverUrl || remoteUrl || undefined,
         remoteUrl: remoteUrl || undefined,
         serverUrl: serverUrl || undefined,
+        width: node.metadata?.naturalWidth || node.width,
+        height: node.metadata?.naturalHeight || node.height,
     };
 }
 

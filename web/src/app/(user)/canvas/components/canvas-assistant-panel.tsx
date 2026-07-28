@@ -53,6 +53,7 @@ import {
     nodeToReference,
     buildAssistantReferences,
     compactSnapshot,
+    canvasRunSelectedNodeIds,
     compactMetadata,
     createSession,
 } from "./canvas-assistant-elements";
@@ -210,7 +211,7 @@ export function CanvasAssistantPanel({
                     conversationId,
                     projectId: snapshotRef.current.projectId,
                     prompt: text,
-                    snapshot: { ...runSnapshot, selectedNodeIds: Array.from(submittedReferenceIds) },
+                    snapshot: { ...runSnapshot, selectedNodeIds: canvasRunSelectedNodeIds(snapshotRef.current, submittedReferenceIds) },
                     assetIds: [],
                     skillIds: selectedSkillId ? [selectedSkillId] : [],
                     modelIds: smartPlanning ? [] : selectedModelIds,

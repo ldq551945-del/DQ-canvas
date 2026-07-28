@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { CanvasNodeType } from "../types";
-import { assistantMessageToChatMessage, compactMetadata, compactSnapshot } from "./canvas-assistant-elements";
+import { assistantMessageToChatMessage, canvasRunSelectedNodeIds, compactMetadata, compactSnapshot } from "./canvas-assistant-elements";
 
 describe("Canvas Agent current-turn references", () => {
     it("renders the current-turn references before the user text", async () => {
@@ -58,5 +58,22 @@ describe("Canvas Agent current-turn references", () => {
                 viewport: { x: 0, y: 0, k: 1 },
             }),
         ).toMatchObject({ imageSize: "1824x1024" });
+    });
+
+    it("keeps selected config nodes while replacing stale media references", () => {
+        const snapshot = {
+            projectId: "canvas-one",
+            title: "画布",
+            nodes: [
+                { id: "config", type: CanvasNodeType.Config, title: "生成配置", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { size: "1824x1024" } },
+                { id: "old-image", type: CanvasNodeType.Image, title: "旧参考图", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { content: "/old.webp" } },
+                { id: "current-image", type: CanvasNodeType.Image, title: "本轮参考图", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { content: "/current.webp" } },
+            ],
+            connections: [],
+            selectedNodeIds: ["config", "old-image"],
+            viewport: { x: 0, y: 0, k: 1 },
+        };
+
+        expect(canvasRunSelectedNodeIds(snapshot, new Set(["current-image"]))).toEqual(["config", "current-image"]);
     });
 });

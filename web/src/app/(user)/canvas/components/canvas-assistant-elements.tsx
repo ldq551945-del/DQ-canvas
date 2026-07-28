@@ -203,6 +203,11 @@ export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
     };
 }
 
+export function canvasRunSelectedNodeIds(snapshot: CanvasAgentSnapshot, submittedReferenceIds: Set<string>) {
+    const mediaNodeIds = new Set(snapshot.nodes.filter((node) => isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio).map((node) => node.id));
+    return Array.from(new Set([...snapshot.selectedNodeIds.filter((id) => !mediaNodeIds.has(id)), ...submittedReferenceIds]));
+}
+
 export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
     const fallbackUrl = [metadata?.serverUrl, metadata?.content, metadata?.remoteUrl].find((value) => typeof value === "string" && value && !value.startsWith("data:") && !value.startsWith("blob:"));
     const mediaUrl = serverMediaUrl(metadata?.storageKey, fallbackUrl || "");

@@ -60,17 +60,15 @@ export function resolveAgentTaskRatio(input: {
     if (input.type !== "image" && input.type !== "video") return input.plannedRatio?.trim() || input.defaultSize?.trim() || input.globalSize?.trim() || undefined;
     const explicit = normalizeImageSizeValue(input.requestedImageSize);
     const configured = normalizeImageSizeValue(input.configuredImageSize);
+    const custom = parseImageDimensions(configured) ? configured : "";
     const reference = input.reference?.type === "image" ? normalizeImageSizeValue(input.reference.size) || closestImageAspectRatio(input.reference.width, input.reference.height) : "";
-    return explicit || configured || reference || normalizeImageSizeValue(input.plannedRatio) || normalizeImageSizeValue(input.defaultSize) || normalizeImageSizeValue(input.globalSize) || "auto";
+    return explicit || custom || reference || configured || normalizeImageSizeValue(input.plannedRatio) || normalizeImageSizeValue(input.defaultSize) || normalizeImageSizeValue(input.globalSize) || "auto";
 }
 
 export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: unknown) {
     if (!snapshot || typeof snapshot !== "object") return undefined;
     if (surface === "canvas") {
         const canvasSnapshot = snapshot as { imageSize?: unknown; nodes?: unknown; connections?: unknown };
-        const imageSize = exactImageSize(canvasSnapshot.imageSize);
-        if (imageSize) return imageSize;
-
         const nodes = Array.isArray(canvasSnapshot.nodes) ? canvasSnapshot.nodes.filter((node): node is Record<string, unknown> => Boolean(node) && typeof node === "object") : [];
         const configuredNodes = nodes.flatMap((node) => {
             if (node.type !== "config" || typeof node.id !== "string") return [];
@@ -78,7 +76,8 @@ export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: un
             const size = exactImageSize(metadata.size);
             return size ? [{ id: node.id, size }] : [];
         });
-        if (!configuredNodes.length) return undefined;
+        const imageSize = exactImageSize(canvasSnapshot.imageSize);
+        if (!configuredNodes.length) return imageSize;
 
         const selected = new Set(selectedCanvasNodeIds(snapshot));
         const selectedConfig = configuredNodes.find((node) => selected.has(node.id));
@@ -89,6 +88,8 @@ export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: un
             connections.some((connection) => (connection.fromNodeId === node.id && selected.has(String(connection.toNodeId || ""))) || (connection.toNodeId === node.id && selected.has(String(connection.fromNodeId || "")))),
         );
         if (connectedConfig) return connectedConfig.size;
+
+        if (imageSize) return imageSize;
 
         const uniqueSizes = Array.from(new Set(configuredNodes.map((node) => node.size)));
         return uniqueSizes.length === 1 ? uniqueSizes[0] : undefined;

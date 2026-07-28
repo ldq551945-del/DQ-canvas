@@ -74,6 +74,13 @@ describe("directAgentPlan", () => {
                 ],
             }),
         ).toBe("1824x1024");
+        expect(
+            agentSurfaceImageSize("canvas", {
+                imageSize: "1024x1024",
+                selectedNodeIds: ["config"],
+                nodes: [{ id: "config", type: "config", metadata: { size: "1824x1024" } }],
+            }),
+        ).toBe("1824x1024");
     });
 
     it("短剧 Agent 使用项目自定义画幅覆盖规划画幅", () => {
@@ -89,6 +96,22 @@ describe("directAgentPlan", () => {
         const [task] = normalizeTasks(plan as never, [], generationSettings() as never, { project: { ratio: "16:9" } }, "生成分镜", "drama", []);
 
         expect(task.ratio).toBe("16:9");
+    });
+
+    it("短剧 Agent 在没有精确自定义宽高时继承本轮参考图比例", () => {
+        const plan = {
+            intent: "generation",
+            objective: "生成分镜",
+            reply: "开始生成",
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "生成分镜" }, direction: { summary: "电影感" } },
+            deliverables: [{ id: "shot", title: "分镜", type: "image", model: "image-pro", prompt: "雨夜车站", count: 1, ratio: "1:1", assetIds: ["reference"], dependencies: [] }],
+        };
+        const assets = [{ id: "reference", type: "image", title: "竖版参考图", width: 1080, height: 1920, serverUrl: "/api/generation-log-assets/reference.webp", metadata: {} }];
+
+        const [task] = normalizeTasks(plan as never, [], generationSettings() as never, { project: { ratio: "16:9" } }, "生成分镜", "drama", assets as never);
+
+        expect(task.ratio).toBe("9:16");
     });
 
     it("画布 Agent 使用当前自定义宽高覆盖规划画幅", () => {

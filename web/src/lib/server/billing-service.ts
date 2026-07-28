@@ -256,7 +256,16 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         const repos = createPostgresRepositories(client);
         const order = await repos.billing.getOrderById(normalizeId(input.orderId), true);
         if (!order) throw new BillingInputError("订单不存在", 404);
-        if (order.status === "paid") return buildPaidOrderResult(order, client);
+        const provider = normalizeProvider(input.provider || order.provider);
+        if (provider !== normalizeProvider(order.provider)) throw new BillingInputError("支付回调渠道与订单渠道不一致", 409);
+        const paidAmountCents = input.amountCents === undefined ? order.amountCents : normalizePositiveInteger(input.amountCents, 0, 100_000_000, -1);
+        if (paidAmountCents !== order.amountCents) throw new BillingInputError("支付金额与订单金额不一致", 409);
+        const paidCurrency = input.currency === undefined ? order.currency : normalizeCurrency(input.currency);
+        if (paidCurrency !== order.currency) throw new BillingInputError("支付币种与订单币种不一致", 409);
+        if (order.status === "paid") {
+            assertDuplicatePaymentIdentity(order, input);
+            return buildPaidOrderResult(order, client);
+        }
         if (order.status !== "pending" && !isAutomaticallyExpiredOrder(order)) throw new BillingInputError("当前订单状态不能确认支付", 409);
         if (!order.userId) throw new BillingInputError("订单没有绑定用户", 409);
 
@@ -264,11 +273,6 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         if (!user || user.status !== "active") throw new BillingInputError("用户不可用", 403);
 
         const paidAt = normalizeIso(input.paidAt, new Date().toISOString());
-        const provider = normalizeProvider(input.provider || order.provider);
-        const paidAmountCents = input.amountCents === undefined ? order.amountCents : normalizePositiveInteger(input.amountCents, 0, 100_000_000, -1);
-        if (paidAmountCents !== order.amountCents) throw new BillingInputError("支付金额与订单金额不一致", 409);
-        const paidCurrency = input.currency === undefined ? order.currency : normalizeCurrency(input.currency);
-        if (paidCurrency !== order.currency) throw new BillingInputError("支付币种与订单币种不一致", 409);
         const providerTradeId = normalizeText(input.providerTradeId, `${provider}:${order.orderNo}`, 160);
         const providerPaymentId = normalizeText(input.providerPaymentId, providerTradeId, 160);
         await redeemBillingOrderCoupon(client, order, paidAt);
@@ -332,6 +336,12 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
             pointsGranted: order.pointsAmount,
         };
     });
+}
+
+function assertDuplicatePaymentIdentity(order: BillingOrderRecord, input: Pick<CompleteBillingOrderPaymentInput, "providerTradeId" | "providerPaymentId">) {
+    const incoming = [normalizeText(input.providerTradeId, "", 160), normalizeText(input.providerPaymentId, "", 160)].filter(Boolean);
+    const stored = [order.providerOrderId, order.providerPaymentId].map((value) => normalizeText(value, "", 160)).filter(Boolean);
+    if (incoming.length && stored.length && !incoming.some((value) => stored.includes(value))) throw new BillingInputError("订单已由另一笔支付交易完成，请人工核对并处理重复付款", 409);
 }
 
 export async function closeBillingOrder(orderId: string, input: BillingOperationInput = {}) {

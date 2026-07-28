@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { BillingReconciliationIssue, BillingReconciliationIssueCode, BillingReconciliationResult, BillingReconciliationRow, BillingStatementStatus } from "@/lib/admin-billing-types";
+import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { BillingOrderRecord, BillingReconciliationRowRecord, BillingReconciliationRunRecord, JsonValue, PaymentTransactionRecord } from "@/lib/server/database";
 
@@ -458,14 +459,7 @@ function keyValue(value: string | undefined) {
 }
 
 export function normalizeProvider(value: unknown) {
-    const provider = normalizeText(value, "manual", 60)
-        .toLowerCase()
-        .replace(/[^a-z0-9_.:-]/g, "");
-    if (provider === "stripe-checkout") return "stripe";
-    if (provider === "ali" || provider === "alipay-page") return "alipay";
-    if (provider === "wxpay" || provider === "wechatpay" || provider === "weixin") return "wechat";
-    if (provider === "pay-ply" || provider === "pay_ply") return "payply";
-    return provider || "manual";
+    return normalizePaymentProvider(value);
 }
 
 export function normalizeOptionalProvider(value: unknown) {

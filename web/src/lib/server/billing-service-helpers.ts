@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
+import { normalizePaymentProvider } from "@/lib/payment-provider";
 import type { BillingProductInput } from "@/lib/server/billing-service";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, type BillingOrderRecord, type BillingProductRecord, type JsonValue, type QueryExecutor, type UserPlanAssignmentRecord } from "@/lib/server/database";
@@ -180,7 +181,7 @@ export function normalizeId(value: unknown) {
 }
 
 export function normalizeProvider(value: unknown) {
-    return normalizeId(value) || "manual";
+    return normalizePaymentProvider(value);
 }
 
 export function normalizeCurrency(value: unknown) {

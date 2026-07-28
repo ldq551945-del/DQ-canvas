@@ -46,4 +46,15 @@ describe("payment provider config save", () => {
             }),
         );
     });
+
+    it("preserves the enabled state when a partial config save omits it", async () => {
+        mocks.readJsonDataFile.mockResolvedValue({ providers: { alipay: { enabled: true, values: { mode: "official", appId: "saved-app" } } } });
+
+        await savePaymentProviderConfig({ providerId: "alipay", values: { mode: "face_to_face" } });
+
+        expect(mocks.writeJsonDataFile).toHaveBeenCalledWith(
+            "payment-config.json",
+            expect.objectContaining({ providers: expect.objectContaining({ alipay: expect.objectContaining({ enabled: true, values: expect.objectContaining({ mode: "face_to_face", appId: "saved-app" }) }) }) }),
+        );
+    });
 });

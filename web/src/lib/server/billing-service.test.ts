@@ -143,6 +143,26 @@ describe("billing payment completion", () => {
         expect(mocks.getOrderById).toHaveBeenCalledWith(pointsOrder.id, true);
     });
 
+    it("rejects a verified callback from a different provider than the order snapshot", async () => {
+        await expect(completeBillingOrderPayment({ orderId: pointsOrder.id, provider: "alipay", providerTradeId: "ali-trade", paidAt: now })).rejects.toMatchObject({
+            message: "支付回调渠道与订单渠道不一致",
+            status: 409,
+        });
+        expect(mocks.upsertPayment).not.toHaveBeenCalled();
+        expect(mocks.adjustPoints).not.toHaveBeenCalled();
+    });
+
+    it("rejects a second provider transaction instead of silently treating it as the same payment", async () => {
+        await completeBillingOrderPayment({ orderId: pointsOrder.id, provider: "stripe", providerTradeId: "trade-one", paidAt: now });
+
+        await expect(completeBillingOrderPayment({ orderId: pointsOrder.id, provider: "stripe", providerTradeId: "trade-two", paidAt: now })).rejects.toMatchObject({
+            message: "订单已由另一笔支付交易完成，请人工核对并处理重复付款",
+            status: 409,
+        });
+        expect(mocks.adjustPoints).toHaveBeenCalledTimes(1);
+        expect(mocks.upsertPayment).toHaveBeenCalledTimes(1);
+    });
+
     it("still applies plan products to the user and creates an assignment", async () => {
         mocks.order = { ...pointsOrder, id: "order-plan", orderNo: "VZ-PLAN", productKind: "plan", planId: "creator", periodDays: 30, dailyPoints: 10 };
         const assignment = {

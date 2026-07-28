@@ -1,5 +1,6 @@
 import { createDecipheriv, createHmac, timingSafeEqual } from "node:crypto";
 
+import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { JsonValue } from "@/lib/server/database";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
@@ -325,14 +326,7 @@ function readConfiguredPath(paymentConfig: PaymentRuntimeConfig, payload: unknow
 }
 
 export function normalizeProvider(value: unknown) {
-    const provider =
-        normalizeText(value, "custom", 60)
-            .toLowerCase()
-            .replace(/[^a-z0-9_.:-]/g, "") || "custom";
-    if (provider === "ali" || provider === "alipay-page") return "alipay";
-    if (provider === "wxpay" || provider === "wechatpay" || provider === "weixin") return "wechat";
-    if (provider === "pay-ply" || provider === "pay_ply") return "payply";
-    return provider;
+    return normalizePaymentProvider(value, "custom");
 }
 
 function providerEnvPrefix(provider: string) {

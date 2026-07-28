@@ -1,6 +1,7 @@
 import { createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
+import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { BillingOrderRecord, JsonValue, PaymentTransactionRecord } from "@/lib/server/database";
 import { getPaymentRuntimeConfig, getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
@@ -411,15 +412,9 @@ function renderTemplate(template: string, values: Record<string, string>) {
 }
 
 function normalizeProvider(value: unknown) {
-    const provider = normalizeText(value, "manual", 60)
-        .toLowerCase()
-        .replace(/[^a-z0-9_.:-]/g, "");
-    if (provider === "stripe-checkout") return "stripe";
-    if (provider === "pay-ply" || provider === "pay_ply") return "payply";
-    if (provider === "ali" || provider === "alipay-page") return "alipay";
-    if (provider === "wxpay" || provider === "wechatpay" || provider === "weixin") return "wechat";
+    const provider = normalizePaymentProvider(value);
     if (provider === "custom") return "manual";
-    return provider || "manual";
+    return provider;
 }
 
 function normalizeWechatRefundStatus(value: unknown): Exclude<PaymentRefundStatus, "manual"> | undefined {

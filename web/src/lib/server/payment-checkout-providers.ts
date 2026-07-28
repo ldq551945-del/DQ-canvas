@@ -2,6 +2,7 @@ import { createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { DEFAULT_ALIPAY_PAYMENT_MODE, isAlipayPaymentMode } from "@/lib/payment-config-types";
+import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 import type { BillingOrderRecord, JsonValue } from "@/lib/server/database";
@@ -576,12 +577,7 @@ export function normalizeId(value: unknown) {
 }
 
 export function normalizeProvider(value: unknown) {
-    const provider = normalizeId(value).toLowerCase();
-    if (provider === "stripe-checkout") return "stripe";
-    if (provider === "ali" || provider === "alipay-page") return "alipay";
-    if (provider === "wxpay" || provider === "wechatpay" || provider === "weixin") return "wechat";
-    if (provider === "pay-ply" || provider === "pay_ply") return "payply";
-    return provider || "manual";
+    return normalizePaymentProvider(value);
 }
 
 function normalizeText(value: unknown, fallback: string, maxLength: number) {

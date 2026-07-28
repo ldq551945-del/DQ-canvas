@@ -19,7 +19,7 @@ export async function createPaymentCheckoutForOrder(orderId: string, options: Cr
         if (order.status !== "pending") throw new BillingInputError("当前订单状态不能发起支付", 409);
         if (order.expiresAt && Date.parse(order.expiresAt) <= Date.now()) throw new BillingInputError("订单已过期", 409);
 
-        const provider = normalizeProvider(options.provider || order.provider);
+        const provider = resolveCheckoutProvider(order.provider, options.provider);
         if (!isPaymentRuntimeProviderCheckoutReady(paymentConfig, provider)) throw new BillingInputError("该支付渠道未启用或配置不完整", 400);
         const existing = checkoutFromMetadata(order, provider);
         if (existing) return existing;
@@ -34,4 +34,11 @@ export async function createPaymentCheckoutForOrder(orderId: string, options: Cr
         });
         return checkout;
     });
+}
+
+export function resolveCheckoutProvider(orderProvider: unknown, requestedProvider: unknown) {
+    const provider = normalizeProvider(orderProvider);
+    const requested = requestedProvider === undefined || requestedProvider === null || requestedProvider === "" ? provider : normalizeProvider(requestedProvider);
+    if (requested !== provider) throw new BillingInputError("订单支付渠道已锁定，请重新创建订单后更换渠道", 409);
+    return provider;
 }

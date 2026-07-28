@@ -95,7 +95,7 @@ export async function savePaymentProviderConfig(input: { providerId: PaymentProv
         providers: {
             ...current.providers,
             [input.providerId]: {
-                enabled: definition.id === "manual" ? true : input.enabled === true,
+                enabled: definition.id === "manual" ? true : input.enabled === undefined ? previous.enabled === true : input.enabled === true,
                 values,
             },
         },

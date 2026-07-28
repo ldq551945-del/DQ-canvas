@@ -52,6 +52,14 @@ export type GenerationTaskRecordSummary = {
     byStatus: Record<string, number>;
 };
 
+export type GenerationTaskCostAggregate = {
+    type: GenerationTaskType;
+    status: GenerationTaskStatus;
+    taskCount: number;
+    estimatedPoints: number;
+    actualPoints: number;
+};
+
 type GenerationTaskSummaryAccumulator = Omit<GenerationTaskRecordSummary, "averageDurationMs"> & {
     averageDurationMs: number;
     completedCount: number;
@@ -180,7 +188,43 @@ export function generationTaskPointsCost(payload: Record<string, unknown>) {
     const config = recordObject(payload.config);
     const upstream = recordObject(payload.upstream);
     const tasks = Array.isArray(payload.tasks) ? payload.tasks.map(recordObject) : [];
-    return positiveNumber(payload.pointsCost, recordObject(payload.billing).pointsCost, upstream.pointsCost) || tasks.reduce((total, task) => total + positiveNumber(task.pointsCost, recordObject(task.billing).pointsCost), 0);
+    const attempts = Array.isArray(payload.attempts) ? payload.attempts.map(recordObject) : [];
+    return (
+        positiveNumber(payload.pointsCost, recordObject(payload.billing).pointsCost, upstream.pointsCost) ||
+        tasks.reduce((total, task) => total + positiveNumber(task.pointsCost, recordObject(task.billing).pointsCost), 0) ||
+        attempts.filter((attempt) => attempt.status === "succeeded" || attempt.status === "success").reduce((total, attempt) => total + positiveNumber(attempt.pointsCost, recordObject(attempt.billing).pointsCost), 0)
+    );
+}
+
+export async function summarizeStoredGenerationTaskCosts(input: { userId: string; projectId: string; types: GenerationTaskType[] }): Promise<GenerationTaskCostAggregate[]> {
+    const userId = cleanContextText(input.userId);
+    const projectId = cleanContextText(input.projectId);
+    const types = Array.from(new Set(input.types.filter(isTaskType)));
+    if (!userId || !projectId || !types.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `SELECT task_type, status, count(*)::int AS task_count,
+                    coalesce(sum(coalesce(${numericJsonValue("payload->>'estimatedPoints'")}, 0)), 0) AS estimated_points,
+                    coalesce(sum(CASE WHEN status = 'success' THEN ${generationTaskPointsSql()} ELSE 0 END), 0) AS actual_points
+             FROM generation_tasks
+             WHERE expires_at > now() AND user_id = $1 AND project_id = $2 AND task_type = ANY($3::text[])
+             GROUP BY task_type, status`,
+            [userId, projectId, types],
+        );
+        return result.rows.flatMap(mapGenerationTaskCostAggregate);
+    }
+    const groups = new Map<string, GenerationTaskCostAggregate>();
+    for (const record of await readFileTasks()) {
+        if (record.expiresAt <= Date.now() || record.userId !== userId || record.projectId !== projectId || !types.includes(record.type)) continue;
+        const key = `${record.type}:${record.status}`;
+        const current = groups.get(key) || { type: record.type, status: record.status, taskCount: 0, estimatedPoints: 0, actualPoints: 0 };
+        current.taskCount += 1;
+        current.estimatedPoints += positiveNumber(record.estimatedPoints, record.payload.estimatedPoints);
+        if (record.status === "success") current.actualPoints += generationTaskPointsCost(record.payload);
+        groups.set(key, current);
+    }
+    return Array.from(groups.values()).map((item) => ({ ...item, estimatedPoints: Number(item.estimatedPoints.toFixed(2)), actualPoints: Number(item.actualPoints.toFixed(2)) }));
 }
 
 function generationTaskSelect() {
@@ -219,11 +263,14 @@ function generationTaskSummarySelect() {
 
 function generationTaskPointsSql() {
     return `coalesce(
-                ${numericJsonValue("payload->>'pointsCost'")},
-                ${numericJsonValue("payload#>>'{billing,pointsCost}'")},
-                ${numericJsonValue("payload#>>'{upstream,pointsCost}'")},
-                (SELECT coalesce(sum(${numericJsonValue("task->>'pointsCost'")}), 0)
+                nullif(${numericJsonValue("payload->>'pointsCost'")}, 0),
+                nullif(${numericJsonValue("payload#>>'{billing,pointsCost}'")}, 0),
+                nullif(${numericJsonValue("payload#>>'{upstream,pointsCost}'")}, 0),
+                (SELECT nullif(sum(${numericJsonValue("task->>'pointsCost'")}), 0)
                  FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload->'tasks') = 'array' THEN payload->'tasks' ELSE '[]'::jsonb END) AS task),
+                (SELECT nullif(sum(${numericJsonValue("attempt->>'pointsCost'")}), 0)
+                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload->'attempts') = 'array' THEN payload->'attempts' ELSE '[]'::jsonb END) AS attempt
+                 WHERE attempt->>'status' IN ('succeeded', 'success')),
                 0
             )`;
 }
@@ -672,6 +719,19 @@ function mapStoredTaskRecord(row: Record<string, unknown>): StoredGenerationTask
         attemptNo: row.attempt_no === null || row.attempt_no === undefined ? undefined : Math.max(0, Math.floor(Number(row.attempt_no) || 0)),
         clientRequestId: cleanContextText(String(row.client_request_id || "")),
     };
+}
+
+function mapGenerationTaskCostAggregate(row: Record<string, unknown>): GenerationTaskCostAggregate[] {
+    if (!isTaskType(row.task_type) || !isTaskStatus(row.status)) return [];
+    return [
+        {
+            type: row.task_type,
+            status: row.status,
+            taskCount: Math.max(0, Math.floor(Number(row.task_count) || 0)),
+            estimatedPoints: Math.max(0, Number(row.estimated_points) || 0),
+            actualPoints: Math.max(0, Number(row.actual_points) || 0),
+        },
+    ];
 }
 
 function isTaskType(value: unknown): value is GenerationTaskType {

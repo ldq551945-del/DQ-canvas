@@ -91,7 +91,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 
 文本、图片、视频、音频和漫剧整集合成终态更新使用带 `user_id + task_type + allowed status` 条件的原子 `UPDATE`；任务尝试元数据通过存储层原子 mutate 合并，避免取消状态被旧快照覆盖。用户取消、后台成功、后台失败和过期检查同时发生时只有一个状态转换能成功，退款由成功抢占终态或检测到已取消结果的一方执行。
 
-Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，每个多副本子任务同时保存子任务 ID、完成状态、尝试次数和结果，恢复时复用已完成结果并继续轮询未完成任务；事件独立写入 `creative_run_events`。状态更新、助手消息终态和事件追加在同一 PostgreSQL 事务内完成；暂停、恢复、取消、完成和失败竞争时，旧 Run 快照不能覆盖更新后的状态。文件 Provider 使用串行 mutation queue 保持相同的进程内语义。
+Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，每个多副本子任务同时保存子任务 ID、完成状态、尝试次数和结果，恢复时复用已完成结果并继续轮询未完成任务；事件独立写入 `creative_run_events`。状态更新、助手消息终态和事件追加在同一 PostgreSQL 事务内完成；暂停、恢复、取消、完成和失败竞争时，旧 Run 快照不能覆盖更新后的状态。文件 Provider 使用串行 mutation queue 保持相同的进程内语义。短剧成本概览按 `user_id + project_id + task_type + status` 在数据库聚合，并使用 `generation_tasks_user_project_idx`，不读取数千条完整任务 JSON 后再汇总。
 
 - `vozeb_pro_audit_logs`：登录、后台操作、CDK 兑换等安全审计记录。
 

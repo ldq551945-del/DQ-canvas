@@ -169,6 +169,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "generation_tasks_user_client_request_idx",
     "generation_tasks_conversation_idx",
     "generation_tasks_run_idx",
+    "generation_tasks_user_project_idx",
     "creative_conversations_user_updated_idx",
     "creative_conversations_project_idx",
     "creative_messages_conversation_sequence_idx",

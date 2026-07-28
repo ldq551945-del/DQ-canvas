@@ -16,7 +16,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
 }));
 
 import { getDatabaseProvider, postgresQuery } from "@/lib/server/database";
-import { createStoredGenerationTask, listStoredGenerationTaskRecords, mutateStoredGenerationTask, withGenerationConcurrencyLimit } from "./generation-task-store";
+import { createStoredGenerationTask, listStoredGenerationTaskRecords, mutateStoredGenerationTask, summarizeStoredGenerationTaskCosts, withGenerationConcurrencyLimit } from "./generation-task-store";
 
 type TestTask = {
     id: string;
@@ -127,5 +127,31 @@ describe("listStoredGenerationTaskRecords", () => {
         expect(String(summaryQuery)).toContain("GROUP BY task_type, status");
         expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"]]);
         expect(result).toMatchObject({ total: 1, items: [{ id: "task-one", type: "video" }], all: [], summary: { total: 1, totalPointsCost: 3 } });
+    });
+});
+
+describe("summarizeStoredGenerationTaskCosts", () => {
+    it("aggregates project costs in PostgreSQL without loading task payload rows", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockClear();
+        vi.mocked(postgresQuery).mockResolvedValueOnce({
+            rows: [
+                { task_type: "image", status: "success", task_count: "2", estimated_points: "4", actual_points: "3.5" },
+                { task_type: "video", status: "error", task_count: "1", estimated_points: "8", actual_points: "0" },
+            ],
+        } as never);
+
+        const result = await summarizeStoredGenerationTaskCosts({ userId: "user-one", projectId: "project-one", types: ["image", "video", "image"] });
+        const [statement, params] = vi.mocked(postgresQuery).mock.calls[0] || [];
+
+        expect(String(statement)).toContain("GROUP BY task_type, status");
+        expect(String(statement)).not.toContain("LIMIT 5000");
+        expect(String(statement)).toContain("nullif(sum(");
+        expect(String(statement)).toContain("attempt->>'status' IN ('succeeded', 'success')");
+        expect(params).toEqual(["user-one", "project-one", ["image", "video"]]);
+        expect(result).toEqual([
+            { type: "image", status: "success", taskCount: 2, estimatedPoints: 4, actualPoints: 3.5 },
+            { type: "video", status: "error", taskCount: 1, estimatedPoints: 8, actualPoints: 0 },
+        ]);
     });
 });

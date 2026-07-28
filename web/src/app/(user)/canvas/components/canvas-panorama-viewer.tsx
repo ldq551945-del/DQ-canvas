@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useState, type SyntheticEvent } from "react";
 import { Maximize2 } from "lucide-react";
 import { Modal } from "antd";
 
@@ -14,6 +14,8 @@ const CanvasPanoramaSurface = dynamic(() => import("./canvas-panorama-surface").
     loading: () => <div className="grid h-full w-full place-items-center text-xs text-white/75">正在准备全景查看器...</div>,
 });
 
+const stopCanvasInteraction = (event: SyntheticEvent) => event.stopPropagation();
+
 export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [open, setOpen] = useState(false);
@@ -23,7 +25,7 @@ export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string })
 
     return (
         <>
-            <div className="relative h-full w-full overflow-hidden" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()}>
+            <div className="relative h-full w-full overflow-hidden" data-canvas-no-zoom>
                 <img src={previewSrc} alt={alt} draggable={false} className="block h-full w-full select-none object-cover" />
                 <button
                     type="button"
@@ -42,20 +44,23 @@ export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string })
                     沉浸查看
                 </button>
             </div>
-            <Modal
-                open={open}
-                title="全景查看"
-                centered
-                destroyOnHidden
-                footer={null}
-                width="min(1180px, calc(100vw - 24px))"
-                onCancel={() => setOpen(false)}
-                styles={{ body: { padding: 0 }, container: { background: theme.toolbar.panel, color: theme.node.text } }}
-            >
-                <div className="h-[72vh] min-h-[320px] overflow-hidden rounded-xl bg-black sm:h-[78vh]">
-                    <CanvasPanoramaSurface src={previewSrc} alt={alt} />
-                </div>
-            </Modal>
+            <div className="contents" onClick={stopCanvasInteraction} onDoubleClick={stopCanvasInteraction} onMouseDown={stopCanvasInteraction} onPointerDown={stopCanvasInteraction} onWheel={stopCanvasInteraction} onContextMenu={stopCanvasInteraction}>
+                <Modal
+                    open={open}
+                    title="全景查看"
+                    centered
+                    destroyOnHidden
+                    maskClosable={false}
+                    footer={null}
+                    width="min(1180px, calc(100vw - 24px))"
+                    onCancel={() => setOpen(false)}
+                    styles={{ body: { padding: 0 }, container: { background: theme.toolbar.panel, color: theme.node.text } }}
+                >
+                    <div className="h-[72vh] min-h-[320px] overflow-hidden rounded-xl bg-black sm:h-[78vh]">
+                        <CanvasPanoramaSurface src={previewSrc} alt={alt} />
+                    </div>
+                </Modal>
+            </div>
         </>
     );
 }

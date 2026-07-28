@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getProject: vi.fn(), listTasks: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getProject: vi.fn(), summarizeCosts: vi.fn() }));
 
 vi.mock("@/lib/server/drama-project-service", () => ({ getDramaProjectForUser: mocks.getProject }));
-vi.mock("@/lib/server/generation-task-store", () => ({ listStoredGenerationTaskRecords: mocks.listTasks }));
+vi.mock("@/lib/server/generation-task-store", () => ({ summarizeStoredGenerationTaskCosts: mocks.summarizeCosts }));
 
 import { getDramaProjectCostSummary } from "./drama-project-cost-service";
 
@@ -11,14 +11,11 @@ describe("drama project cost summary", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getProject.mockResolvedValue({ id: "project-one" });
-        mocks.listTasks.mockResolvedValue({
-            all: [
-                { projectId: "project-one", type: "image", status: "success", estimatedPoints: 2, payload: { attempts: [{ status: "succeeded", pointsCost: 1.5 }] } },
-                { projectId: "project-one", type: "video", status: "success", estimatedPoints: 8, payload: { upstream: { pointsCost: 7 } } },
-                { projectId: "project-one", type: "audio", status: "error", estimatedPoints: 1, payload: { billing: { pointsCost: 1 } } },
-                { projectId: "other", type: "video", status: "success", estimatedPoints: 99, payload: { upstream: { pointsCost: 99 } } },
-            ],
-        });
+        mocks.summarizeCosts.mockResolvedValue([
+            { type: "image", status: "success", taskCount: 1, estimatedPoints: 2, actualPoints: 1.5 },
+            { type: "video", status: "success", taskCount: 1, estimatedPoints: 8, actualPoints: 7 },
+            { type: "audio", status: "error", taskCount: 1, estimatedPoints: 1, actualPoints: 0 },
+        ]);
     });
 
     it("aggregates only the current project and excludes refunded failures", async () => {
@@ -34,5 +31,6 @@ describe("drama project cost summary", () => {
                 audio: { tasks: 1, estimatedPoints: 1, actualPoints: 0 },
             },
         });
+        expect(mocks.summarizeCosts).toHaveBeenCalledWith({ userId: "user-one", projectId: "project-one", types: ["image", "video", "audio"] });
     });
 });

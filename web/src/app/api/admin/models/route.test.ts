@@ -85,6 +85,29 @@ describe("admin models route", () => {
         });
     });
 
+    it("keeps mixed root groups and model maps from one provider response", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    text_models: [{ id: "openai-text", api_format: "openai", endpoint: "/chat/completions" }],
+                    models: { "sd2.0": { capability: "video", protocol: "seedance", endpoint: "/videos", query_path: "/videos/:task_id" } },
+                }),
+            ),
+        );
+
+        const response = await POST(request({ channelId: "saved" }));
+
+        expect(await response.json()).toMatchObject({
+            models: ["openai-text", "sd2.0"],
+            modelCapabilities: { "openai-text": "text", "sd2.0": "video" },
+            modelConfigs: {
+                "openai-text": { capability: "text", apiFormat: "openai", createPath: "/chat/completions" },
+                "sd2.0": { capability: "video", protocol: "seedance", createPath: "/videos", queryPath: "/videos/:task_id" },
+            },
+        });
+    });
+
     it("returns the complete built-in GlobalAiOpc vendor catalog without requesting an unavailable models endpoint", async () => {
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);

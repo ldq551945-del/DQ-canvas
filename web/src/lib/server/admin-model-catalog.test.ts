@@ -60,6 +60,35 @@ describe("admin model catalog", () => {
         });
     });
 
+    it("combines root capability groups with nested model maps without dropping any company models", () => {
+        const payload = {
+            text_models: [{ id: "openai-text", api_format: "openai-compatible", route: "/chat/completions" }],
+            models: {
+                "opaque-image": { output_modalities: ["image"], endpoint: "/images/generations" },
+                "sd2.0": { capabilities: ["video"], protocol: "seedance", path: "/videos", task_endpoint: "/videos/:task_id" },
+            },
+        };
+
+        expect(parseModelCatalog(payload)).toEqual([
+            { id: "opaque-image", capability: "image", source: "provider" },
+            { id: "openai-text", capability: "text", source: "provider" },
+            { id: "sd2.0", capability: "video", source: "provider" },
+        ]);
+        expect(parseModelConfigs(payload)).toMatchObject({
+            "opaque-image": { capability: "image", createPath: "/images/generations" },
+            "openai-text": { capability: "text", apiFormat: "openai", createPath: "/chat/completions" },
+            "sd2.0": { capability: "video", protocol: "seedance", createPath: "/videos", queryPath: "/videos/:task_id" },
+        });
+    });
+
+    it("reads capability maps and common provider method metadata", () => {
+        expect(parseModelCatalog({ data: { "writer-v3": "text", "video-v3": "video" } })).toEqual([
+            { id: "video-v3", capability: "video", source: "provider" },
+            { id: "writer-v3", capability: "text", source: "provider" },
+        ]);
+        expect(parseModelCatalog({ data: [{ id: "opaque-writer", supported_generation_methods: ["generateContent"] }] })).toEqual([{ id: "opaque-writer", capability: "text", source: "provider" }]);
+    });
+
     it("does not overwrite an administrator's manual model route during discovery", () => {
         const catalog = [{ id: "vendor-model", capability: "video" as const, source: "provider" as const }];
         const configs = mergeModelConfigs(
@@ -76,6 +105,7 @@ describe("admin model catalog", () => {
         expect(nextModelsPageUrl("https://api.example.com/v1beta/models", { nextPageToken: "page two" }, "gemini", "gemini-one")).toBe("https://api.example.com/v1beta/models?pageToken=page+two");
         expect(nextModelsPageUrl("https://api.example.com/v1/models?limit=100", { has_more: true, last_id: "model-one" }, "openai", "model-one")).toBe("https://api.example.com/v1/models?limit=100&after=model-one");
         expect(nextModelsPageUrl("https://api.example.com/v1/models", { has_more: false }, "openai", "model-one")).toBe("");
+        expect(nextModelsPageUrl("https://api.example.com/v1/models", { links: { next: "/v1/models?page=2" } }, "openai", "model-one")).toBe("https://api.example.com/v1/models?page=2");
     });
 
     it("merges configured, provider, and Agnes official catalogs without dropping models", () => {

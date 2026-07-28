@@ -13,6 +13,26 @@ type ModelsResponse = Record<string, unknown> & {
 };
 
 const SOURCE_PRIORITY: Record<ModelCatalogSource, number> = { configured: 1, provider: 2, official: 3 };
+const MODEL_CONTAINER_KEYS = ["data", "models", "result", "items", "list", "model_list", "modelList", "available_models", "availableModels"] as const;
+const MODEL_METADATA_KEYS = new Set([
+    "capability",
+    "capabilities",
+    "type",
+    "task",
+    "task_type",
+    "taskType",
+    "category",
+    "kind",
+    "endpoint",
+    "route",
+    "path",
+    "modalities",
+    "modality",
+    "output_modalities",
+    "outputModalities",
+    "supported_generation_methods",
+    "supportedGenerationMethods",
+]);
 
 export function buildModelsUrl(baseUrl: string, apiFormat: "openai" | "gemini", globalAiOpc = false) {
     const normalized = baseUrl
@@ -47,9 +67,8 @@ export function parseModels(payload: ModelsResponse) {
 }
 
 export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider") {
-    const values = modelValues(payload);
     return mergeModelCatalogEntries(
-        ...collectModelValues(values).map(({ id, metadata }) => [
+        ...collectModelValues(payload).map(({ id, metadata }) => [
             {
                 id,
                 capability: capabilityFromModelMetadata(metadata) || inferModelCapability(id),
@@ -61,7 +80,7 @@ export function parseModelCatalog(payload: unknown, source: ModelCatalogSource =
 
 export function parseModelConfigs(payload: unknown) {
     return Object.fromEntries(
-        collectModelValues(modelValues(payload)).map(({ id, metadata }) => {
+        collectModelValues(payload).map(({ id, metadata }) => {
             const capability = capabilityFromModelMetadata(metadata) || inferModelCapability(id);
             return [normalizeModelId(id), { ...modelConfigFromMetadata(metadata, capability), source: "provider" as const }] as const;
         }),
@@ -144,7 +163,7 @@ export function nextModelsPageUrl(currentUrl: string, payload: ModelsResponse, a
     const cursor = paginationString(payload, ["nextCursor", "next_cursor"]);
     if (cursor) return withQuery(currentUrl, "cursor", cursor);
 
-    const next = paginationString(payload, ["next", "nextUrl", "next_url"]);
+    const next = paginationString(payload, ["next", "nextUrl", "next_url", "nextPageUrl", "next_page_url"]);
     if (next && (/^https?:\/\//i.test(next) || next.startsWith("/"))) {
         const candidate = new URL(next, currentUrl);
         if (candidate.origin === new URL(currentUrl).origin && candidate.toString() !== currentUrl) return candidate.toString();
@@ -173,16 +192,31 @@ function collectModelValues(value: unknown, depth = 0): Array<{ id: string; meta
     const grouped = (["text", "image", "video", "audio"] as const).flatMap((capability) =>
         [record[capability], record[`${capability}_models`], record[`${capability}Models`]].flatMap((item) => collectModelValues(item, depth + 1).map((entry) => ({ ...entry, metadata: { capability, ...(entry.metadata || {}) } }))),
     );
-    if (grouped.length) return grouped;
-    const nested = [record.data, record.models, record.result, record.items, record.list, record.model_list, record.modelList, record.available_models, record.availableModels].flatMap((item) => collectModelValues(item, depth + 1));
-    if (nested.length) return nested;
+    const nested = MODEL_CONTAINER_KEYS.flatMap((key) => collectModelValues(record[key], depth + 1));
+    if (grouped.length || nested.length) return mergeCollectedModelValues([...grouped, ...nested]);
     const direct = [record.id, record.name, record.model, record.model_id, record.modelId, record.title].find((item) => typeof item === "string" && item.trim());
-    return typeof direct === "string" ? [{ id: direct.trim(), metadata: record }] : [];
+    if (typeof direct === "string") return [{ id: direct.trim(), metadata: record }];
+    return mergeCollectedModelValues(collectModelMap(record));
 }
 
 function capabilityFromModelMetadata(record: Record<string, unknown> | undefined) {
     if (!record) return undefined;
-    const directHints = [record.capability, record.type, record.task, record.task_type, record.taskType, record.category, record.kind, record.endpoint, record.route, record.path];
+    const directHints = [
+        record.capability,
+        record.type,
+        record.task,
+        record.task_type,
+        record.taskType,
+        record.category,
+        record.kind,
+        record.endpoint,
+        record.route,
+        record.path,
+        record.capabilities,
+        record.supported_generation_methods,
+        record.supportedGenerationMethods,
+        record.interfaces,
+    ];
     for (const hint of directHints) {
         const capability = capabilityFromHint(hint);
         if (capability) return capability;
@@ -196,11 +230,14 @@ function capabilityFromModelMetadata(record: Record<string, unknown> | undefined
 
 function modelConfigFromMetadata(record: Record<string, unknown> | undefined, capability: LogicalModelCapability): SystemChannelModelConfig {
     if (!record) return { capability };
-    const apiFormat = record.apiFormat ?? record.api_format;
+    const apiFormatHint = String(record.apiFormat ?? record.api_format ?? "")
+        .trim()
+        .toLowerCase();
+    const apiFormat = apiFormatHint.includes("gemini") ? "gemini" : apiFormatHint.includes("openai") ? "openai" : undefined;
     const protocolValue = record.protocol;
     const protocol = isChannelProtocol(protocolValue) ? protocolValue : undefined;
-    const createPath = firstApiPath(record, ["createPath", "create_path", "generationEndpoint", "generation_endpoint", "endpoint"]);
-    const queryPath = firstApiPath(record, ["queryPath", "query_path", "pollEndpoint", "poll_endpoint", "statusEndpoint", "status_endpoint"]);
+    const createPath = firstApiPath(record, ["createPath", "create_path", "generationEndpoint", "generation_endpoint", "endpoint", "route", "path"]);
+    const queryPath = firstApiPath(record, ["queryPath", "query_path", "pollEndpoint", "poll_endpoint", "statusEndpoint", "status_endpoint", "taskEndpoint", "task_endpoint"]);
     return {
         capability,
         ...(apiFormat === "openai" || apiFormat === "gemini" ? { apiFormat } : {}),
@@ -228,13 +265,6 @@ function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
     return value === "auto" || value === "openai" || value === "sub2api" || value === "qingyan" || value === "globalaiopc" || value === "seedance" || value === "compatible";
 }
 
-function modelValues(payload: unknown) {
-    if (Array.isArray(payload)) return payload;
-    if (!payload || typeof payload !== "object") return [];
-    const record = payload as ModelsResponse;
-    return [record.data, record.models, record.result, record.items, record.list, record.model_list, record.modelList, record.available_models, record.availableModels];
-}
-
 function normalizeCapabilityMap(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Record<string, LogicalModelCapability>;
     return Object.fromEntries(
@@ -243,7 +273,9 @@ function normalizeCapabilityMap(value: unknown) {
 }
 
 function paginationValue(payload: ModelsResponse, keys: string[]) {
-    const wrappers = [payload, payload.meta, payload.pagination, payload.data && !Array.isArray(payload.data) ? payload.data : undefined, payload.result && !Array.isArray(payload.result) ? payload.result : undefined];
+    const data = payload.data && !Array.isArray(payload.data) ? (payload.data as Record<string, unknown>) : undefined;
+    const result = payload.result && !Array.isArray(payload.result) ? (payload.result as Record<string, unknown>) : undefined;
+    const wrappers = [payload, payload.meta, payload.pagination, payload.links, data, data?.meta, data?.pagination, data?.links, result, result?.meta, result?.pagination, result?.links];
     for (const wrapper of wrappers) {
         if (!wrapper || typeof wrapper !== "object") continue;
         for (const key of keys) {
@@ -263,4 +295,33 @@ function withQuery(currentUrl: string, key: string, value: string) {
     const url = new URL(currentUrl);
     url.searchParams.set(key, value);
     return url.toString();
+}
+
+function collectModelMap(record: Record<string, unknown>) {
+    const entries = Object.entries(record).filter(([key]) => !MODEL_CONTAINER_KEYS.includes(key as (typeof MODEL_CONTAINER_KEYS)[number]) && !isCatalogMetadataKey(key));
+    if (!entries.length) return [];
+    const capabilityMap = entries.every(([, value]) => value === "text" || value === "image" || value === "video" || value === "audio");
+    if (capabilityMap) return entries.map(([id, capability]) => ({ id, metadata: { capability } }));
+    return entries.flatMap(([id, value]) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+        const metadata = value as Record<string, unknown>;
+        const looksLikeModel = Object.keys(metadata).some((key) => MODEL_METADATA_KEYS.has(key)) || /[./_-]|\d/.test(id);
+        return looksLikeModel ? [{ id, metadata }] : [];
+    });
+}
+
+function mergeCollectedModelValues(values: Array<{ id: string; metadata?: Record<string, unknown> }>) {
+    const merged = new Map<string, { id: string; metadata?: Record<string, unknown> }>();
+    for (const value of values) {
+        const id = value.id.trim().replace(/^models\//i, "");
+        const key = normalizeModelId(id);
+        if (!key) continue;
+        const current = merged.get(key);
+        merged.set(key, current ? { id: current.id, metadata: { ...(value.metadata || {}), ...(current.metadata || {}) } } : { id, metadata: value.metadata });
+    }
+    return Array.from(merged.values());
+}
+
+function isCatalogMetadataKey(key: string) {
+    return ["meta", "pagination", "links", "object", "has_more", "hasMore", "last_id", "lastId", "next", "next_url", "nextUrl", "next_page_url", "nextPageUrl", "next_page_token", "nextPageToken"].includes(key);
 }

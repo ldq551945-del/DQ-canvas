@@ -13,7 +13,7 @@ const imageNode: CanvasNodeData = {
     position: { x: 120, y: 80 },
     width: 320,
     height: 320,
-    metadata: { content: "/generated-image.webp" },
+    metadata: { content: "/api/reference-assets/permanent/generated-image.png" },
 };
 
 const noop = () => undefined;
@@ -51,6 +51,7 @@ describe("CanvasNode image border", () => {
         expect(markup).toContain(`border-color:${canvasThemes.light.node.stroke}`);
         expect(markup).toContain("rounded-3xl border-2");
         expect(markup).toContain("overflow-hidden rounded-3xl");
+        expect(markup).toContain("/api/reference-assets/permanent/generated-image.png?format=webp&amp;width=1920");
     });
 
     it("keeps the blue active border when the image is selected", () => {
@@ -67,5 +68,23 @@ describe("CanvasNode image border", () => {
         const markup = renderImageNode({ data: batchChild, isRelated: true });
 
         expect(markup).toContain(`class="relative h-full w-full overflow-visible rounded-3xl border-2" style="background:transparent;border-color:${canvasThemes.light.node.stroke}"`);
+    });
+});
+
+describe("CanvasNode task content", () => {
+    it("keeps long task text scrollable while preserving the footer", () => {
+        const taskNode: CanvasNodeData = {
+            ...imageNode,
+            id: "task",
+            type: CanvasNodeType.Task,
+            title: "Agent 任务",
+            height: 210,
+            metadata: { agentTaskStatus: "completed", prompt: "很长的任务说明".repeat(30), agentTaskAttempts: 1 },
+        };
+
+        const markup = renderImageNode({ data: taskNode });
+
+        expect(markup).toContain("thin-scrollbar min-h-0 flex-1 overflow-y-auto");
+        expect(markup).toContain("mt-3 flex shrink-0");
     });
 });

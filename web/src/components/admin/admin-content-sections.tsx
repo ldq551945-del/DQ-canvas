@@ -102,10 +102,13 @@ import {
     clampInteger,
 } from "./admin-dashboard-elements";
 import { PROMPT_PAGE_SIZE, PROMPT_SEARCH_DEBOUNCE_MS, CDK_PAGE_SIZE, GENERATION_LOG_PAGE_SIZE } from "./use-admin-dashboard-controller";
+import { ANNOUNCEMENT_PAGE_SIZE } from "./use-admin-dashboard-data-actions";
 
 export function AdminAnnouncementsSection({ controller }: { controller: AdminDashboardController }) {
     const {
         announcements,
+        announcementPage,
+        announcementTotal,
         announcementsLoading,
         announcementSaving,
         announcementModalOpen,
@@ -143,7 +146,7 @@ export function AdminAnnouncementsSection({ controller }: { controller: AdminDas
                 <section className="rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-800 dark:bg-stone-950">
                     <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <SectionTitle icon={<Database className="size-4" />} title="公告记录" />
-                        <Tag className="m-0 w-fit">共 {announcements.length} 条</Tag>
+                        <Tag className="m-0 w-fit">共 {announcementTotal} 条</Tag>
                     </div>
                     <div className="grid gap-3">
                         {announcements.map((announcement) => (
@@ -186,6 +189,9 @@ export function AdminAnnouncementsSection({ controller }: { controller: AdminDas
                             </div>
                         ) : null}
                     </div>
+                    {announcementTotal > ANNOUNCEMENT_PAGE_SIZE ? (
+                        <Pagination className="mt-4 justify-end" current={announcementPage} pageSize={ANNOUNCEMENT_PAGE_SIZE} total={announcementTotal} showSizeChanger={false} onChange={(page) => void loadAnnouncements(page)} />
+                    ) : null}
                 </section>
             </div>
             <Modal

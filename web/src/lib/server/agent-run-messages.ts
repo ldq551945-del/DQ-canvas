@@ -14,14 +14,32 @@ export function agentRunCompletionReply(run: AgentRun) {
     if (wantsTextOnly(run.prompt) && completed.length === 1 && completed[0].type === "text") {
         return enforceRequestedLength(conciseTextResult(resultSummary(completed[0].result)), run.prompt) || `「${completed[0].title}」已完成。`;
     }
-    const details = completed.map((task) => agentTaskCompletionMessage(task, run.surface)).join("\n\n");
-    if (run.surface === "chat" && completed.length === 1 && completed[0].type !== "text") return details;
+    const visibleTasks = run.surface === "chat" ? completed.filter((task) => task.type === "text") : completed;
+    const details = visibleTasks.map((task) => agentTaskCompletionMessage(task, run.surface)).join("\n\n");
     return `已完成 ${completed.length} 个创作任务。${details ? `\n\n${details}` : ""}`;
 }
 
 export function agentRunFailureMessage(tasks: AgentRunTask[]) {
-    const failed = tasks.find((task) => task.status === "failed" && task.error?.trim());
-    return failed ? `「${failed.title}」失败：${failed.error!.trim()}` : "创作任务执行失败";
+    const failed = tasks.filter((task) => task.status === "failed" && task.error?.trim());
+    if (!failed.length) return "创作任务执行失败";
+    const counts = tasks.reduce(
+        (total, task) => {
+            if (task.childTasks?.length) {
+                total.completed += task.childTasks.filter((child) => child.status === "completed").length;
+                total.failed += task.childTasks.filter((child) => child.status === "failed").length;
+                return total;
+            }
+            if (task.status === "completed") total.completed += Math.max(1, task.count);
+            if (task.status === "failed") total.failed += Math.max(1, task.count);
+            return total;
+        },
+        { completed: 0, failed: 0 },
+    );
+    if (!counts.failed) counts.failed = failed.length;
+    const unit = tasks.every((task) => task.type === "image") ? "张" : tasks.every((task) => task.type === "video") ? "个视频" : "项";
+    const summary = counts.completed ? `生成结果：成功 ${counts.completed} ${unit}，失败 ${counts.failed} ${unit}。` : `生成失败：失败 ${counts.failed} ${unit}。`;
+    const reasons = failed.map((task) => `「${task.title}」：${task.error!.trim()}`).join("\n");
+    return `${summary}\n失败原因：\n${reasons}`;
 }
 
 function wantsTextOnly(prompt: string) {

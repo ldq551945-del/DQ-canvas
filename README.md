@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/logo.svg?v=0.0.2" width="108" alt="VOZEB PRO logo">
+  <img src="web/public/logo.svg?v=0.0.3" width="108" alt="VOZEB PRO logo">
 </p>
 
 <h1 align="center">VOZEB PRO</h1>
@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/csyqlz/VOZEB-PRO"><img src="https://img.shields.io/github/stars/csyqlz/VOZEB-PRO?style=flat-square&logo=github" alt="GitHub stars"></a>
-  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.2-2563eb?style=flat-square" alt="Version"></a>
+  <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.3-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
   <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-16-4169e1?style=flat-square&logo=postgresql" alt="PostgreSQL"></a>
@@ -456,13 +456,15 @@ pnpm install --frozen-lockfile
 pnpm run dev
 ```
 
-访问 `http://localhost:3000/install`。文档站在 `docs/` 中独立运行：
+访问 `http://localhost:3000/install`。文档站在 `docs/` 中独立运行，并固定使用 `http://localhost:3001`，不会占用主应用的 `3000` 端口：
 
 ```bash
 cd docs
 pnpm install --frozen-lockfile
 pnpm run dev
 ```
+
+`http://localhost:3000` 必须显示 VOZEB PRO 主应用；如果看到“VOZEB PRO 文档中心”，说明启动的是 `docs/` 子项目或旧版文档脚本，请停止该进程并从 `web/` 启动主应用。独立文档站只使用 `http://localhost:3001`。
 
 ## 首次配置顺序
 

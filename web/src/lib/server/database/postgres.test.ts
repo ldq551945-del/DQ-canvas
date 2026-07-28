@@ -39,6 +39,9 @@ describe("PostgreSQL schema lifecycle", () => {
 
         expect(mocks.query).toHaveBeenCalledTimes(1);
         expect(mocks.query.mock.calls[0]?.[0]).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_schema_migrations");
+        expect(mocks.query.mock.calls[0]?.[0]).toContain("CREATE SEQUENCE IF NOT EXISTS vozeb_pro_user_account_id_seq");
+        expect(mocks.query.mock.calls[0]?.[0]).toContain("account_id bigint NOT NULL DEFAULT nextval('vozeb_pro_user_account_id_seq')");
+        expect(mocks.query.mock.calls[0]?.[0]).toContain("CREATE UNIQUE INDEX IF NOT EXISTS vozeb_pro_users_account_id_idx ON vozeb_pro_users (account_id)");
         expect(mocks.query.mock.calls[0]?.[0]).toContain("user_id text NOT NULL REFERENCES vozeb_pro_users(id) ON DELETE CASCADE");
         expect(mocks.query.mock.calls[0]?.[0]).toContain("CREATE TABLE IF NOT EXISTS vozeb_pro_account_deletion_requests");
     });

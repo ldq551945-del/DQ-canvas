@@ -2,8 +2,8 @@ import type { CSSProperties } from "react";
 
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 
-const MEDIA_MAX_WIDTH = 280;
-const MEDIA_MAX_HEIGHT = 360;
+const MEDIA_MAX_WIDTH = 240;
+const MEDIA_MAX_HEIGHT = 320;
 
 export function creativeAssetCardLayout(asset: Pick<CreativeAsset, "width" | "height">) {
     const width = Number(asset.width);

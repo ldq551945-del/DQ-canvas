@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "antd";
 
-import { listBillingOrders, listBillingProducts, type BillingOrder, type BillingProduct } from "@/services/api/billing";
+import { listBillingCoupons, listBillingOrders, listBillingProducts, type BillingOrder, type BillingProduct, type CouponTemplate, type UserCoupon } from "@/services/api/billing";
 import { listPointRecords, type PointRecord } from "@/services/api/points";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
@@ -15,6 +15,11 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     const [products, setProducts] = useState<BillingProduct[]>([]);
     const [productsLoaded, setProductsLoaded] = useState(false);
     const [productsLoading, setProductsLoading] = useState(false);
+    const [coupons, setCoupons] = useState<UserCoupon[]>([]);
+    const [couponTemplates, setCouponTemplates] = useState<CouponTemplate[]>([]);
+    const [couponsTotal, setCouponsTotal] = useState(0);
+    const [couponsLoaded, setCouponsLoaded] = useState(false);
+    const [couponsLoading, setCouponsLoading] = useState(false);
     const [orders, setOrders] = useState<BillingOrder[]>([]);
     const [ordersTotal, setOrdersTotal] = useState(0);
     const [ordersPage, setOrdersPage] = useState(1);
@@ -32,6 +37,7 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     const [consumeRecordsLoading, setConsumeRecordsLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const productsRequest = useRef(false);
+    const couponsRequest = useRef(false);
     const ordersRequestPage = useRef<number | null>(null);
     const pointsRequestPage = useRef<number | null>(null);
     const consumptionRequestPage = useRef<number | null>(null);
@@ -71,6 +77,24 @@ export function useProfileData(activeSection: ProfileSectionKey) {
         },
         [message],
     );
+
+    const loadCoupons = useCallback(async () => {
+        if (couponsRequest.current) return;
+        couponsRequest.current = true;
+        setCouponsLoading(true);
+        try {
+            const payload = await listBillingCoupons({ page: 1, pageSize: 100 });
+            setCoupons(payload.coupons || []);
+            setCouponTemplates(payload.templates || []);
+            setCouponsTotal(payload.total || 0);
+            setCouponsLoaded(true);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "优惠券加载失败");
+        } finally {
+            couponsRequest.current = false;
+            setCouponsLoading(false);
+        }
+    }, [message]);
 
     const loadPointRecords = useCallback(
         async (page: number) => {
@@ -122,6 +146,10 @@ export function useProfileData(activeSection: ProfileSectionKey) {
     }, [activeSection, loadProducts, productsLoaded]);
 
     useEffect(() => {
+        if (activeSection === "coupons" && !couponsLoaded) void loadCoupons();
+    }, [activeSection, couponsLoaded, loadCoupons]);
+
+    useEffect(() => {
         if (needsOrders && ordersLoadedPage !== ordersTargetPage) void loadOrders(ordersTargetPage);
     }, [loadOrders, needsOrders, ordersLoadedPage, ordersTargetPage]);
 
@@ -149,6 +177,7 @@ export function useProfileData(activeSection: ProfileSectionKey) {
             const requests: Promise<void>[] = [refreshUser()];
             if (activeSection === "overview") requests.push(loadOrders(1), loadPointRecords(1));
             else if (activeSection === "billing") requests.push(loadProducts());
+            else if (activeSection === "coupons") requests.push(loadCoupons());
             else if (activeSection === "orders") requests.push(loadOrders(ordersPage));
             else if (activeSection === "consume") requests.push(loadConsumeRecords(consumeRecordsPage));
             else if (activeSection === "points") requests.push(loadPointRecords(pointRecordsPage));
@@ -156,10 +185,11 @@ export function useProfileData(activeSection: ProfileSectionKey) {
         } finally {
             setRefreshing(false);
         }
-    }, [activeSection, consumeRecordsPage, loadConsumeRecords, loadOrders, loadPointRecords, loadProducts, ordersPage, pointRecordsPage, refreshUser]);
+    }, [activeSection, consumeRecordsPage, loadConsumeRecords, loadCoupons, loadOrders, loadPointRecords, loadProducts, ordersPage, pointRecordsPage, refreshUser]);
 
     return {
         products: { items: products, loading: productsLoading || (activeSection === "billing" && !productsLoaded), refresh: loadProducts },
+        coupons: { items: coupons, templates: couponTemplates, total: couponsTotal, loading: couponsLoading || (activeSection === "coupons" && !couponsLoaded), refresh: loadCoupons },
         orders: { items: orders, total: ordersTotal, page: ordersPage, setPage: setOrdersPage, loading: ordersLoading || (needsOrders && ordersLoadedPage !== ordersTargetPage) },
         points: { items: pointRecords, total: pointRecordsTotal, page: pointRecordsPage, setPage: setPointRecordsPage, loading: pointRecordsLoading || (needsPoints && pointRecordsLoadedPage !== pointsTargetPage) },
         consumption: {
@@ -169,7 +199,7 @@ export function useProfileData(activeSection: ProfileSectionKey) {
             setPage: setConsumeRecordsPage,
             loading: consumeRecordsLoading || (activeSection === "consume" && consumeRecordsLoadedPage !== consumeRecordsPage),
         },
-        loading: refreshing || productsLoading || ordersLoading || pointRecordsLoading || consumeRecordsLoading,
+        loading: refreshing || productsLoading || couponsLoading || ordersLoading || pointRecordsLoading || consumeRecordsLoading,
         refresh,
     };
 }

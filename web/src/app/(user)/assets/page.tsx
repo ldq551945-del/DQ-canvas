@@ -1,17 +1,21 @@
 "use client";
 
 import { Copy, Download, FileAudio, Film, PencilLine, Search, Trash2, Upload } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
-import { App, Button, Card, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { App, Button, Card, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Spin, Tag, Typography } from "antd";
 import { saveAs } from "file-saver";
+import { useRouter } from "next/navigation";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
 import { formatBytes } from "@/lib/image-utils";
-import { imagePreviewUrl, originalImageDownloadUrl, originalImageExtension } from "@/lib/media-image-url";
+import { mediaDownloadFileName } from "@/lib/media-file";
+import { imagePreviewUrl, originalImageDownloadUrl, originalImageExtension, originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { uploadImage } from "@/services/image-storage";
 import { uploadMediaFile } from "@/services/file-storage";
+import { isPermanentServerMedia, serverMediaUrl } from "@/services/server-media-storage";
+import { listAllLibraryAssets } from "@/services/api/library-assets";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type AudioAsset, type ImageAsset, type VideoAsset } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -37,20 +41,18 @@ const kindOptions = [
     { label: "音频", value: "audio" },
 ];
 
-import { AssetCard, AssetDrawer, assetSummary, assetSearchText } from "./asset-elements";
+import { AssetCard, AssetDrawer } from "./asset-elements";
+import { useAssetPage } from "./use-asset-page";
 
 export default function AssetsPage() {
     const { message } = App.useApp();
+    const router = useRouter();
     const copyText = useCopyText();
     const [form] = Form.useForm<AssetFormValues>();
     const coverInputRef = useRef<HTMLInputElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const assetInputRef = useRef<HTMLInputElement>(null);
     const userId = useUserStore((state) => state.user?.id || "");
-    const hydrated = useAssetStore((state) => state.hydrated);
-    const hydratedUserId = useAssetStore((state) => state.hydratedUserId);
-    const hydrate = useAssetStore((state) => state.hydrate);
-    const assets = useAssetStore((state) => state.assets);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
@@ -73,31 +75,8 @@ export default function AssetsPage() {
     const title = Form.useWatch("title", form) || "";
     const tags = Form.useWatch("tags", form) || [];
     const content = Form.useWatch("content", form) || "";
-    const validAssets = useMemo(() => assets.filter((asset) => asset.kind === "text" || asset.kind === "image" || asset.kind === "video" || asset.kind === "audio"), [assets]);
-    const ready = Boolean(userId && hydrated && hydratedUserId === userId);
-
-    useEffect(() => {
-        if (userId) void hydrate();
-    }, [hydrate, userId]);
-
-    const filteredAssets = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return validAssets.filter((asset) => {
-            if (kindFilter !== "all" && asset.kind !== kindFilter) return false;
-            if (!query) return true;
-            return assetSearchText(asset).includes(query);
-        });
-    }, [validAssets, keyword, kindFilter]);
-
-    const visibleAssets = useMemo(() => {
-        const start = (page - 1) * pageSize;
-        return filteredAssets.slice(start, start + pageSize);
-    }, [filteredAssets, page, pageSize]);
-
-    useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(filteredAssets.length / pageSize));
-        setPage((value) => Math.min(value, maxPage));
-    }, [filteredAssets.length, pageSize]);
+    const { assets, total, loading, error, reload } = useAssetPage({ userId, page, pageSize, kind: kindFilter, keyword });
+    const ready = Boolean(userId);
 
     const openCreate = () => {
         setEditingAsset(null);
@@ -128,7 +107,8 @@ export default function AssetsPage() {
         try {
             const values = await form.validateFields();
             let nextCover = values.coverUrl?.trim() || (values.kind === "image" && mediaDraft && "dataUrl" in mediaDraft ? mediaDraft.dataUrl : "");
-            if (nextCover && !nextCover.startsWith("/api/reference-assets/")) nextCover = (await uploadImage(nextCover)).url;
+            if (nextCover && !isPermanentServerMedia(undefined, nextCover)) nextCover = (await uploadImage(nextCover)).url;
+            else nextCover = serverMediaUrl(undefined, nextCover);
             const base = {
                 title: values.title.trim(),
                 coverUrl: nextCover,
@@ -149,6 +129,7 @@ export default function AssetsPage() {
 
             message.success(editingAsset ? "素材已更新" : "素材已保存");
             setIsAssetOpen(false);
+            reload();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材保存失败");
         } finally {
@@ -217,17 +198,23 @@ export default function AssetsPage() {
 
     const downloadImage = (asset: Asset) => {
         if (asset.kind === "text") return;
-        const url = asset.kind === "image" ? originalImageDownloadUrl(asset.data.dataUrl) : asset.data.url;
-        const extension = asset.kind === "image" ? originalImageExtension(asset.data.dataUrl) : asset.data.mimeType.split("/")[1] || (asset.kind === "audio" ? "mp3" : "mp4");
-        saveAs(url, `${asset.title || "asset"}.${extension}`);
+        const url = asset.kind === "image" ? originalImageDownloadUrl(asset.data.dataUrl) : originalMediaDownloadUrl(asset.data.url);
+        const mediaUrl = asset.kind === "image" ? asset.data.dataUrl : asset.data.url;
+        const media = asset.data;
+        saveAs(url, mediaDownloadFileName(asset.id, media.mimeType, media.storageKey || media.serverUrl || mediaUrl));
     };
 
     const exportAllAssets = async () => {
-        if (!validAssets.length) {
-            message.warning("暂无素材可导出");
-            return;
+        try {
+            const exportable = await listAllLibraryAssets();
+            if (!exportable.length) {
+                message.warning("暂无素材可导出");
+                return;
+            }
+            await exportAssets(exportable);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "素材导出失败");
         }
-        await exportAssets(validAssets);
     };
 
     const importAssetZip = async (file?: File) => {
@@ -245,6 +232,7 @@ export default function AssetsPage() {
                 }),
             );
             message.success(`已导入 ${importedAssets.length} 个素材`);
+            reload();
         } catch {
             message.error("导入失败，请选择有效的素材压缩包");
         } finally {
@@ -260,6 +248,8 @@ export default function AssetsPage() {
             await removeAsset(deletingAsset.id);
             message.success("素材已删除");
             setDeletingAsset(null);
+            if (assets.length === 1 && page > 1) setPage((value) => Math.max(1, value - 1));
+            else reload();
         } catch (error) {
             message.error(error instanceof Error ? error.message : "素材删除失败");
         } finally {
@@ -345,19 +335,41 @@ export default function AssetsPage() {
                 </div>
 
                 <div className="mx-auto flex max-w-7xl flex-col gap-1.5 sm:gap-5">
-                    <div className="grid gap-1.5 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4">
-                        {visibleAssets.map((asset) => (
-                            <AssetCard key={asset.id} asset={asset} onOpen={() => setPreviewAsset(asset)} onEdit={() => openEdit(asset)} onCopy={copyAssetText} onDownload={downloadImage} onDelete={() => setDeletingAsset(asset)} />
+                    <div className={cn("grid gap-1.5 transition-opacity sm:grid-cols-2 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4", loading && assets.length && "opacity-60")} aria-busy={loading}>
+                        {assets.map((asset) => (
+                            <AssetCard
+                                key={asset.id}
+                                asset={asset}
+                                onOpen={() => setPreviewAsset(asset)}
+                                onEdit={() => openEdit(asset)}
+                                onCopy={copyAssetText}
+                                onDownload={downloadImage}
+                                onDelete={() => setDeletingAsset(asset)}
+                                onPublish={asset.kind === "text" ? undefined : () => router.push(`/works?sourceType=media&sourceId=${encodeURIComponent(asset.id)}`)}
+                            />
                         ))}
                     </div>
 
-                    {!visibleAssets.length ? <CompactEmptyState title="没有找到素材" description="调整筛选条件，或新增一条常用素材。" /> : null}
+                    {loading && !assets.length ? (
+                        <section className="flex min-h-32 items-center justify-center sm:min-h-56">
+                            <Spin description="正在加载素材" />
+                        </section>
+                    ) : error ? (
+                        <section className="flex min-h-32 flex-col items-center justify-center gap-3 border-y border-border px-4 text-center sm:min-h-56">
+                            <p className="text-sm text-stone-500 dark:text-stone-400">{error}</p>
+                            <Button size="small" onClick={reload}>
+                                重新加载
+                            </Button>
+                        </section>
+                    ) : !assets.length ? (
+                        <CompactEmptyState title="没有找到素材" description="调整筛选条件，或新增一条常用素材。" />
+                    ) : null}
 
                     <div className="flex justify-center">
                         <Pagination
                             current={page}
                             pageSize={pageSize}
-                            total={filteredAssets.length}
+                            total={total}
                             showSizeChanger
                             pageSizeOptions={[10, 20, 50, 100]}
                             onChange={(nextPage, nextPageSize) => {

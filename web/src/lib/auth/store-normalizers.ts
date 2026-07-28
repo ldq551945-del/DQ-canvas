@@ -1,5 +1,6 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
+import { formatAccountId, parseAccountId } from "@/lib/account-id";
 import { decryptSecretValue, encryptSecretValue, isEncryptedSecretValue } from "@/lib/server/secret-crypto";
 import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image";
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
@@ -75,23 +76,37 @@ import {
     DEFAULT_ENTITLEMENT_SETTINGS,
     DEFAULT_SETTINGS,
     AUTH_DATA_FILE,
-    USERNAME_PATTERN,
 } from "./store-foundation";
+import { currentQuotaDate, hashToken, normalizeEmail, normalizeUserBio } from "./store-auth-utils";
+
+export { currentQuotaDate, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, normalizeUsername, parseSessionCookie, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-auth-utils";
 
 export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
     const settings = normalizeSettings(decryptAuthSettingsSecrets({ ...DEFAULT_SETTINGS, ...(db.settings || {}) } as AuthSettings));
+    const usedAccountIds = new Set<number>();
+    let nextGeneratedAccountId = 1;
+    const users = Array.isArray(db.users)
+        ? db.users.map((user) => {
+              const legacyUser = user as Partial<StoredUser> & { quota?: Partial<LegacyUserQuota> };
+              const requestedAccountId = parseAccountId(legacyUser.accountId);
+              while (usedAccountIds.has(nextGeneratedAccountId)) nextGeneratedAccountId += 1;
+              const accountId = requestedAccountId && !usedAccountIds.has(requestedAccountId) ? requestedAccountId : nextGeneratedAccountId;
+              usedAccountIds.add(accountId);
+              nextGeneratedAccountId = Math.max(nextGeneratedAccountId, accountId + 1);
+              return {
+                  ...user,
+                  accountId: formatAccountId(accountId),
+                  bio: normalizeUserBio(legacyUser.bio),
+                  planId: resolvePlanById(settings.entitlements, user.planId).id,
+                  pointsBalance: normalizePoints(legacyUser.pointsBalance, legacyQuotaToPoints(legacyUser.quota, resolveInitialUserPoints({ settings } as AuthDatabase, resolvePlanById(settings.entitlements, user.planId)))),
+              } as StoredUser;
+          })
+        : [];
+    const configuredNextAccountId = parseAccountId(db.nextUserAccountId) || 1;
     return pruneExpiredSessions({
         version: 1,
-        users: Array.isArray(db.users)
-            ? db.users.map((user) => {
-                  const legacyUser = user as Partial<StoredUser> & { quota?: Partial<LegacyUserQuota> };
-                  return {
-                      ...user,
-                      planId: resolvePlanById(settings.entitlements, user.planId).id,
-                      pointsBalance: normalizePoints(legacyUser.pointsBalance, legacyQuotaToPoints(legacyUser.quota, resolveInitialUserPoints({ settings } as AuthDatabase, resolvePlanById(settings.entitlements, user.planId)))),
-                  } as StoredUser;
-              })
-            : [],
+        nextUserAccountId: Math.max(configuredNextAccountId, nextGeneratedAccountId),
+        users,
         sessions: Array.isArray(db.sessions) ? db.sessions : [],
         quotaUsage: Array.isArray(db.quotaUsage) ? db.quotaUsage.map(normalizeQuotaUsage).filter((usage) => usage.userId) : [],
         pointRecords: Array.isArray((db as Partial<AuthDatabase>).pointRecords) ? ((db as Partial<AuthDatabase>).pointRecords || []).map(normalizePointRecord).filter((item) => item.userId) : [],
@@ -109,7 +124,7 @@ export function normalizeDb(db: Partial<AuthDatabase>): AuthDatabase {
 }
 
 export function emptyDb(): AuthDatabase {
-    return { version: 1, users: [], sessions: [], quotaUsage: [], pointRecords: [], dailyPlanPointWallets: [], emailCodes: [], cdkCodes: [], announcements: [], settings: DEFAULT_SETTINGS };
+    return { version: 1, nextUserAccountId: 1, users: [], sessions: [], quotaUsage: [], pointRecords: [], dailyPlanPointWallets: [], emailCodes: [], cdkCodes: [], announcements: [], settings: DEFAULT_SETTINGS };
 }
 
 export function encryptAuthDbSecretsForStorage(db: AuthDatabase): AuthDatabase {
@@ -219,18 +234,6 @@ export function dailyUsageLimitLabel(usageKind: PointUsageKind) {
 
 export function countActiveAdmins(db: AuthDatabase, excludingUserId?: string) {
     return db.users.filter((user) => user.id !== excludingUserId && user.role === "admin" && user.status === "active").length;
-}
-
-export function normalizeUsername(value: string) {
-    return value.trim();
-}
-
-export function normalizeEmail(value: unknown) {
-    return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-export function normalizeDisplayName(value: string) {
-    return value.trim().slice(0, 40);
 }
 
 export function normalizeSettings(settings: AuthSettings): AuthSettings {
@@ -588,6 +591,9 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
     const protocol = ["auto", "openai", "sub2api", "qingyan", "globalaiopc", "seedance", "compatible"].includes(config.protocol || "") ? config.protocol! : "auto";
     const globalAiOpcPresets = Array.from(new Set((Array.isArray(config.globalAiOpcPresets) ? config.globalAiOpcPresets : []).filter(isGlobalAiOpcPreset)));
     const legacyGlobalAiOpcPreset = isGlobalAiOpcPreset(config.globalAiOpcPreset) ? config.globalAiOpcPreset : undefined;
+    const modelCapabilities = normalizeChannelModelCapabilities(config.modelCapabilities);
+    const modelConfigs = normalizeChannelModelConfigs(config.modelConfigs);
+    const modelCatalogPaths = Array.from(new Set((Array.isArray(config.modelCatalogPaths) ? config.modelCatalogPaths : []).map(normalizeApiPath).filter(Boolean))).slice(0, 12);
     return {
         protocol,
         ...(globalAiOpcPresets.length
@@ -608,7 +614,66 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
         supportsReferenceImage: Boolean(config.supportsReferenceImage),
         supportsReferenceVideo: Boolean(config.supportsReferenceVideo),
         supportsReferenceAudio: Boolean(config.supportsReferenceAudio),
+        ...(modelCatalogPaths.length ? { modelCatalogPaths } : {}),
+        ...(Object.keys(modelCapabilities).length ? { modelCapabilities } : {}),
+        ...(Object.keys(modelConfigs).length ? { modelConfigs } : {}),
     };
+}
+
+function normalizeChannelModelCapabilities(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {} as NonNullable<SystemChannelAdvancedConfig["modelCapabilities"]>;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).flatMap(([model, capability]) => {
+            const key = normalizeChannelModelKey(model);
+            return key && isModelCapability(capability) ? [[key, capability] as const] : [];
+        }),
+    ) as NonNullable<SystemChannelAdvancedConfig["modelCapabilities"]>;
+}
+
+function normalizeChannelModelConfigs(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {} as NonNullable<SystemChannelAdvancedConfig["modelConfigs"]>;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).flatMap(([model, raw]) => {
+            const key = normalizeChannelModelKey(model);
+            if (!key || !raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+            const config = raw as Record<string, unknown>;
+            if (!isModelCapability(config.capability)) return [];
+            const protocol = ["auto", "openai", "sub2api", "qingyan", "globalaiopc", "seedance", "compatible"].includes(String(config.protocol || "")) ? (config.protocol as SystemChannelProtocol) : undefined;
+            return [
+                [
+                    key,
+                    {
+                        capability: config.capability,
+                        ...(["manual", "provider", "official", "health"].includes(String(config.source || "")) ? { source: config.source as "manual" | "provider" | "official" | "health" } : {}),
+                        ...(config.apiFormat === "openai" || config.apiFormat === "gemini" ? { apiFormat: config.apiFormat } : {}),
+                        ...(protocol ? { protocol } : {}),
+                        ...(normalizeApiPath(config.createPath) ? { createPath: normalizeApiPath(config.createPath) } : {}),
+                        ...(normalizeApiPath(config.queryPath) ? { queryPath: normalizeApiPath(config.queryPath) } : {}),
+                        ...(textOrEmpty(config.requestTemplate, 4000) ? { requestTemplate: textOrEmpty(config.requestTemplate, 4000) } : {}),
+                        ...(textOrEmpty(config.resultField, 500) ? { resultField: textOrEmpty(config.resultField, 500) } : {}),
+                        ...(textOrEmpty(config.statusField, 500) ? { statusField: textOrEmpty(config.statusField, 500) } : {}),
+                        ...(textOrEmpty(config.durationRange, 120) ? { durationRange: textOrEmpty(config.durationRange, 120) } : {}),
+                        ...(textOrEmpty(config.referenceRule, 1000) ? { referenceRule: textOrEmpty(config.referenceRule, 1000) } : {}),
+                        ...(typeof config.supportsReferenceImage === "boolean" ? { supportsReferenceImage: config.supportsReferenceImage } : {}),
+                        ...(typeof config.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: config.supportsReferenceVideo } : {}),
+                        ...(typeof config.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: config.supportsReferenceAudio } : {}),
+                    },
+                ] as const,
+            ];
+        }),
+    ) as NonNullable<SystemChannelAdvancedConfig["modelConfigs"]>;
+}
+
+function normalizeChannelModelKey(value: string) {
+    return value
+        .trim()
+        .replace(/^models\//i, "")
+        .toLowerCase()
+        .slice(0, 200);
+}
+
+function isModelCapability(value: unknown): value is LogicalModelCapability {
+    return value === "text" || value === "image" || value === "video" || value === "audio";
 }
 
 export function normalizeApiPath(value: unknown) {
@@ -697,7 +762,7 @@ export function normalizeQuotaUsage(value: Partial<StoredQuotaUsage>): StoredQuo
     };
 }
 
-export function toPublicCdkCode(code: StoredCdkCode, db?: { users: Array<Pick<StoredUser, "id" | "username" | "displayName">> }, options?: { includePlain?: boolean }): PublicCdkCode {
+export function toPublicCdkCode(code: StoredCdkCode, db?: { users: Array<Pick<StoredUser, "id" | "username" | "displayName"> & Partial<Pick<StoredUser, "accountId">>> }, options?: { includePlain?: boolean }): PublicCdkCode {
     return {
         id: code.id,
         codePreview: code.codePreview,
@@ -709,6 +774,7 @@ export function toPublicCdkCode(code: StoredCdkCode, db?: { users: Array<Pick<St
             const user = db?.users.find((item) => item.id === redemption.userId);
             return {
                 userId: redemption.userId,
+                accountId: user?.accountId,
                 username: user?.username || "已删除用户",
                 displayName: user?.displayName || user?.username || "已删除用户",
                 redeemedAt: redemption.redeemedAt,
@@ -908,36 +974,4 @@ export function consumeEmailCode(db: AuthDatabase, input: { purpose: EmailCodePu
     }
     if (item.codeHash !== hashToken(code)) throw new EmailCodeAttemptError("邮箱验证码不正确或已过期");
     item.consumedAt = new Date().toISOString();
-}
-
-export function currentQuotaDate() {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai" }).format(new Date());
-}
-
-export function validateUsername(username: string) {
-    if (!USERNAME_PATTERN.test(username)) throw new AuthInputError("用户名只能使用 3-32 位字母、数字、下划线、点或短横线");
-}
-
-export function validateEmail(email: string) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 160) throw new AuthInputError("邮箱格式不正确");
-}
-
-export function validatePassword(password: string) {
-    if (password.length < 8) throw new AuthInputError("密码至少需要 8 位");
-    if (password.length > 128) throw new AuthInputError("密码不能超过 128 位");
-}
-
-export function parseSessionCookie(cookieValue: string | undefined) {
-    if (!cookieValue) return null;
-    const separatorIndex = cookieValue.indexOf(".");
-    if (separatorIndex < 0) return null;
-    return { id: cookieValue.slice(0, separatorIndex), token: cookieValue.slice(separatorIndex + 1) };
-}
-
-export function hashToken(token: string) {
-    return createHash("sha256").update(token).digest("hex");
-}
-
-export function randomNumericCode() {
-    return String(randomBytes(4).readUInt32BE(0) % 1_000_000).padStart(6, "0");
 }

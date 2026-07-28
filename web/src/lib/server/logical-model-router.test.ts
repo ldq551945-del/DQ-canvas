@@ -55,7 +55,7 @@ describe("resolveLogicalModel", () => {
                     enabled: true,
                     bindings: [
                         { id: "low", channelId: "low", upstreamModel: "video-low", enabled: true, priority: 1, weight: 10 },
-                        { id: "high", channelId: "high", upstreamModel: "video-high", enabled: true, priority: 1, weight: 100, capabilityProfile: { supportsReferenceImage: true, maxReferenceImages: 2, maxDurationSeconds: 10 } },
+                        { id: "high", channelId: "high", upstreamModel: "video-high", enabled: true, priority: 1, weight: 100, capabilityProfile: { supportsReferenceImage: true, maxReferenceImages: 2, maxDurationSeconds: 10, timeoutMs: 12 * 60_000 } },
                     ],
                 },
             ],
@@ -63,7 +63,7 @@ describe("resolveLogicalModel", () => {
 
         const candidates = resolveLogicalModelCandidates(settings, "video", "video");
         expect(candidates.map((item) => item.channelId)).toEqual(["high", "low"]);
-        expect(candidates[0].capabilityProfile).toMatchObject({ supportsReferenceImage: true, maxReferenceImages: 2, maxDurationSeconds: 10 });
+        expect(candidates[0].capabilityProfile).toMatchObject({ supportsReferenceImage: true, maxReferenceImages: 2, maxDurationSeconds: 10, timeoutMs: 12 * 60_000 });
     });
 
     it("does not route a logical model through a binding missing from the channel model list", () => {
@@ -83,14 +83,18 @@ describe("resolveLogicalModel", () => {
         expect(resolveLogicalModel(settings, "text", "writer")).toMatchObject({ logicalModelId: "writer", upstreamModel: "vendor/writer-v2" });
     });
 
-    it("does not route Stable Diffusion image models as video models", () => {
+    it("routes SD2.0 as video while keeping full Stable Diffusion names on image", () => {
         const settings = {
-            systemChannels: [channel("primary", ["sd2"])],
-            logicalModels: [{ id: "sd2", name: "Stable Diffusion", capability: "video" as const, enabled: true, bindings: [{ id: "one", channelId: "primary", upstreamModel: "sd2", enabled: true, priority: 1 }] }],
+            systemChannels: [channel("primary", ["sd2.0", "stable-diffusion-2.0"])],
+            logicalModels: [
+                { id: "sd2.0", name: "Seedance 2.0", capability: "video" as const, enabled: true, bindings: [{ id: "one", channelId: "primary", upstreamModel: "sd2.0", enabled: true, priority: 1 }] },
+                { id: "stable-diffusion-2.0", name: "Stable Diffusion 2.0", capability: "image" as const, enabled: true, bindings: [{ id: "two", channelId: "primary", upstreamModel: "stable-diffusion-2.0", enabled: true, priority: 1 }] },
+            ],
         };
 
-        expect(resolveLogicalModel(settings, "video", "sd2")).toBeNull();
-        expect(resolveLogicalModel(settings, "image", "sd2")).toBeNull();
+        expect(resolveLogicalModel(settings, "video", "sd2.0")?.upstreamModel).toBe("sd2.0");
+        expect(resolveLogicalModel(settings, "image", "stable-diffusion-2.0")?.upstreamModel).toBe("stable-diffusion-2.0");
+        expect(resolveLogicalModel(settings, "image", "sd2.0")).toBeNull();
     });
 
     it("uses the logical model id as the billing key for its bound upstream model", () => {

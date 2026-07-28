@@ -22,6 +22,7 @@ export type WorkbenchAgentMessage = {
     sequence?: number;
     role: "user" | "assistant" | "warning" | "error";
     text: string;
+    attachments?: WorkbenchAgentAttachment[];
     progress?: WorkbenchAgentProgress;
     choices?: WorkbenchAgentChoice[];
 };
@@ -88,10 +89,11 @@ export function createWorkbenchAgentProgressMessage(id: string, hasReferences: b
     };
 }
 
-export function appendWorkbenchAgentRequest(messages: WorkbenchAgentMessage[], text: string, progress: WorkbenchAgentMessage): WorkbenchAgentMessage[] {
+export function appendWorkbenchAgentRequest(messages: WorkbenchAgentMessage[], text: string, attachments: WorkbenchAgentAttachment[], progress: WorkbenchAgentMessage): WorkbenchAgentMessage[] {
     const normalized = text.trim();
     const lastUserMessage = messages.findLast((message) => message.role === "user");
-    const next = lastUserMessage?.text.trim() === normalized ? messages : [...messages, { id: `${progress.id}-user`, role: "user" as const, text: normalized }];
+    const duplicate = lastUserMessage?.text.trim() === normalized && workbenchAgentAttachmentSignature(lastUserMessage.attachments) === workbenchAgentAttachmentSignature(attachments);
+    const next = duplicate ? messages : [...messages, { id: `${progress.id}-user`, role: "user" as const, text: normalized, ...(attachments.length ? { attachments } : {}) }];
     return [...next, progress];
 }
 
@@ -117,3 +119,4 @@ export function applyWorkbenchAgentPlan(messages: WorkbenchAgentMessage[], id: s
 export function updateWorkbenchAgentResponse(messages: WorkbenchAgentMessage[], id: string, text: string, role: "assistant" | "warning" | "error" = "assistant"): WorkbenchAgentMessage[] {
     return messages.map((message) => (message.id === id ? { ...message, role, text, progress: undefined, choices: undefined } : message));
 }
+import { workbenchAgentAttachmentSignature, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";

@@ -1,5 +1,22 @@
 export type PaymentProviderId = "stripe" | "alipay" | "wechat" | "payply" | "manual";
 
+export const ALIPAY_PAYMENT_MODES = ["official", "face_to_face"] as const;
+export type AlipayPaymentMode = (typeof ALIPAY_PAYMENT_MODES)[number];
+export const DEFAULT_ALIPAY_PAYMENT_MODE: AlipayPaymentMode = "official";
+
+const ALIPAY_PAYMENT_MODE_PRESENTATIONS: Record<AlipayPaymentMode, { description: string; checkoutKind: string }> = {
+    official: { description: "支付宝官方电脑网站支付，创建订单后跳转支付宝收银台。", checkoutKind: "官方支付表单" },
+    face_to_face: { description: "支付宝当面付，创建订单后向用户展示扫码二维码。", checkoutKind: "当面付二维码" },
+};
+
+export function isAlipayPaymentMode(value: unknown): value is AlipayPaymentMode {
+    return typeof value === "string" && ALIPAY_PAYMENT_MODES.includes(value as AlipayPaymentMode);
+}
+
+export function getAlipayPaymentModePresentation(value: unknown) {
+    return isAlipayPaymentMode(value) ? ALIPAY_PAYMENT_MODE_PRESENTATIONS[value] : undefined;
+}
+
 type PaymentConfigFieldKind = "text" | "url" | "secret" | "textarea" | "select";
 
 export type PaymentProviderConfigField = {
@@ -13,6 +30,7 @@ export type PaymentProviderConfigField = {
     advanced?: boolean;
     placeholder?: string;
     note?: string;
+    defaultValue?: string;
     options?: Array<{ label: string; value: string }>;
 };
 
@@ -90,11 +108,24 @@ export const PAYMENT_PROVIDER_DEFINITIONS: PaymentProviderDefinition[] = [
     {
         id: "alipay",
         name: "支付宝",
-        description: "适合支付宝电脑网站支付，返回自动提交表单或支付链接。",
-        checkoutKind: "电脑网站支付表单",
-        checkoutFieldKeys: ["appId", "privateKey"],
+        description: "支持支付宝官方支付与当面付，两种接入方式只能选择一种。",
+        checkoutKind: "官方支付 / 当面付",
+        checkoutFieldKeys: ["mode", "appId", "privateKey"],
         webhookFieldKeys: ["appId", "publicKey"],
         fields: [
+            {
+                key: "mode",
+                label: "接入方式",
+                kind: "select",
+                required: true,
+                defaultValue: DEFAULT_ALIPAY_PAYMENT_MODE,
+                envNames: ["VOZEB_PRO_ALIPAY_MODE"],
+                options: [
+                    { label: "官方支付", value: "official" },
+                    { label: "当面付", value: "face_to_face" },
+                ],
+                note: "官方支付跳转支付宝电脑网站；当面付生成支付宝扫码二维码。保存时只会启用当前选择的一种方式。",
+            },
             { key: "appId", label: "应用 App ID", kind: "text", required: true, envNames: ["VOZEB_PRO_ALIPAY_APP_ID"], placeholder: "2026..." },
             {
                 key: "privateKey",

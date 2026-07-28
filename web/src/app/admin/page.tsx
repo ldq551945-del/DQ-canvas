@@ -34,9 +34,11 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
         <AuthUserHydrator
             user={{
                 id: currentUser.id,
+                accountId: currentUser.accountId,
                 username: currentUser.username,
                 email: currentUser.email,
                 displayName: currentUser.displayName,
+                bio: currentUser.bio,
                 role: currentUser.role,
                 status: currentUser.status,
                 planId: currentUser.planId,

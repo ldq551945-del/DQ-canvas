@@ -196,6 +196,7 @@ describe("split Postgres repositories", () => {
         expect(page).toMatchObject({ total: 41, page: 3, pageSize: 20, items: [{ id: "admin-one" }] });
         expect(details[0]).toMatchObject({ planId: "pro", planName: "专业版", permanentPoints: 40, dailyPoints: 12 });
         expect(queryArgs(query, 0)[0]).toContain("CASE WHEN role = 'admin' THEN '管理员'");
+        expect(queryArgs(query, 0)[0]).toContain("lpad(account_id::text, 4, '0') LIKE $2");
         expect(queryArgs(query, 0)[1]).toEqual(["管理员", "%管理员%", "admin", "active"]);
         expect(queryArgs(query, 1)[1]).toEqual(["管理员", "%管理员%", "admin", "active", 20, 40]);
         expect(queryArgs(query, 2)[0]).toContain("users.id = ANY($1::text[])");
@@ -232,7 +233,7 @@ describe("split Postgres repositories", () => {
                     note: "测试",
                     created_at: timestamp,
                     updated_at: timestamp,
-                    redemptions: [{ cdk_code_id: "cdk-one", user_id: "user-one", redeemed_at: timestamp, username: "user-one", display_name: "用户一" }],
+                    redemptions: [{ cdk_code_id: "cdk-one", user_id: "user-one", redeemed_at: timestamp, account_id: 1, username: "user-one", display_name: "用户一" }],
                 },
             ],
         ]);
@@ -240,10 +241,12 @@ describe("split Postgres repositories", () => {
         const page = await createPostgresRepositories(executor).cdk.list({ page: 9, pageSize: 20, keyword: "user", codeHash: "hash-user", filter: "redeemed" });
 
         expect(page).toMatchObject({ total: 4, page: 1, pageSize: 20, stats: { total: 8, redeemed: 3, unused: 4, expired: 1 } });
-        expect(page.items[0].redemptions[0]).toMatchObject({ userId: "user-one", username: "user-one" });
+        expect(page.items[0].redemptions[0]).toMatchObject({ userId: "user-one", accountId: "0001", username: "user-one" });
         expect(query).toHaveBeenCalledTimes(3);
         expect([0, 1, 2].map((index) => String(queryArgs(query, index)[0]))).toEqual([expect.stringContaining("count(*) AS total"), expect.stringContaining("count(*) FILTER"), expect.stringContaining("LIMIT $5 OFFSET $6")]);
         expect(String(queryArgs(query, 2)[0])).not.toContain("FROM cdk_redemptions ORDER BY");
+        expect(String(queryArgs(query, 2)[0])).toContain("lpad(search_users.account_id::text, 4, '0') LIKE $2");
+        expect(String(queryArgs(query, 2)[0])).toContain("'account_id', users.account_id");
     });
 
     it("preserves a negative permanent balance in the authenticated wallet", async () => {
@@ -647,7 +650,7 @@ describe("split Postgres repositories", () => {
         expect(query).toHaveBeenCalledTimes(1);
         const [statement, params] = queryArgs(query, 0);
         expect(String(statement)).toContain("LIMIT 4");
-        expect(String(statement)).toContain("LIMIT 8");
+        expect(String(statement)).toContain("LIMIT 6");
         expect(String(statement)).not.toMatch(/SELECT\s+\*|\bprompt\b|\berror\b/i);
         expect(params).toEqual(["user-one"]);
     });

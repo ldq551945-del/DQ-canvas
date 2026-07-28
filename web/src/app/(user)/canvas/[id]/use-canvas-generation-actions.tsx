@@ -1,13 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { nanoid } from "nanoid";
 import { useCallback, useEffect } from "react";
 
+import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
 import { readImageMeta } from "@/lib/image-utils";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { createTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
-import { nanoid } from "nanoid";
 import type { InsertAssetPayload } from "../components/asset-picker-modal";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "../components/canvas-agent-panel-motion";
 import { buildNodeGenerationContext, buildNodeResponseMessages, hydrateNodeGenerationContext } from "../components/canvas-node-generation";
@@ -483,8 +484,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         conversationId: currentProject?.creativeConversationId,
                         surface: "canvas",
                         projectId,
-                        attemptNo: 1,
-                        clientRequestId: `canvas-video-retry:${projectId}:${node.id}:${Date.now()}`,
+                        ...createFreshGenerationTaskContext("canvas-video-retry", [projectId, node.id]),
                     });
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoTask: task } } : item)));
                     await completeVideoTask(node.id, generationConfig, task, controller, prompt);

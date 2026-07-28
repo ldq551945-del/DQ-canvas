@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { CanvasProject } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
+import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import type { DramaProject, DramaProjectSummary } from "@/lib/drama-project-contract";
 import { summarizeDramaProject } from "@/lib/drama-project-summary";
 import type { Asset } from "@/lib/library-asset-contract";
@@ -12,7 +13,8 @@ const mocks = vi.hoisted(() => ({
     deleteAsset: vi.fn(),
     uploadImage: vi.fn(),
     uploadMediaFile: vi.fn(),
-    listCanvasProjects: vi.fn(),
+    listCanvasProjectSummaries: vi.fn(),
+    getCanvasProject: vi.fn(),
     createCanvasProject: vi.fn(),
     saveCanvasProject: vi.fn(),
     deleteCanvasProjects: vi.fn(),
@@ -35,7 +37,8 @@ vi.mock("@/services/api/library-assets", () => ({
 vi.mock("@/services/image-storage", () => ({ uploadImage: mocks.uploadImage }));
 vi.mock("@/services/file-storage", () => ({ uploadMediaFile: mocks.uploadMediaFile }));
 vi.mock("@/services/api/canvas-projects", () => ({
-    listCanvasProjects: mocks.listCanvasProjects,
+    listCanvasProjectSummaries: mocks.listCanvasProjectSummaries,
+    getCanvasProject: mocks.getCanvasProject,
     createCanvasProject: mocks.createCanvasProject,
     saveCanvasProject: mocks.saveCanvasProject,
     deleteCanvasProjects: mocks.deleteCanvasProjects,
@@ -84,9 +87,9 @@ describe("client store session isolation", () => {
     });
 
     it("reloads Canvas projects for the new user after a reset", async () => {
-        const oldRequest = deferred<CanvasProject[]>();
-        const freshProjects = [canvasProject("canvas-b", "用户 B 画布")];
-        mocks.listCanvasProjects.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce(freshProjects);
+        const oldRequest = deferred<CanvasProjectSummary[]>();
+        const freshProjects = [summarizeCanvasProjectRecord(canvasProject("canvas-b", "用户 B 画布"))];
+        mocks.listCanvasProjectSummaries.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce(freshProjects);
 
         useUserStore.getState().setUser(user("user-a"));
         const oldHydrate = useCanvasStore.getState().hydrate();
@@ -94,17 +97,36 @@ describe("client store session isolation", () => {
         useUserStore.getState().setUser(user("user-b"));
         const freshHydrate = useCanvasStore.getState().hydrate();
 
-        oldRequest.resolve([canvasProject("canvas-a", "用户 A 画布")]);
+        oldRequest.resolve([summarizeCanvasProjectRecord(canvasProject("canvas-a", "用户 A 画布"))]);
         await Promise.all([oldHydrate, freshHydrate]);
 
-        expect(mocks.listCanvasProjects).toHaveBeenCalledTimes(2);
-        expect(useCanvasStore.getState().projects).toEqual(freshProjects);
+        expect(mocks.listCanvasProjectSummaries).toHaveBeenCalledTimes(2);
+        expect(useCanvasStore.getState().summaries).toEqual(freshProjects);
+        expect(useCanvasStore.getState().projects).toEqual([]);
+    });
+
+    it("loads only the requested Canvas detail and ignores a previous user's late response", async () => {
+        const oldRequest = deferred<CanvasProject>();
+        const freshProject = canvasProject("canvas-shared", "用户 B 画布");
+        mocks.getCanvasProject.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce(freshProject);
+
+        useUserStore.getState().setUser(user("user-a"));
+        const oldLoad = useCanvasStore.getState().loadProject("canvas-shared");
+        useCanvasStore.getState().reset();
+        useUserStore.getState().setUser(user("user-b"));
+        const freshLoad = useCanvasStore.getState().loadProject("canvas-shared");
+
+        oldRequest.resolve(canvasProject("canvas-shared", "用户 A 画布"));
+        await Promise.allSettled([oldLoad, freshLoad]);
+
+        expect(useCanvasStore.getState().projects).toEqual([freshProject]);
+        expect(useCanvasStore.getState().summaries).toEqual([summarizeCanvasProjectRecord(freshProject)]);
     });
 
     it("reloads Drama projects for the new user after a reset", async () => {
-        const oldRequest = deferred<DramaProjectSummary[]>();
+        const oldRequest = deferred<{ projects: DramaProjectSummary[]; total: number; page: number; pageSize: number }>();
         const freshProjects = [summarizeDramaProject(dramaProject("drama-b", "用户 B 短剧"))];
-        mocks.listDramaProjectSummaries.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce(freshProjects);
+        mocks.listDramaProjectSummaries.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce({ projects: freshProjects, total: 1, page: 1, pageSize: 12 });
 
         useUserStore.getState().setUser(user("user-a"));
         const oldHydrate = useDramaStore.getState().hydrate();
@@ -112,11 +134,27 @@ describe("client store session isolation", () => {
         useUserStore.getState().setUser(user("user-b"));
         const freshHydrate = useDramaStore.getState().hydrate();
 
-        oldRequest.resolve([summarizeDramaProject(dramaProject("drama-a", "用户 A 短剧"))]);
+        oldRequest.resolve({ projects: [summarizeDramaProject(dramaProject("drama-a", "用户 A 短剧"))], total: 1, page: 1, pageSize: 12 });
         await Promise.all([oldHydrate, freshHydrate]);
 
         expect(mocks.listDramaProjectSummaries).toHaveBeenCalledTimes(2);
         expect(useDramaStore.getState().summaries).toEqual(freshProjects);
+        expect(useDramaStore.getState().summaryTotal).toBe(1);
+    });
+
+    it("appends the next Drama summary page without reloading project details", async () => {
+        const first = summarizeDramaProject(dramaProject("drama-a", "短剧一"));
+        const second = summarizeDramaProject(dramaProject("drama-b", "短剧二"));
+        mocks.listDramaProjectSummaries.mockResolvedValueOnce({ projects: [first], total: 2, page: 1, pageSize: 1 }).mockResolvedValueOnce({ projects: [second], total: 2, page: 2, pageSize: 1 });
+        useUserStore.getState().setUser(user("user-a"));
+
+        await useDramaStore.getState().hydrate();
+        await useDramaStore.getState().loadMore();
+
+        expect(mocks.listDramaProjectSummaries).toHaveBeenNthCalledWith(1, { page: 1, pageSize: 12 });
+        expect(mocks.listDramaProjectSummaries).toHaveBeenNthCalledWith(2, { page: 2, pageSize: 1 });
+        expect(useDramaStore.getState()).toMatchObject({ summaries: [first, second], summaryTotal: 2, summaryPage: 2, summaryLoadingMore: false });
+        expect(mocks.getDramaProject).not.toHaveBeenCalled();
     });
 
     it("loads only the requested Drama project and ignores a previous user's late response", async () => {
@@ -259,9 +297,11 @@ function deferred<T>() {
 function user(id: string) {
     return {
         id,
+        accountId: id === "user-a" ? "0001" : "0002",
         username: id,
         email: `${id}@example.test`,
         displayName: id,
+        bio: "",
         role: "user" as const,
         status: "active" as const,
         planId: "free",

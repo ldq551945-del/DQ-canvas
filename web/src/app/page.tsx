@@ -7,8 +7,10 @@ import { ArrowRight, Camera, Clapperboard, Image as ImageIcon, Mail, Send, Shopp
 import { Button, Image, Modal } from "antd";
 
 import { AuthForm } from "@/components/auth/auth-form";
+import { SiteLogo } from "@/components/layout/site-logo";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { navigationTools } from "@/constant/navigation-tools";
+import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -70,7 +72,7 @@ const defaultSite: {
     homeShowcaseItems: [],
     friendLinks: [
         { id: "vozeb-pro-home", label: "VOZEB PRO", url: "https://www.vozeb.com/", enabled: true },
-        { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: "https://qm.qq.com/q/9MVLTxuRd6", enabled: true },
+        { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: VOZEB_QQ_GROUP_URL, enabled: true },
         { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
     ],
     socials: {
@@ -88,9 +90,9 @@ const socialIconByKey: Record<SiteSocialKey, ReactNode> = {
     instagram: <Camera className="size-4" />,
 };
 
-const publicPrefetchRoutes = ["/login", "/register", "/forgot-password", "/privacy", "/terms"];
+const publicPrefetchRoutes = ["/gallery", "/login", "/register", "/forgot-password", "/privacy", "/terms"];
 const authenticatedPrefetchRoutes = navigationTools.map((tool) => `/${tool.slug}`);
-const landingNavTools = navigationTools.slice(0, 4);
+const landingNavTools = [{ slug: "gallery", label: "作品广场" }, ...navigationTools.slice(0, 3)];
 const heroWorkflowItems = ["选场景", "加参考", "写描述", "生成", "微调", "保存"];
 const heroValueItems = [
     { icon: <ShoppingBag className="size-4" />, label: "电商", tone: "commerce" },
@@ -339,7 +341,7 @@ export default function HomePage() {
                 <div className="landing-moon-scan" aria-hidden="true" />
                 <header className="landing-moon-header relative z-20 mx-auto flex h-20 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
                     <Link href="/" className="landing-moon-brand inline-flex min-w-0 items-center gap-3 text-stone-950 dark:text-white">
-                        <SiteLogo logoUrl={site.logoUrl} className="size-9 bg-stone-950 dark:bg-white" />
+                        <SiteLogo logoUrl={site.logoUrl} className="size-9" />
                         <span className="truncate text-lg font-semibold tracking-normal">{siteTitle}</span>
                     </Link>
                     <nav className="landing-moon-nav hidden items-center gap-1 md:flex" onPointerLeave={() => moveNavIndicator(0)}>
@@ -586,7 +588,7 @@ export default function HomePage() {
             <footer className="landing-footer relative z-10 overflow-hidden px-4 pb-10 sm:px-6">
                 <div className="landing-footer-shell mx-auto max-w-[1200px]">
                     <div className="landing-footer-brand min-w-0">
-                        <SiteLogo logoUrl={site.logoUrl} className="landing-footer-logo bg-stone-950 dark:bg-white" />
+                        <SiteLogo logoUrl={site.logoUrl} className="landing-footer-logo" />
                         <div className="landing-footer-brand-copy min-w-0">
                             <div className="landing-footer-title truncate text-base font-semibold text-stone-950 dark:text-white">{siteTitle}</div>
                             <div className="landing-footer-copyright mt-1 text-sm text-stone-500 dark:text-stone-400">{site.footerCopyright}</div>
@@ -633,7 +635,7 @@ export default function HomePage() {
                 <div className="landing-auth-modal-shell">
                     <section className="landing-auth-modal-brand">
                         <div className="inline-flex items-center gap-3 text-stone-950 dark:text-white">
-                            <SiteLogo logoUrl={site.logoUrl} className="landing-auth-brand-logo bg-stone-950 dark:bg-white" />
+                            <SiteLogo logoUrl={site.logoUrl} className="landing-auth-brand-logo" />
                             <span className="text-2xl font-semibold">{siteTitle}</span>
                         </div>
                         <div className="landing-auth-modal-copy">
@@ -722,17 +724,4 @@ function shouldSkipHomepagePrefetch() {
     const connection = nav.connection;
     if (connection?.saveData) return true;
     return /(^|-)2g$/i.test(connection?.effectiveType || "");
-}
-
-function SiteLogo({ logoUrl, className }: { logoUrl: string; className: string }) {
-    if (logoUrl && logoUrl !== "/logo.svg") return <img src={logoUrl} alt="" className={cn(className, "shrink-0 object-contain")} referrerPolicy="no-referrer" />;
-    return (
-        <span
-            className={cn(className, "shrink-0")}
-            style={{
-                mask: "url(/logo.svg) center / contain no-repeat",
-                WebkitMask: "url(/logo.svg) center / contain no-repeat",
-            }}
-        />
-    );
 }

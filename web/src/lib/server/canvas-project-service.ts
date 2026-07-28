@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import type { CanvasProject, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
-import { createCanvasProject, CanvasProjectStoreError, deleteCanvasProjects, getCanvasProject, listCanvasProjects, updateCanvasProject } from "@/lib/server/canvas-project-store";
+import { createCanvasProject, CanvasProjectStoreError, deleteCanvasProjects, getCanvasProject, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject } from "@/lib/server/canvas-project-store";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
@@ -18,7 +18,13 @@ export class CanvasProjectServiceError extends Error {
 }
 
 export function listCanvasProjectsForUser(userId: string) {
-    return listCanvasProjects(userId);
+    return listCanvasProjectSummaries(userId);
+}
+
+export async function getCanvasProjectForUser(userId: string, id: string) {
+    const project = await getCanvasProject(text(id, 160), userId);
+    if (!project) throw new CanvasProjectServiceError("画布项目不存在", 404);
+    return project;
 }
 
 export async function createCanvasProjectForUser(userId: string, value: unknown) {

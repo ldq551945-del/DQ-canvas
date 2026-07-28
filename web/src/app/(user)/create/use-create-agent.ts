@@ -22,11 +22,24 @@ import {
 } from "@/services/api/creative";
 import { getMaterializedCreativeProject, materializeCreativeProjectHandoff, type MaterializedCreativeProject } from "@/services/creative-project-handoff";
 
+type PendingCreateSubmission = {
+    clientRequestId: string;
+    generation: number;
+    conversationId?: string;
+    content: string;
+    assetIds: string[];
+    skillIds: string[];
+    modelIds: string[];
+    temporaryUserId: string;
+    temporaryAssistantId: string;
+};
+
 export function useCreateAgent() {
     const streamRef = useRef<(() => void) | null>(null);
     const conversationGenerationRef = useRef(0);
     const activeConversationRef = useRef<string | undefined>(undefined);
     const submittingRef = useRef(false);
+    const failedSubmissionsRef = useRef(new Map<string, PendingCreateSubmission>());
     const refreshRequestRef = useRef(0);
     const [conversations, setConversations] = useState<CreativeConversation[]>([]);
     const [messages, setMessages] = useState<CreativeMessage[]>([]);
@@ -140,6 +153,7 @@ export function useCreateAgent() {
         activeConversationRef.current = undefined;
         refreshRequestRef.current += 1;
         submittingRef.current = false;
+        failedSubmissionsRef.current.clear();
         setConversationId(undefined);
         setActiveRunId(undefined);
         setActiveRunStatus(undefined);
@@ -157,6 +171,7 @@ export function useCreateAgent() {
             activeConversationRef.current = id;
             setSending(false);
             submittingRef.current = false;
+            failedSubmissionsRef.current.clear();
             setActiveRunId(undefined);
             setConversationLoading(true);
             setConversationId(id);
@@ -280,6 +295,48 @@ export function useCreateAgent() {
             .catch(() => undefined);
     }, [conversationId, messages, sending, watchRun]);
 
+    const executeSubmission = useCallback(
+        async (snapshot: PendingCreateSubmission) => {
+            try {
+                const created = await createCreativeAgentRun({
+                    clientRequestId: snapshot.clientRequestId,
+                    surface: "chat",
+                    conversationId: snapshot.conversationId,
+                    prompt: snapshot.content,
+                    assetIds: snapshot.assetIds,
+                    skillIds: snapshot.skillIds,
+                    modelIds: snapshot.modelIds,
+                });
+                const run = created.run;
+                failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId);
+                if (snapshot.generation !== conversationGenerationRef.current) {
+                    submittingRef.current = false;
+                    return true;
+                }
+                activeConversationRef.current = run.conversationId;
+                setConversationId(run.conversationId);
+                setActiveRunId(run.id);
+                setMessages((current) =>
+                    current.map((item) => {
+                        if (item.id === snapshot.temporaryUserId) return { ...item, id: run.inputMessageId, conversationId: run.conversationId, runId: run.id };
+                        if (item.id === snapshot.temporaryAssistantId) return { ...item, id: run.assistantMessageId, conversationId: run.conversationId, runId: run.id };
+                        return item;
+                    }),
+                );
+                watchRun(run, run.assistantMessageId, snapshot.generation);
+                void refreshConversations();
+                return true;
+            } catch (error) {
+                failedSubmissionsRef.current.set(snapshot.temporaryAssistantId, snapshot);
+                updateAssistant(snapshot.temporaryAssistantId, error instanceof Error ? error.message : "创作请求失败", "failed");
+                setSending(false);
+                submittingRef.current = false;
+                return false;
+            }
+        },
+        [refreshConversations, updateAssistant, watchRun],
+    );
+
     const submit = useCallback(
         async (prompt: string, options?: { skillIds?: string[]; modelIds?: string[] }) => {
             const content = prompt.trim();
@@ -293,49 +350,40 @@ export function useCreateAgent() {
             const temporaryUserId = `message-${nanoid()}`;
             const temporaryAssistantId = `message-${nanoid()}`;
             const optimisticConversationId = conversationId || "pending";
+            const assetIds = selectedAssetIds.slice(-20);
+            const snapshot: PendingCreateSubmission = {
+                clientRequestId: `create-${nanoid()}`,
+                generation,
+                conversationId,
+                content,
+                assetIds,
+                skillIds: options?.skillIds || [],
+                modelIds: options?.modelIds || [],
+                temporaryUserId,
+                temporaryAssistantId,
+            };
             setMessages((current) => [
                 ...current,
-                { id: temporaryUserId, conversationId: optimisticConversationId, sequence, role: "user", status: "completed", content, metadata: {}, createdAt: now, updatedAt: now },
+                { id: temporaryUserId, conversationId: optimisticConversationId, sequence, role: "user", status: "completed", content, metadata: { assetIds }, createdAt: now, updatedAt: now },
                 { id: temporaryAssistantId, conversationId: optimisticConversationId, sequence: sequence + 1, role: "assistant", status: "running", content: "正在理解你的需求", metadata: {}, createdAt: now, updatedAt: now },
             ]);
-            const assetIds = selectedAssetIds.slice(-20);
-            try {
-                const created = await createCreativeAgentRun({
-                    clientRequestId: `create-${nanoid()}`,
-                    surface: "chat",
-                    conversationId,
-                    prompt: content,
-                    assetIds,
-                    skillIds: options?.skillIds || [],
-                    modelIds: options?.modelIds || [],
-                });
-                const run = created.run;
-                setSelectedAssetIds((current) => current.filter((id) => !assetIds.includes(id)));
-                if (generation !== conversationGenerationRef.current) {
-                    submittingRef.current = false;
-                    return true;
-                }
-                activeConversationRef.current = run.conversationId;
-                setConversationId(run.conversationId);
-                setActiveRunId(run.id);
-                setMessages((current) =>
-                    current.map((item) => {
-                        if (item.id === temporaryUserId) return { ...item, id: run.inputMessageId, conversationId: run.conversationId, runId: run.id };
-                        if (item.id === temporaryAssistantId) return { ...item, id: run.assistantMessageId, conversationId: run.conversationId, runId: run.id };
-                        return item;
-                    }),
-                );
-                watchRun(run, run.assistantMessageId, generation);
-                void refreshConversations();
-                return true;
-            } catch (error) {
-                updateAssistant(temporaryAssistantId, error instanceof Error ? error.message : "创作请求失败", "failed");
-                setSending(false);
-                submittingRef.current = false;
-                return false;
-            }
+            setSelectedAssetIds((current) => current.filter((id) => !assetIds.includes(id)));
+            return executeSubmission(snapshot);
         },
-        [conversationId, messages, refreshConversations, selectedAssetIds, sending, stopWatching, updateAssistant, watchRun],
+        [conversationId, executeSubmission, messages, selectedAssetIds, sending, stopWatching],
+    );
+
+    const retrySubmission = useCallback(
+        async (assistantMessageId: string) => {
+            const snapshot = failedSubmissionsRef.current.get(assistantMessageId);
+            if (!snapshot || sending || submittingRef.current || snapshot.generation !== conversationGenerationRef.current) return false;
+            submittingRef.current = true;
+            stopWatching();
+            setSending(true);
+            updateAssistant(assistantMessageId, "正在重新提交创作请求", "running");
+            return executeSubmission(snapshot);
+        },
+        [executeSubmission, sending, stopWatching, updateAssistant],
     );
 
     const cancel = useCallback(async () => {
@@ -411,6 +459,7 @@ export function useCreateAgent() {
         cancel,
         control,
         retryTask,
+        retrySubmission,
         openConversation,
         newConversation,
         renameConversation,
@@ -425,6 +474,7 @@ export function useCreateAgent() {
         uploading,
         uploadAttachments,
         removeAttachment: (id: string) => setSelectedAssetIds((current) => current.filter((item) => item !== id)),
+        restoreAttachments: (ids: string[]) => setSelectedAssetIds(Array.from(new Set(ids.filter((id) => assets.some((asset) => asset.id === id)))).slice(-20)),
     };
 }
 

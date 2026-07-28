@@ -19,4 +19,8 @@ describe("Canvas Agent 消息清理", () => {
     it("collapses legacy text-only completion messages to the actual result", () => {
         expect(formatAgentMessageText("已完成 1 个创作任务。\n\n「品牌口号」已完成：\n**声创未来**\n\n- 很长的解释")).toBe("声创未来");
     });
+
+    it("hides legacy per-task media completion lines", () => {
+        expect(formatAgentMessageText("已完成 3 个创作任务。\n\n「肖像版」已生成。\n\n「生活方式版」已生成。\n\n「电影感版」已生成。")).toBe("已完成 3 个创作任务。");
+    });
 });

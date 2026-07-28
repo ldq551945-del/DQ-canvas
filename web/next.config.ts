@@ -10,8 +10,9 @@ const webDir = dirname(fileURLToPath(import.meta.url));
 const localVersion = readFileSync(resolve(webDir, "../VERSION"), "utf8").trim() || "dev";
 const localChangelog = readFileSync(resolve(webDir, "../CHANGELOG.md"), "utf8");
 const buildCpus = Math.max(1, Number.parseInt(process.env.NEXT_BUILD_CPUS || "1", 10) || 1);
+const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 const nodeProxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy;
-const privatePageSource = "/:section(api|admin|assets|billing|canvas|create|drama|forgot-password|help|image|install|login|my-prompts|profile|prompts|register|video)/:path*";
+const privatePageSource = "/:section(api|admin|assets|billing|canvas|community|create|drama|forgot-password|help|image|install|login|my-prompts|profile|prompts|register|video|works)/:path*";
 if (nodeProxy) setGlobalDispatcher(new ProxyAgent(nodeProxy));
 
 export default function nextConfig(phase: string): NextConfig {
@@ -35,6 +36,7 @@ export default function nextConfig(phase: string): NextConfig {
     ].join("; ");
 
     return {
+        distDir,
         output: "standalone",
         allowedDevOrigins: isDev ? ["*.*.*.*"] : [],
         env: {
@@ -45,6 +47,13 @@ export default function nextConfig(phase: string): NextConfig {
             cpus: buildCpus,
             proxyClientMaxBodySize: "32mb",
             workerThreads: false,
+        },
+        async rewrites() {
+            return {
+                beforeFiles: [{ source: "/favicon.ico", destination: "/api/site-icon" }],
+                afterFiles: [],
+                fallback: [],
+            };
         },
         async headers() {
             return [

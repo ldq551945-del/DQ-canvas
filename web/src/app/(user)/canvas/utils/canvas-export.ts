@@ -5,10 +5,11 @@ import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import { APP_EXPORT_ID, collectStorageKeys } from "@/lib/storage-keys";
 import { exportFileExtension, safeExportFileName } from "@/lib/export-file";
+import { mediaDownloadFileName } from "@/lib/media-file";
 import type { CanvasExportAsset, CanvasExportFile } from "../export-types";
 import type { CanvasProject } from "../stores/use-canvas-store";
 
-export async function exportCanvasProjects(projects: CanvasProject[], fileName = "VOZEB PRO 画布") {
+export async function exportCanvasProjects(projects: CanvasProject[]) {
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const exportedProjects = await Promise.all(
         projects.map(async (project) => {
@@ -28,5 +29,5 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
 
     const data: CanvasExportFile = { app: APP_EXPORT_ID, version: 3, exportedAt: new Date().toISOString(), projects: exportedProjects };
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
-    saveAs(zip, `${safeExportFileName(fileName)}.zip`);
+    saveAs(zip, mediaDownloadFileName(projects.map((project) => project.id).join(":"), "application/zip"));
 }

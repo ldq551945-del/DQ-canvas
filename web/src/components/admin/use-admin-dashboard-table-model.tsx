@@ -69,6 +69,7 @@ import dayjs from "dayjs";
 import { nanoid } from "nanoid";
 
 import { formatCreditAmount } from "@/constant/credits";
+import { AdminAccountId, AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
 import type {
@@ -206,14 +207,14 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         {
             title: "用户",
             dataIndex: "displayName",
+            width: 230,
             render: (_, record) => (
                 <div className="min-w-0">
-                    <div className="flex items-center gap-2 font-medium text-stone-950 dark:text-stone-100">
-                        <UserRound className="size-4 text-stone-400" />
-                        <span className="truncate">{record.displayName}</span>
+                    <AdminUserIdentity displayName={record.displayName} username={record.username} avatarUrl={record.avatarUrl} />
+                    <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 sm:hidden">
+                        <AdminAccountId accountId={record.accountId} />
+                        <span className="truncate text-xs text-zinc-400">{record.email || "未绑定邮箱"}</span>
                     </div>
-                    <div className="mt-1 text-xs text-stone-500">@{record.username}</div>
-                    <div className="mt-0.5 truncate text-xs text-stone-400">{record.email || "未绑定邮箱"}</div>
                     <div className="mt-2 flex flex-wrap gap-1 sm:hidden">
                         <Tag color={record.role === "admin" ? "blue" : "default"}>{record.role === "admin" ? "管理员" : "普通用户"}</Tag>
                         <Tag color={record.status === "active" ? "green" : "red"}>{record.status === "active" ? "可用" : "已禁用"}</Tag>
@@ -228,6 +229,20 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                     </div>
                 </div>
             ),
+        },
+        {
+            title: "账号 ID",
+            dataIndex: "accountId",
+            width: 110,
+            responsive: ["sm"],
+            render: (accountId: string) => <AdminAccountId accountId={accountId} />,
+        },
+        {
+            title: "邮箱",
+            dataIndex: "email",
+            width: 220,
+            responsive: ["sm"],
+            render: (email?: string) => <span className="block truncate text-sm text-zinc-600 dark:text-zinc-300">{email || "未绑定邮箱"}</span>,
         },
         {
             title: "角色",
@@ -353,13 +368,8 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
         },
         {
             title: "用户",
-            width: 150,
-            render: (_, record) => (
-                <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-stone-900 dark:text-stone-100">{record.displayName || record.username}</div>
-                    <div className="truncate text-xs text-stone-500 dark:text-stone-400">@{record.username || "unknown"}</div>
-                </div>
-            ),
+            width: 200,
+            render: (_, record) => <AdminUserIdentity displayName={record.displayName} username={record.username} accountId={record.accountId} fallback="用户信息不可用" />,
         },
         {
             title: "入口",
@@ -465,6 +475,7 @@ export function useAdminDashboardTableModel({ state, data, settingsActions }: { 
                             {latest.displayName}
                             <span className="ml-1 font-normal text-stone-500 dark:text-stone-400">@{latest.username}</span>
                         </div>
+                        <AdminAccountId accountId={latest.accountId} />
                         <div className="text-xs text-stone-500 dark:text-stone-400">{new Date(latest.redeemedAt).toLocaleString("zh-CN")}</div>
                     </div>
                 );

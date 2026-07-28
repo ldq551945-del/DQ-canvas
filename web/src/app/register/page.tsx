@@ -12,6 +12,8 @@ type RegisterPageProps = {
 export default async function RegisterPage({ searchParams }: RegisterPageProps) {
     const params = searchParams ? await searchParams : {};
     const nextPath = safeNextPath(firstValue(params.next));
+    const referralCode = firstValue(params.ref)?.trim().toUpperCase() || "";
+    const inviteError = firstValue(params.invite) === "invalid" ? "邀请链接无效或已停用，你仍可清空邀请码后正常注册。" : undefined;
     const install = await getInstallStatus();
     if (!install.database.healthy) redirect("/install");
 
@@ -19,7 +21,18 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     if (user) redirect(nextPath);
 
     const firstUser = install.userCount === 0;
-    return <AuthForm mode="register" nextPath={nextPath} registrationEnabled={settings.registrationEnabled || firstUser} emailRegistrationEnabled={!firstUser && settings.emailRegistrationEnabled} firstUser={firstUser} />;
+    return (
+        <AuthForm
+            mode="register"
+            nextPath={nextPath}
+            registrationEnabled={settings.registrationEnabled || firstUser}
+            emailRegistrationEnabled={!firstUser && settings.emailRegistrationEnabled}
+            firstUser={firstUser}
+            initialReferralCode={referralCode}
+            referralSource={referralCode ? "invite-link" : "registration-form"}
+            inviteError={inviteError}
+        />
+    );
 }
 
 function firstValue(value: string | string[] | undefined) {

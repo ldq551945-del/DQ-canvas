@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { getPublicUsersByIds } from "@/lib/auth/store";
+import { findPublicUserIdsByKeyword, getPublicUsersByIds } from "@/lib/auth/store";
 import { cleanupExpiredLocalMediaAssets, deleteLocalMediaAssets, getLocalMediaAssetSummary, listLocalMediaAssets } from "@/lib/server/local-media-storage";
 
 export const runtime = "nodejs";
@@ -14,13 +14,16 @@ export async function GET(request: Request) {
 
     const params = new URL(request.url).searchParams;
     if (params.get("summaryOnly") === "1") return NextResponse.json({ code: 0, data: { summary: await getLocalMediaAssetSummary() }, msg: "OK" });
+    const search = params.get("search") || undefined;
+    const ownerUserIds = search ? await findPublicUserIdsByKeyword(search) : [];
     const data = await listLocalMediaAssets({
         page: Number(params.get("page") || 1),
         pageSize: Number(params.get("pageSize") || 20),
         storageClass: params.get("storageClass") || undefined,
         type: params.get("type") || undefined,
         source: params.get("source") || undefined,
-        search: params.get("search") || undefined,
+        search,
+        ownerUserIds,
     });
     const users = await getPublicUsersByIds(data.items.map((item) => item.ownerUserId || ""));
     const userMap = new Map(users.map((user) => [user.id, user]));
@@ -30,7 +33,7 @@ export async function GET(request: Request) {
             ...data,
             items: data.items.map((item) => {
                 const owner = item.ownerUserId ? userMap.get(item.ownerUserId) : undefined;
-                return { ...item, ownerUsername: owner?.username, ownerDisplayName: owner?.displayName };
+                return { ...item, ownerAccountId: owner?.accountId, ownerUsername: owner?.username, ownerDisplayName: owner?.displayName };
             }),
         },
         msg: "OK",

@@ -11,6 +11,8 @@ import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/req
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
 import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER } from "@/lib/server/system-ai-billing";
+import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
+import { normalizeModelId } from "@/lib/model-capability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,14 +68,9 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         return proxySystemMediaRequest(request, channel);
     }
 
-    const headers = new Headers();
     const contentType = request.headers.get("content-type");
     const isMultipart = Boolean(contentType?.toLowerCase().includes("multipart/form-data"));
     const accept = request.headers.get("accept");
-    if (contentType && !isMultipart) headers.set("content-type", contentType);
-    if (accept) headers.set("accept", accept);
-    if (channel.apiFormat === "gemini" && !isGlobalAiOpcChannel(channel.advancedConfig)) headers.set("x-goog-api-key", channel.apiKey);
-    else headers.set("authorization", `Bearer ${channel.apiKey}`);
 
     let requestBody: ProxyRequestBody;
     try {
@@ -82,15 +79,32 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
+    const upstreamModel = requestModel(requestBody.pointsPayload);
+    const modelConfig = upstreamModel ? channel.advancedConfig?.modelConfigs?.[normalizeModelId(upstreamModel)] : undefined;
+    const apiFormat = modelConfig?.apiFormat || channel.apiFormat;
+    const headers = new Headers();
+    if (contentType && !isMultipart) headers.set("content-type", contentType);
+    if (accept) headers.set("accept", accept);
+    if (apiFormat === "gemini" && !isGlobalAiOpcChannel(channel.advancedConfig)) headers.set("x-goog-api-key", channel.apiKey);
+    else headers.set("authorization", `Bearer ${channel.apiKey}`);
     const globalChannel = isGlobalAiOpcChannel(channel.advancedConfig);
-    const globalPreset = resolveGlobalAiOpcPreset(channel.advancedConfig, requestModel(requestBody.pointsPayload)) || resolveGlobalAiOpcPathPreset(channel.advancedConfig, path);
+    const globalPreset = resolveGlobalAiOpcPreset(channel.advancedConfig, upstreamModel) || resolveGlobalAiOpcPathPreset(channel.advancedConfig, path);
     const globalAdaptation = adaptGlobalAiOpcTextRequest(channel.advancedConfig, path, requestBody.body);
     if (globalAdaptation === "responses-unsupported") return NextResponse.json({ error: "该 GlobalAiOpc 原生文本接口不支持 Responses，已切换 Chat 兼容回退。" }, { status: 404 });
-    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || channel.apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel);
+    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel);
     if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
     const pointsRequest =
-        classifyPointsRequest(request.method, channel.apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
-        classifyConfiguredPointsRequest(request.method, path, contentType, requestBody.pointsPayload, channel.id, globalPreset?.createPath || channel.advancedConfig?.createPath, settings.logicalModels, settings.generationPointMultipliers);
+        classifyPointsRequest(request.method, apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
+        classifyConfiguredPointsRequest(
+            request.method,
+            path,
+            contentType,
+            requestBody.pointsPayload,
+            channel.id,
+            globalPreset?.createPath || modelConfig?.createPath || channel.advancedConfig?.createPath,
+            settings.logicalModels,
+            settings.generationPointMultipliers,
+        );
     if (pointsRequest?.model && !channelHasModel(channel.models, pointsRequest.model)) return NextResponse.json({ error: "该模型未在后台渠道中启用" }, { status: 403 });
     const billingModel =
         pointsRequest && pointsRequest.usageKind !== "api" ? resolveLogicalBillingModel(settings.logicalModels, pointsRequest.usageKind, channel.id, pointsRequest.model, request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "") : pointsRequest?.model;
@@ -457,8 +471,12 @@ function readMultipartFields(text: string): Record<string, string> {
 }
 
 function targetUrl(baseUrl: string, apiFormat: "openai" | "gemini", path: string[], search: string, globalAiOpc = false) {
-    const apiBase = normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc);
     const cleanPath = path[0] === "v1" || path[0] === "v1beta" ? path.slice(1) : path;
+    if (isAgnesApiBaseUrl(baseUrl) && cleanPath[0]?.toLowerCase() === "agnesapi") {
+        const origin = new URL(baseUrl).origin;
+        return `${origin}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
+    }
+    const apiBase = normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc);
     return `${apiBase}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
 }
 

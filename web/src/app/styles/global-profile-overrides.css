@@ -61,21 +61,25 @@
 }
 
 .account-menu-dropdown .ant-dropdown-menu {
-    width: min(19rem, calc(100vw - 16px));
-    padding: 10px;
+    width: min(18.5rem, calc(100vw - 24px));
+    padding: 8px;
     border: 1px solid #e7e5e4;
-    border-radius: 16px;
+    border-radius: 14px;
     box-shadow: 0 18px 50px rgba(15, 23, 42, 0.16);
 }
 
 .account-menu-dropdown .ant-dropdown-menu-item-group-title {
-    padding: 6px 8px 8px;
+    padding: 4px 6px 6px;
 }
 
 .account-menu-dropdown .ant-dropdown-menu-item {
-    min-height: 42px;
-    margin-block: 2px;
-    padding-inline: 12px;
+    min-height: 38px;
+    margin-block: 1px;
+    padding-inline: 10px;
+}
+
+.account-menu-dropdown .ant-dropdown-menu-item-divider {
+    margin-block: 5px;
 }
 
 .account-menu-dropdown .account-upgrade-button {

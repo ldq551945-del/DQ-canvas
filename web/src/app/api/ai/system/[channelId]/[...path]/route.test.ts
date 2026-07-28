@@ -268,6 +268,31 @@ describe("GlobalAiOpc native text proxy", () => {
     });
 });
 
+describe("Agnes video polling proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://apihub.agnes-ai.com/v1", apiKey: "secret", apiFormat: "openai", models: ["agnes-video-v2.0"] }],
+        });
+    });
+
+    it("queries the documented root agnesapi endpoint instead of nesting it under v1", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "video-one", status: "processing" }));
+
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=video-one"), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["agnesapi"] }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://apihub.agnes-ai.com/agnesapi?video_id=video-one");
+    });
+});
+
 function request(url = "https://cdn.example.com/media.png") {
     return new Request(`http://localhost/api/ai/system/channel-one/_media?url=${encodeURIComponent(url)}`);
 }

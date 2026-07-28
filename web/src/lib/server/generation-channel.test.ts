@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { channelSupportsModel, generationModelId, resolveSystemGenerationChannel, systemGenerationChannelId } from "./generation-channel";
+import { channelSupportsModel, generationModelId, resolveModelAdvancedConfig, resolveSystemGenerationChannel, systemGenerationChannelId } from "./generation-channel";
 
 const channels = [{ id: "channel-1", enabled: true, apiFormat: "gemini" as const, models: ["models/video-v1"] }];
 
@@ -37,5 +37,20 @@ describe("resolveSystemGenerationChannel", () => {
         expect(channelSupportsModel(["models/Video-V1"], "video-v1")).toBe(true);
         expect(channelSupportsModel(["video-v1"], "models/VIDEO-V1")).toBe(true);
         expect(channelSupportsModel(["video-v2"], "video-v1")).toBe(false);
+    });
+
+    it("resolves create and query paths per model on a mixed company channel", () => {
+        const advanced = {
+            protocol: "auto",
+            createPath: "",
+            queryPath: "",
+            modelConfigs: {
+                "openai-text": { capability: "text", apiFormat: "openai", createPath: "/chat/completions" },
+                "sd2.0": { capability: "video", apiFormat: "openai", protocol: "seedance", createPath: "/videos", queryPath: "/videos/:task_id" },
+            },
+        } as never;
+
+        expect(resolveModelAdvancedConfig(advanced, "openai-text")).toMatchObject({ createPath: "/chat/completions", queryPath: "" });
+        expect(resolveModelAdvancedConfig(advanced, "sd2.0")).toMatchObject({ protocol: "seedance", createPath: "/videos", queryPath: "/videos/:task_id" });
     });
 });

@@ -31,7 +31,7 @@ export function buildCreateGenerationOverview(logs: StoredGenerationLog[]): Pick
             if (!url || /^(data|blob):/i.test(url) || seen.has(url)) continue;
             seen.add(url);
             recentAssets.push({ id: `${log.id}-${index}`, kind: asset.type, title: log.title || (asset.type === "video" ? "生成视频" : "生成图片"), url, createdAt: log.createdAt });
-            if (recentAssets.length >= 8) return { runningTasks, recentAssets };
+            if (recentAssets.length >= 6) return { runningTasks, recentAssets };
         }
     }
 

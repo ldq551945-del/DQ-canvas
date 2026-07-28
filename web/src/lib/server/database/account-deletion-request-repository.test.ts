@@ -20,6 +20,7 @@ import { createAccountDeletionRequest, listAccountDeletionRequests, withdrawPend
 const request = {
     id: "request-one",
     userId: "user-one",
+    accountId: "0001",
     username: "creator",
     displayName: "创作者",
     email: "creator@example.com",
@@ -34,7 +35,7 @@ describe("account deletion request repository", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.provider = "postgres";
-        mocks.query.mockResolvedValue({ rows: [{ ...request, user_id: request.userId, username_snapshot: request.username, display_name_snapshot: request.displayName, requested_at: request.requestedAt, updated_at: request.updatedAt }] });
+        mocks.query.mockResolvedValue({ rows: [{ ...request, user_id: request.userId, account_id: 1, username_snapshot: request.username, display_name_snapshot: request.displayName, requested_at: request.requestedAt, updated_at: request.updatedAt }] });
         mocks.readFile.mockResolvedValue({ version: 1, requests: [] });
     });
 
@@ -50,6 +51,7 @@ describe("account deletion request repository", () => {
         await listAccountDeletionRequests({ page: 2, pageSize: 10, keyword: "creator", status: "pending" });
 
         expect(mocks.query.mock.calls[0][0]).toContain("WHERE ($1 = ''");
+        expect(mocks.query.mock.calls[0][0]).toContain("lpad(users.account_id::text, 4, '0') LIKE $2");
         expect(mocks.query.mock.calls[0][1]).toEqual(["creator", "%creator%", "pending", 10, 10]);
     });
 

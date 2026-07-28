@@ -103,6 +103,18 @@ export async function getLocalMediaRegistration(storageKey: string) {
     return (await readRegistry()).assets.find((item) => item.storageKey === key) || null;
 }
 
+export async function getLocalMediaRegistrations(storageKeys: string[]) {
+    const keys = Array.from(new Set(storageKeys.map(normalizeKey).filter(Boolean)));
+    if (!keys.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery("SELECT * FROM local_media_assets WHERE storage_key = ANY($1::text[])", [keys]);
+        return result.rows.map(mapRegistration);
+    }
+    const keySet = new Set(keys);
+    return (await readRegistry()).assets.filter((item) => keySet.has(item.storageKey)).map(normalizeRegistration);
+}
+
 export async function listLocalMediaRegistrations() {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
@@ -123,7 +135,7 @@ export async function listLocalMediaRegistrationsForUser(userId: string) {
     return (await readRegistry()).assets.filter((item) => item.ownerUserId === ownerUserId).toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-export async function listLocalMediaRegistrationPage(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string } = {}): Promise<LocalMediaRegistrationPage> {
+export async function listLocalMediaRegistrationPage(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string; ownerUserIds?: string[] } = {}): Promise<LocalMediaRegistrationPage> {
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const pageSize = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize) || 20)));
     if (getDatabaseProvider() !== "postgres") return listFileMediaRegistrationPage(input, page, pageSize);
@@ -133,9 +145,10 @@ export async function listLocalMediaRegistrationPage(input: { page?: number; pag
     const type = isManagedMediaType(input.type) ? input.type : null;
     const source = isMediaSourceGroup(input.source) ? input.source : null;
     const search = (input.search || "").trim().slice(0, 160);
-    const params = [storageClass, type, source, search];
+    const ownerUserIds = Array.from(new Set((input.ownerUserIds || []).map((value) => text(value, 160)).filter(Boolean)));
+    const params = [storageClass, type, source, search, ownerUserIds.length ? ownerUserIds : null];
     const [itemsResult, totalResult, summary] = await Promise.all([
-        postgresQuery(`${localMediaPageSelect()} ${localMediaPageWhere()} ORDER BY created_at DESC LIMIT $5 OFFSET $6`, [...params, pageSize, (page - 1) * pageSize]),
+        postgresQuery(`${localMediaPageSelect()} ${localMediaPageWhere()} ORDER BY created_at DESC LIMIT $6 OFFSET $7`, [...params, pageSize, (page - 1) * pageSize]),
         postgresQuery<{ total: string | number }>(`SELECT count(*) AS total FROM local_media_assets ${localMediaPageWhere()}`, params),
         queryPostgresLocalMediaRegistrationSummary(),
     ]);
@@ -252,6 +265,7 @@ function localMediaPageWhere() {
                   OR coalesce(run_id, '') ILIKE '%' || $4 || '%'
                   OR coalesce(task_id, '') ILIKE '%' || $4 || '%'
                   OR coalesce(project_id, '') ILIKE '%' || $4 || '%'
+                  OR ($5::text[] IS NOT NULL AND owner_user_id = ANY($5::text[]))
               )`;
 }
 
@@ -267,14 +281,20 @@ function sourceGroupSql() {
             END`;
 }
 
-async function listFileMediaRegistrationPage(input: { storageClass?: string; type?: string; source?: string; search?: string }, page: number, pageSize: number): Promise<LocalMediaRegistrationPage> {
+async function listFileMediaRegistrationPage(input: { storageClass?: string; type?: string; source?: string; search?: string; ownerUserIds?: string[] }, page: number, pageSize: number): Promise<LocalMediaRegistrationPage> {
     const search = (input.search || "").trim().toLowerCase();
+    const ownerUserIds = new Set(input.ownerUserIds || []);
     const all = (await readRegistry()).assets.toSorted((a, b) => b.createdAt.localeCompare(a.createdAt));
     const filtered = all
         .filter((item) => (input.storageClass === "temporary" || input.storageClass === "permanent" ? item.storageClass === input.storageClass : true))
         .filter((item) => (isManagedMediaType(input.type) ? item.type === input.type : true))
         .filter((item) => (isMediaSourceGroup(input.source) ? sourceGroup(item.source) === input.source : true))
-        .filter((item) => !search || `${item.storageKey} ${item.originalName || ""} ${item.ownerUserId} ${item.source} ${item.conversationId || ""} ${item.runId || ""} ${item.taskId || ""} ${item.projectId || ""}`.toLowerCase().includes(search));
+        .filter(
+            (item) =>
+                !search ||
+                ownerUserIds.has(item.ownerUserId) ||
+                `${item.storageKey} ${item.originalName || ""} ${item.ownerUserId} ${item.source} ${item.conversationId || ""} ${item.runId || ""} ${item.taskId || ""} ${item.projectId || ""}`.toLowerCase().includes(search),
+        );
     return {
         items: filtered.slice((page - 1) * pageSize, page * pageSize),
         total: filtered.length,

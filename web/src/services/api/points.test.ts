@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { listPointRecords, refreshUserPointsIfSystem } from "./points";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
-const user = (pointsBalance: number): LocalUser => ({ id: "user-1", username: "tester", displayName: "测试用户", role: "user", status: "active", planId: "free", planName: "免费版", pointsBalance });
+const user = (pointsBalance: number): LocalUser => ({ id: "user-1", accountId: "0001", username: "tester", displayName: "测试用户", bio: "", role: "user", status: "active", planId: "free", planName: "免费版", pointsBalance });
 
 describe("用户积分同步", () => {
     afterEach(() => {

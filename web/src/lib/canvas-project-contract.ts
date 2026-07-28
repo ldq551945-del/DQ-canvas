@@ -17,6 +17,11 @@ export type CanvasProject = {
     viewport: ViewportTransform;
 };
 
+export type CanvasProjectSummary = Pick<CanvasProject, "id" | "sourceHandoffId" | "creativeConversationId" | "title" | "createdAt" | "updatedAt"> & {
+    nodeCount: number;
+    connectionCount: number;
+};
+
 export type CreateCanvasProjectInput = {
     title?: string;
     sourceHandoffId?: string;

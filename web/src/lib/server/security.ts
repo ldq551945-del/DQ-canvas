@@ -29,6 +29,8 @@ const generationRateLimits: Record<GenerationRateLimitType, RateLimitConfig> = {
 const mediaProxyRateLimit: RateLimitConfig = { maxRequests: 120, windowMs: 60 * 1000 };
 const localMediaRateLimit: RateLimitConfig = { maxRequests: 240, windowMs: 60 * 1000 };
 const signedMediaRateLimit: RateLimitConfig = { maxRequests: 60, windowMs: 60 * 1000 };
+const publicMediaResourceRateLimit: RateLimitConfig = { maxRequests: 2400, windowMs: 60 * 1000 };
+const publicMediaIpRateLimit: RateLimitConfig = { maxRequests: 240, windowMs: 60 * 1000 };
 
 const blockedHostnames = ["metadata.google.internal", "metadata.goog", "metadata.azure.com", "instance-data"];
 
@@ -93,6 +95,16 @@ export async function checkLocalMediaRateLimit(identity: string, request: Reques
     if (clientIp === "unknown") return identityLimit;
     const ipLimit = await checkRateLimit(`local-media:ip:${clientIp}`, { ...config, maxRequests: config.maxRequests * 4 });
     return ipLimit.allowed ? identityLimit : ipLimit;
+}
+
+export async function checkPublicMediaRateLimit(resource: string, request: Request) {
+    const resourceLimit = await checkRateLimit(`public-media:resource:${resource}`, publicMediaResourceRateLimit);
+    if (!resourceLimit.allowed) return resourceLimit;
+
+    const clientIp = getClientIp(request);
+    if (clientIp === "unknown") return resourceLimit;
+    const ipLimit = await checkRateLimit(`public-media:ip:${clientIp}`, publicMediaIpRateLimit);
+    return ipLimit.allowed ? resourceLimit : ipLimit;
 }
 
 export function rateLimitHeaders(result: RateLimitResult) {

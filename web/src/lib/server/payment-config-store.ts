@@ -1,5 +1,6 @@
 import { createPostgresRepositories, ensurePostgresSchema, getPostgresConnectionString, isPostgresDatabaseEnabled, type JsonValue } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { BillingInputError } from "@/lib/server/billing-errors";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
 import { PAYMENT_PROVIDER_DEFINITIONS, type PaymentProviderConfigField, type PaymentProviderId, type SavedPaymentConfig, type SavedPaymentProviderConfig } from "@/lib/payment-config-types";
 
@@ -80,6 +81,9 @@ export async function savePaymentProviderConfig(input: { providerId: PaymentProv
         }
 
         const text = normalizePaymentConfigText(raw, field.kind === "textarea" ? 20_000 : 2_000);
+        if (field.options?.length && text && !field.options.some((option) => option.value === text)) {
+            throw new BillingInputError(`${field.label}配置无效`, 400);
+        }
         if (field.secret && !text) {
             values[field.key] = previous.values[field.key] || "";
             continue;
@@ -129,11 +133,12 @@ export function isPaymentRuntimeProviderCheckoutReady(config: PaymentRuntimeConf
 }
 
 export function fieldHasRuntimeValue(config: PaymentRuntimeConfig, field: PaymentProviderConfigField) {
-    return field.envNames.some((name) => hasPaymentProductionSecret(getPaymentRuntimeEnv(config, name)));
+    const value = getFieldRuntimeValue(config, field);
+    return hasPaymentProductionSecret(value) && (!field.options?.length || field.options.some((option) => option.value === value));
 }
 
 export function getFieldRuntimeValue(config: PaymentRuntimeConfig, field: PaymentProviderConfigField) {
-    return field.envNames.map((name) => getPaymentRuntimeEnv(config, name)).find(Boolean) || "";
+    return field.envNames.map((name) => getPaymentRuntimeEnv(config, name)).find(Boolean) || field.defaultValue || "";
 }
 
 function findPaymentProviderDefinition(providerId: PaymentProviderId) {

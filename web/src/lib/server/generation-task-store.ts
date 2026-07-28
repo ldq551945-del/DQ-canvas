@@ -37,6 +37,7 @@ export type GenerationTaskRecordListOptions = {
     projectId?: string;
     userId?: string;
     search?: string;
+    searchUserIds?: string[];
     includeAll?: boolean;
 };
 
@@ -122,14 +123,15 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         const surface = isTaskSurface(options.surface) ? options.surface : null;
         const userId = options.userId?.trim() || null;
         const search = (options.search || "").trim().slice(0, 160);
-        const params = [type, status, surface, projectId, userId, search];
+        const searchUserIds = Array.from(new Set((options.searchUserIds || []).map((id) => id.trim()).filter(Boolean))).slice(0, 100);
+        const params = [type, status, surface, projectId, userId, search, searchUserIds];
         if (!includeAll) {
             const [pageResult, summaryResult] = await Promise.all([
                 postgresQuery<Record<string, unknown>>(
                     `${generationTaskSelect()}
                      ${generationTaskWhere()}
                      ORDER BY updated_at DESC
-                     LIMIT $7 OFFSET $8`,
+                     LIMIT $8 OFFSET $9`,
                     [...params, pageSize, (page - 1) * pageSize],
                 ),
                 postgresQuery<Record<string, unknown>>(`${generationTaskSummarySelect()} ${generationTaskWhere()} GROUP BY task_type, status`, params),
@@ -151,6 +153,7 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         records = (await readFileTasks()).filter((record) => record.expiresAt > Date.now());
     }
     const search = (options.search || "").trim().toLowerCase();
+    const searchUserIds = new Set((options.searchUserIds || []).map((id) => id.trim()).filter(Boolean));
     const filtered = records
         .filter((record) => (isTaskType(options.type) ? record.type === options.type : true))
         .filter((record) => (isTaskStatus(options.status) ? record.status === options.status : true))
@@ -164,7 +167,8 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
                     String(value || "")
                         .toLowerCase()
                         .includes(search),
-                ),
+                ) ||
+                searchUserIds.has(record.userId),
         )
         .sort((a, b) => b.updatedAt - a.updatedAt);
     const offset = (page - 1) * pageSize;
@@ -198,6 +202,7 @@ function generationTaskWhere() {
                   OR coalesce(run_id, '') ILIKE '%' || $6 || '%'
                   OR coalesce(project_id, '') ILIKE '%' || $6 || '%'
                   OR payload::text ILIKE '%' || $6 || '%'
+                  OR user_id = ANY($7::text[])
               )`;
 }
 

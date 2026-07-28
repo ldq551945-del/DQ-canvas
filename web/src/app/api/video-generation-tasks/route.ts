@@ -19,6 +19,7 @@ import { assertCapabilityConstraints } from "@/lib/server/capability-constraints
 import { normalizeVideoResult } from "@/lib/server/video-result-normalizer";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { mediaTaskSource } from "@/lib/media-management-contract";
+import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -194,7 +195,7 @@ async function createUpstream(
             method: "POST",
             headers: { "Content-Type": "application/json", "x-vozeb-pro-points-idempotency-key": `video-request:${billingRequestId}` },
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(3 * 60 * 1000),
+            signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(channel, "video")),
         });
         const text = await response.text();
         if (!response.ok) {
@@ -247,6 +248,7 @@ function globalAiOpcVideoPreset(config: NonNullable<ReturnType<typeof toSystemGe
 
 async function runVideoTask(task: VideoTask, origin: string, cookie: string) {
     const polling = videoPollingPolicy(Boolean(globalAiOpcVideoPreset(task.config.advancedConfig, task.config.model)));
+    const pollingAttempts = resolveModelPollingAttempts(task.config, "video", polling.intervalMs, polling.attempts);
     const heartbeat = setInterval(() => {
         void touchVideoTask(task.id);
     }, 60_000);
@@ -271,7 +273,7 @@ async function runVideoTask(task: VideoTask, origin: string, cookie: string) {
             if (completed) await registerVideoAsset(completed);
             return;
         }
-        for (let attempt = 0; attempt < polling.attempts; attempt += 1) {
+        for (let attempt = 0; attempt < pollingAttempts; attempt += 1) {
             const latest = await getVideoTask(task.id);
             if (!latest || latest.status === "cancelled") return;
             const data = await queryUpstream(task, origin, cookie);
@@ -341,7 +343,7 @@ async function queryUpstream(task: VideoTask, origin: string, cookie: string) {
           ]);
     let lastError = "";
     for (const path of paths) {
-        const response = await proxyFetch(origin, task.config.baseUrl, path, cookie, { cache: "no-store", signal: AbortSignal.timeout(60 * 1000) });
+        const response = await proxyFetch(origin, task.config.baseUrl, path, cookie, { cache: "no-store", signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)) });
         const text = await response.text();
         if (!response.ok) {
             lastError = readError(text, response.status);

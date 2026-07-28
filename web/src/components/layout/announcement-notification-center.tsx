@@ -3,22 +3,29 @@
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Bell, ChevronDown, Megaphone, RotateCcw, X } from "lucide-react";
+import { Bell, CheckCheck, ChevronDown, Heart, Megaphone, RotateCcw, X } from "lucide-react";
 import { Modal } from "antd";
 
 import { useAnnouncementReadState } from "@/hooks/use-announcement-read-state";
 import { useAnnouncements } from "@/hooks/use-announcements";
+import { useInteractionNotifications } from "@/hooks/use-interaction-notifications";
 import { formatAnnouncementTime } from "@/lib/announcement-notifications";
 import { cn } from "@/lib/utils";
 import type { PublicAnnouncement } from "@/services/api/announcements";
+import type { InteractionNotification } from "@/services/api/work-community";
+import { useUserStore } from "@/stores/use-user-store";
 
 export function AnnouncementNotificationCenter({ compact, buttonClassName, buttonStyle, onOpen }: { compact: boolean; buttonClassName: string; buttonStyle?: CSSProperties; onOpen?: () => void }) {
     const { data: announcements = [], error, isFetching, refetch } = useAnnouncements();
+    const user = useUserStore((state) => state.user);
+    const interactions = useInteractionNotifications(user?.id);
     const { readIds, hydrated, markRead } = useAnnouncementReadState();
     const [open, setOpen] = useState(false);
     const [expandedId, setExpandedId] = useState("");
     const [sessionUnreadIds, setSessionUnreadIds] = useState<Set<string>>(() => new Set());
+    const [activeTab, setActiveTab] = useState<"announcements" | "interactions">("announcements");
     const unreadAnnouncements = useMemo(() => (hydrated ? announcements.filter((item) => !readIds.has(item.id)) : []), [announcements, hydrated, readIds]);
+    const totalUnread = unreadAnnouncements.length + interactions.unreadCount;
 
     useEffect(() => {
         if (!open || !unreadAnnouncements.length) return;
@@ -28,26 +35,20 @@ export function AnnouncementNotificationCenter({ compact, buttonClassName, butto
 
     const handleOpenChange = (nextOpen: boolean) => {
         setOpen(nextOpen);
-        if (nextOpen) onOpen?.();
-        else {
+        if (nextOpen) {
+            if (!unreadAnnouncements.length && interactions.unreadCount) setActiveTab("interactions");
+            onOpen?.();
+        } else {
             setExpandedId("");
             setSessionUnreadIds(new Set());
         }
     };
     const button = (
-        <button
-            type="button"
-            className={cn(buttonClassName, "relative")}
-            style={buttonStyle}
-            onClick={() => handleOpenChange(true)}
-            aria-label={unreadAnnouncements.length ? `公告通知，${unreadAnnouncements.length} 条未读` : "公告通知"}
-            title="公告通知"
-            aria-expanded={open}
-        >
+        <button type="button" className={cn(buttonClassName, "relative")} style={buttonStyle} onClick={() => handleOpenChange(true)} aria-label={totalUnread ? `通知中心，${totalUnread} 条未读` : "通知中心"} title="通知中心" aria-expanded={open}>
             <Bell className="size-4" />
-            {hydrated && unreadAnnouncements.length ? (
+            {hydrated && totalUnread ? (
                 <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-[#66758e] px-1 text-[9px] font-semibold leading-[14px] text-white ring-2 ring-white dark:bg-[#d8dee8] dark:text-[#252b33] dark:ring-[#181b20]">
-                    {unreadAnnouncements.length > 9 ? "9+" : unreadAnnouncements.length}
+                    {totalUnread > 9 ? "9+" : totalUnread}
                 </span>
             ) : null}
         </button>
@@ -62,6 +63,18 @@ export function AnnouncementNotificationCenter({ compact, buttonClassName, butto
             onClose={() => handleOpenChange(false)}
             onExpand={(id) => setExpandedId((current) => (current === id ? "" : id))}
             onRetry={() => void refetch()}
+            activeTab={activeTab}
+            interactionError={interactions.error}
+            interactionItems={interactions.items}
+            interactionLoading={interactions.isFetching && !interactions.items.length}
+            interactionUnreadCount={interactions.unreadCount}
+            interactionHasMore={interactions.hasNextPage}
+            interactionLoadingMore={interactions.isFetchingNextPage}
+            onTabChange={setActiveTab}
+            onInteractionRead={(id) => void interactions.markRead(id)}
+            onInteractionReadAll={() => void interactions.markAllRead()}
+            onInteractionMore={() => void interactions.fetchNextPage()}
+            onInteractionRetry={() => void interactions.refetch()}
         />
     );
 
@@ -93,6 +106,18 @@ function AnnouncementPanel({
     onClose,
     onExpand,
     onRetry,
+    activeTab,
+    interactionError,
+    interactionItems,
+    interactionLoading,
+    interactionUnreadCount,
+    interactionHasMore,
+    interactionLoadingMore,
+    onTabChange,
+    onInteractionRead,
+    onInteractionReadAll,
+    onInteractionMore,
+    onInteractionRetry,
 }: {
     announcements: PublicAnnouncement[];
     error: Error | null;
@@ -102,6 +127,18 @@ function AnnouncementPanel({
     onClose: () => void;
     onExpand: (id: string) => void;
     onRetry: () => void;
+    activeTab: "announcements" | "interactions";
+    interactionError: Error | null;
+    interactionItems: InteractionNotification[];
+    interactionLoading: boolean;
+    interactionUnreadCount: number;
+    interactionHasMore: boolean;
+    interactionLoadingMore: boolean;
+    onTabChange: (tab: "announcements" | "interactions") => void;
+    onInteractionRead: (id: string) => void;
+    onInteractionReadAll: () => void;
+    onInteractionMore: () => void;
+    onInteractionRetry: () => void;
 }) {
     return (
         <section className="flex max-h-[72dvh] min-h-0 w-full flex-col bg-white text-[#20242a] dark:bg-[#15181d] dark:text-[#f3f5f7] sm:max-h-[560px]" aria-label="公告通知中心">
@@ -112,7 +149,7 @@ function AnnouncementPanel({
                     </span>
                     <div className="min-w-0">
                         <h2 className="text-sm font-semibold tracking-tight">通知中心</h2>
-                        <p className="mt-0.5 text-[11px] text-[#8a939f] dark:text-[#8f98a5]">站点更新与服务公告</p>
+                        <p className="mt-0.5 text-[11px] text-[#8a939f] dark:text-[#8f98a5]">站点公告与社区互动</p>
                     </div>
                 </div>
                 <button
@@ -125,17 +162,39 @@ function AnnouncementPanel({
                     <X className="size-4" />
                 </button>
             </header>
+            <div className="grid shrink-0 grid-cols-2 border-b border-[#e8ebef] p-1.5 dark:border-[#2a2f36]">
+                <button
+                    type="button"
+                    className={cn(
+                        "h-8 rounded-md text-xs font-semibold transition",
+                        activeTab === "announcements" ? "bg-[#eef1f5] text-[#20242a] dark:bg-[#252a32] dark:text-white" : "text-[#76808c] hover:bg-[#f5f6f8] dark:text-[#9ca5b0] dark:hover:bg-[#1d2127]",
+                    )}
+                    onClick={() => onTabChange("announcements")}
+                >
+                    公告 {sessionUnreadIds.size ? `· ${sessionUnreadIds.size}` : ""}
+                </button>
+                <button
+                    type="button"
+                    className={cn(
+                        "h-8 rounded-md text-xs font-semibold transition",
+                        activeTab === "interactions" ? "bg-[#eef1f5] text-[#20242a] dark:bg-[#252a32] dark:text-white" : "text-[#76808c] hover:bg-[#f5f6f8] dark:text-[#9ca5b0] dark:hover:bg-[#1d2127]",
+                    )}
+                    onClick={() => onTabChange("interactions")}
+                >
+                    互动 {interactionUnreadCount ? `· ${interactionUnreadCount}` : ""}
+                </button>
+            </div>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
-                {loading ? <AnnouncementLoading /> : null}
-                {!loading && error ? <AnnouncementError onRetry={onRetry} /> : null}
-                {!loading && !error && announcements.length ? (
+                {activeTab === "announcements" && loading ? <AnnouncementLoading /> : null}
+                {activeTab === "announcements" && !loading && error ? <AnnouncementError onRetry={onRetry} /> : null}
+                {activeTab === "announcements" && !loading && !error && announcements.length ? (
                     <div className="divide-y divide-[#edf0f3] dark:divide-[#272c33]">
                         {announcements.map((announcement) => (
                             <AnnouncementRow key={announcement.id} announcement={announcement} expanded={expandedId === announcement.id} unread={sessionUnreadIds.has(announcement.id)} onExpand={() => onExpand(announcement.id)} />
                         ))}
                     </div>
                 ) : null}
-                {!loading && !error && !announcements.length ? (
+                {activeTab === "announcements" && !loading && !error && !announcements.length ? (
                     <div className="grid min-h-40 place-items-center px-5 py-10 text-center">
                         <div>
                             <Bell className="mx-auto size-5 text-[#a4acb6]" />
@@ -144,15 +203,73 @@ function AnnouncementPanel({
                         </div>
                     </div>
                 ) : null}
+                {activeTab === "interactions" && interactionLoading ? <AnnouncementLoading /> : null}
+                {activeTab === "interactions" && !interactionLoading && interactionError ? <AnnouncementError onRetry={onInteractionRetry} /> : null}
+                {activeTab === "interactions" && !interactionLoading && !interactionError && interactionItems.length ? (
+                    <div className="divide-y divide-[#edf0f3] dark:divide-[#272c33]">
+                        {interactionItems.map((item) => (
+                            <InteractionRow key={item.id} item={item} onClose={onClose} onRead={onInteractionRead} />
+                        ))}
+                        {interactionHasMore ? (
+                            <button
+                                type="button"
+                                className="flex h-10 w-full items-center justify-center text-xs font-semibold text-[#66758e] transition hover:bg-[#f7f8fa] dark:text-[#c7ced8] dark:hover:bg-[#1d2127]"
+                                disabled={interactionLoadingMore}
+                                onClick={onInteractionMore}
+                            >
+                                {interactionLoadingMore ? "加载中..." : "查看更多"}
+                            </button>
+                        ) : null}
+                    </div>
+                ) : null}
+                {activeTab === "interactions" && !interactionLoading && !interactionError && !interactionItems.length ? (
+                    <div className="grid min-h-40 place-items-center px-5 py-10 text-center">
+                        <div>
+                            <Heart className="mx-auto size-5 text-[#a4acb6]" />
+                            <p className="mt-3 text-sm font-medium">暂时没有互动通知</p>
+                            <p className="mt-1 text-xs text-[#8a939f] dark:text-[#8f98a5]">点赞和关注会显示在这里</p>
+                        </div>
+                    </div>
+                ) : null}
             </div>
-            <Link
-                href="/announcements"
-                onClick={onClose}
-                className="flex h-11 shrink-0 items-center justify-center border-t border-[#e8ebef] text-xs font-semibold text-[#59677d] transition hover:bg-[#f7f8fa] hover:text-[#20242a] dark:border-[#2a2f36] dark:text-[#c2c8d1] dark:hover:bg-[#1d2127] dark:hover:text-white"
-            >
-                查看全部公告
-            </Link>
+            {activeTab === "announcements" ? (
+                <Link
+                    href="/announcements"
+                    onClick={onClose}
+                    className="flex h-11 shrink-0 items-center justify-center border-t border-[#e8ebef] text-xs font-semibold text-[#59677d] transition hover:bg-[#f7f8fa] hover:text-[#20242a] dark:border-[#2a2f36] dark:text-[#c2c8d1] dark:hover:bg-[#1d2127] dark:hover:text-white"
+                >
+                    查看全部公告
+                </Link>
+            ) : interactionUnreadCount ? (
+                <button
+                    type="button"
+                    onClick={onInteractionReadAll}
+                    className="flex h-11 shrink-0 items-center justify-center gap-2 border-t border-[#e8ebef] text-xs font-semibold text-[#59677d] transition hover:bg-[#f7f8fa] hover:text-[#20242a] dark:border-[#2a2f36] dark:text-[#c2c8d1] dark:hover:bg-[#1d2127] dark:hover:text-white"
+                >
+                    <CheckCheck className="size-3.5" /> 全部设为已读
+                </button>
+            ) : null}
         </section>
+    );
+}
+
+function InteractionRow({ item, onClose, onRead }: { item: InteractionNotification; onClose: () => void; onRead: (id: string) => void }) {
+    return (
+        <Link
+            href={item.targetPath}
+            className="group relative block px-4 py-3.5 transition hover:bg-[#f7f8fa] dark:hover:bg-[#1d2127]"
+            onClick={() => {
+                if (!item.readAt) onRead(item.id);
+                onClose();
+            }}
+        >
+            <span className={cn("absolute left-4 top-[19px] size-2 rounded-full ring-4 ring-white dark:ring-[#15181d]", item.readAt ? "bg-[#cbd0d6] dark:bg-[#4b535e]" : "bg-[#66758e] dark:bg-[#d8dee8]")} aria-hidden="true" />
+            <div className="min-w-0 pl-5">
+                <div className="text-sm font-semibold leading-5 text-[#343b44] dark:text-[#eef1f4]">{item.summary}</div>
+                <p className="mt-1 truncate text-xs text-[#6f7884] dark:text-[#a7afb9]">{item.actor?.displayName || item.actor?.username || "系统通知"}</p>
+                <time className="mt-1.5 block text-[11px] text-[#9aa2ad] dark:text-[#737d89]">{formatAnnouncementTime(item.createdAt)}</time>
+            </div>
+        </Link>
     );
 }
 

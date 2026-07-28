@@ -3,6 +3,7 @@ import Script from "next/script";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
+import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import "antd/dist/reset.css";
 import "./globals.css";
 import React from "react";
@@ -54,11 +55,21 @@ export async function generateMetadata(): Promise<Metadata> {
     };
 }
 
-export default function RootLayout({
+export default async function RootLayout({
     children,
 }: Readonly<{
     children: React.ReactNode;
 }>) {
+    const site = await getPublicSiteSettings();
+    const base = siteMetadataBase();
+    const websiteUrl = absoluteSiteUrl("/", base);
+    const websiteStructuredData = buildWebsiteStructuredData({
+        name: site.title,
+        description: site.seoDescription,
+        url: websiteUrl,
+        logoUrl: absoluteSiteUrl(site.logoUrl || "/logo.svg", base),
+    });
+
     return (
         <html lang="zh-CN" suppressHydrationWarning className="font-sans">
             <head>
@@ -72,6 +83,7 @@ export default function RootLayout({
                     fontFamily: '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
                 }}
             >
+                <script id="website-json-ld" type="application/ld+json" dangerouslySetInnerHTML={{ __html: serializeStructuredData(websiteStructuredData) }} />
                 <Script
                     id="theme-script"
                     strategy="beforeInteractive"

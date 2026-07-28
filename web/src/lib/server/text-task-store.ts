@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { AiTextMessage } from "@/types/ai";
 import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
@@ -14,6 +15,8 @@ export type TextTaskConfig = {
     model: string;
     channelId?: string;
     logicalModel?: string;
+    capabilityProfile?: LogicalModelCapabilityProfile;
+    advancedConfig?: SystemChannelAdvancedConfig;
     systemPrompt?: string;
 };
 

@@ -117,7 +117,7 @@ async function readAllCreativeMessages(conversationId: string) {
 }
 
 async function readDramaProjects(userId: string) {
-    const summaries = await listDramaProjectSummaries(userId);
+    const summaries = await collectPages((page) => listDramaProjectSummaries(userId, { page, pageSize: PAGE_SIZE }));
     return (await mapInBatches(summaries, 8, async (summary) => getDramaProject(summary.id, userId))).filter((project) => project !== null);
 }
 

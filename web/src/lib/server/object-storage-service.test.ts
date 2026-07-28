@@ -45,7 +45,7 @@ vi.mock("@/lib/server/local-media-registry", () => ({
 }));
 vi.mock("@/lib/server/local-media-references", () => ({ countLocalMediaReferences: mocks.references }));
 
-import { createExternalMediaReadUrl, deleteExternalStorageFiles, listExternalStorageFiles, migrateLocalMediaToObjectStorage, persistExternalMediaIfEnabled } from "./object-storage-service";
+import { createExternalMediaReadUrl, createExternalStorageImagePreviewUrl, deleteExternalStorageFiles, listExternalStorageFiles, migrateLocalMediaToObjectStorage, persistExternalMediaIfEnabled } from "./object-storage-service";
 
 const config = {
     id: "default" as const,
@@ -111,12 +111,13 @@ describe("object storage media service", () => {
 
     it("continues signing existing object media after the write switch is disabled", async () => {
         mocks.config.mockResolvedValue({ ...config, enabled: false });
-        const objectRegistration = { ...registration, storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/file.png" };
+        const objectRegistration = { ...registration, originalName: "生成结果", storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/file.png" };
 
         const url = await createExternalMediaReadUrl(new Request("http://localhost/media?download=original"), objectRegistration);
 
         expect(url).toBe("https://oss.example.com/signed");
         expect(mocks.signRead).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }), expect.objectContaining({ key: objectRegistration.externalObjectKey, contentDisposition: expect.stringContaining("attachment"), expiresIn: 600 }));
+        expect(mocks.signRead).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ contentDisposition: expect.stringContaining(".png") }));
     });
 
     it("uses a bounded WebP object variant for image previews", async () => {
@@ -127,6 +128,17 @@ describe("object storage media service", () => {
         expect(mocks.objectExists).toHaveBeenCalledWith(config, "vozeb-pro/media/reference/file.png.vozeb-preview/webp-320.webp");
         expect(mocks.getBytes).not.toHaveBeenCalled();
         expect(mocks.signRead).toHaveBeenCalledWith(config, expect.objectContaining({ contentType: "image/webp", expiresIn: 120 }));
+    });
+
+    it("serves administrator object previews as bounded WebP variants only", async () => {
+        const imageKey = "vozeb-pro/media/reference/file.png";
+
+        await expect(createExternalStorageImagePreviewUrl(imageKey, "500")).resolves.toBe("https://oss.example.com/signed");
+
+        expect(mocks.objectExists).toHaveBeenCalledWith(config, `${imageKey}.vozeb-preview/webp-640.webp`);
+        expect(mocks.signRead).toHaveBeenCalledWith(config, expect.objectContaining({ key: `${imageKey}.vozeb-preview/webp-640.webp`, contentType: "image/webp", contentDisposition: expect.stringContaining("file.webp") }));
+        await expect(createExternalStorageImagePreviewUrl("outside-prefix/file.png", 256)).resolves.toBeNull();
+        await expect(createExternalStorageImagePreviewUrl("vozeb-pro/files/archive.zip", 256)).resolves.toBeNull();
     });
 
     it("keeps streaming media urls valid long enough for playback and seeking", async () => {
@@ -159,8 +171,11 @@ describe("object storage media service", () => {
         const result = await listExternalStorageFiles({ limit: 2, type: "image", source: "drama" });
 
         expect(mocks.listObjects).toHaveBeenCalledTimes(2);
-        expect(result.items).toEqual([expect.objectContaining({ key: imageKey, type: "image", source: "drama-render" })]);
+        expect(result.items).toEqual([expect.objectContaining({ key: imageKey, type: "image", source: "drama-render", previewUrl: `/api/admin/object-storage/files/preview?key=${encodeURIComponent(imageKey)}` })]);
         expect(result.nextCursor).toBeUndefined();
+
+        mocks.listObjects.mockReset().mockResolvedValue({ items: [{ key: imageKey, bytes: 4 }], nextCursor: undefined });
+        await expect(listExternalStorageFiles({ limit: 2, ownerUserId: "user-two" })).resolves.toMatchObject({ items: [] });
 
         mocks.listObjects.mockReset().mockResolvedValue({ items: [{ key: attachmentKey, bytes: 8 }], nextCursor: undefined });
         mocks.listByObjectKeys.mockResolvedValue([]);

@@ -32,6 +32,7 @@ export type NodeContentRendererProps = {
     onGenerateImage?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
 };
 
 export function NodeContent(props: NodeContentRendererProps) {
@@ -96,17 +97,19 @@ export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
     const status = node.metadata?.agentTaskStatus || "pending";
     const labels = { pending: "等待执行", running: "执行中", paused: "已暂停", waiting_user: "等待确认", completed: "已完成", failed: "失败", cancelled: "已取消" };
     return (
-        <div className="flex h-full flex-col justify-between p-5" style={{ color: theme.node.text }}>
-            <div>
+        <div className="flex h-full min-h-0 flex-col p-5" style={{ color: theme.node.text }}>
+            <div className="flex min-h-0 flex-1 flex-col">
                 <div className="mb-4 flex items-center justify-between">
                     <ListChecks className="size-5" style={{ color: theme.node.activeStroke }} />
                     <span className="rounded-full px-2.5 py-1 text-xs" style={{ background: theme.toolbar.activeBg }}>
                         {labels[status]}
                     </span>
                 </div>
-                <p className="text-sm leading-6">{node.metadata?.prompt || node.metadata?.content || node.title}</p>
+                <p className="thin-scrollbar min-h-0 flex-1 overflow-y-auto pr-1 text-sm leading-6" onWheel={(event) => event.stopPropagation()}>
+                    {node.metadata?.prompt || node.metadata?.content || node.title}
+                </p>
             </div>
-            <div className="flex items-center justify-between text-xs" style={{ color: theme.node.placeholder }}>
+            <div className="mt-3 flex shrink-0 items-center justify-between text-xs" style={{ color: theme.node.placeholder }}>
                 <span>{node.metadata?.agentTaskType || "任务"}</span>
                 <span className="flex items-center gap-1">
                     <CircleCheck className="size-3.5" />
@@ -279,6 +282,7 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
             batchRecovering={props.batchRecovering}
             onToggleBatch={props.onToggleBatch}
             onSetBatchPrimary={props.onSetBatchPrimary}
+            onImageDimensions={props.onImageDimensions}
         />
     );
 }
@@ -352,6 +356,7 @@ export function ImageContent({
     batchRecovering,
     onToggleBatch,
     onSetBatchPrimary,
+    onImageDimensions,
 }: {
     node: CanvasNodeData;
     isBatchRoot: boolean;
@@ -361,17 +366,32 @@ export function ImageContent({
     batchRecovering: boolean;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
+    const imageRef = useRef<HTMLImageElement>(null);
+    const reportDimensions = useCallback(
+        (image: HTMLImageElement) => {
+            if (image.naturalWidth > 0 && image.naturalHeight > 0) onImageDimensions?.(node.id, image.naturalWidth, image.naturalHeight);
+        },
+        [node.id, onImageDimensions],
+    );
+
+    useEffect(() => {
+        const image = imageRef.current;
+        if (image?.complete) reportDimensions(image);
+    }, [node.metadata?.content, reportDimensions]);
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 <img
+                    ref={imageRef}
                     src={imagePreviewUrl(node.metadata!.content!, 1920)}
                     alt={node.title}
                     draggable={false}
+                    onLoad={(event) => reportDimensions(event.currentTarget)}
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                 />

@@ -1,5 +1,7 @@
 import type { getAuthSettings } from "@/lib/auth/store";
 import { normalizeCreativeDeliverables, normalizeCreativeFoundation, withCreativeFoundation } from "@/lib/creative-agent-contract";
+import { extractImageSizeFromPrompt } from "@/lib/image-size";
+import { normalizeWorkbenchAgentAttachments, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import type { WorkbenchPlan, WorkbenchPlanChoice, WorkbenchPlanDecision } from "./workbench-agent-plan";
 
@@ -19,6 +21,7 @@ export type WorkbenchRequestBody = {
     currentConfig?: Record<string, unknown>;
     hasReferences?: boolean;
     referenceTypes?: WorkbenchReferenceType[];
+    attachments?: WorkbenchAgentAttachment[];
     modelOptions?: WorkbenchModelOption[];
 };
 
@@ -26,7 +29,8 @@ type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
 
 export function buildTrustedWorkbenchBody(settings: AuthSettings, body: WorkbenchRequestBody): WorkbenchRequestBody {
     const workspace: WorkbenchWorkspace = body.workspace === "video" ? "video" : "image";
-    const referenceTypes = normalizeReferenceTypes(body.referenceTypes, workspace);
+    const attachments = normalizeWorkbenchAgentAttachments(body.attachments);
+    const referenceTypes = normalizeReferenceTypes([...(body.referenceTypes || []), ...attachments.map((item) => item.kind)], workspace);
     const availableModelOptions = workbenchModelOptions(settings, workspace, referenceTypes);
     const availableModelIds = availableModelOptions.map((model) => model.id);
     const modelKey = workspace === "image" ? "imageModel" : "videoModel";
@@ -48,7 +52,8 @@ export function buildTrustedWorkbenchBody(settings: AuthSettings, body: Workbenc
         smartPlanning: manualSelectionRequested ? false : true,
         modelOptions,
         referenceTypes,
-        hasReferences: referenceTypes.length > 0 || body.hasReferences === true,
+        attachments,
+        hasReferences: attachments.length > 0 || referenceTypes.length > 0 || body.hasReferences === true,
         currentConfig,
     };
 }
@@ -97,6 +102,11 @@ export function finalizeWorkbenchPlan(plan: WorkbenchPlan, input: { body: Workbe
         plan.decisions = withLockedModelDecision(plan.decisions, lockedModel, body.modelOptions);
     }
     if (!plan.selectedSkillIds.length) plan.selectedSkillIds = skillIds;
+    const referenceAspectRatio = String(body.currentConfig?.referenceAspectRatio || "");
+    if (body.hasReferences && body.referenceTypes?.some((type) => type === "image" || type === "video") && referenceAspectRatio && !extractImageSizeFromPrompt(prompt)) {
+        plan.parameterPatch.size = referenceAspectRatio;
+        plan.decisions = withReferenceAspectRatioDecision(plan.decisions, referenceAspectRatio);
+    }
     if (!plan.decisions?.length) plan.decisions = inferredDecisions(plan.parameterPatch, body.currentConfig, body.modelOptions, workspace);
     if (workspace === "video" && body.hasReferences) plan.decisions = withVideoReferenceDecision(plan.decisions);
     const referenceCapabilityMissing = Boolean(body.referenceTypes?.length && !body.models?.length);
@@ -182,13 +192,31 @@ function profileSupportsReferenceTypes(profile: ReturnType<typeof import("@/lib/
     return !profile || referenceTypes.every((type) => (type === "image" ? profile.supportsReferenceImage : type === "video" ? profile.supportsReferenceVideo : profile.supportsReferenceAudio));
 }
 
-function workbenchCurrentConfig(value: unknown, workspace: WorkbenchWorkspace, models: string[]) {
+function workbenchCurrentConfig(value: unknown, workspace: WorkbenchWorkspace, models: string[]): Record<string, unknown> {
     const input = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
     const text = (field: string, maxLength = 32) => (typeof input[field] === "string" ? input[field].trim().slice(0, maxLength) : "");
     const modelKey = workspace === "image" ? "imageModel" : "videoModel";
     const model = text(modelKey, 160);
-    if (workspace === "image") return { imageModel: models.includes(model) ? model : "", size: text("size"), quality: text("quality", 16), count: Math.max(1, Math.min(10, Math.floor(Number(input.count) || 1))) };
-    return { videoModel: models.includes(model) ? model : "", size: text("size"), vquality: text("vquality", 16), videoSeconds: text("videoSeconds", 16) };
+    const referenceAspectRatio = ["1:1", "3:2", "2:3", "4:3", "3:4", "16:9", "9:16"].includes(text("referenceAspectRatio")) ? text("referenceAspectRatio") : "";
+    if (workspace === "image")
+        return {
+            imageModel: models.includes(model) ? model : "",
+            size: text("size"),
+            quality: text("quality", 16),
+            count: Math.max(1, Math.min(10, Math.floor(Number(input.count) || 1))),
+            ...(referenceAspectRatio ? { referenceAspectRatio } : {}),
+        };
+    return {
+        videoModel: models.includes(model) ? model : "",
+        size: text("size"),
+        vquality: text("vquality", 16),
+        videoSeconds: text("videoSeconds", 16),
+        ...(referenceAspectRatio ? { referenceAspectRatio } : {}),
+    };
+}
+
+function withReferenceAspectRatioDecision(decisions: WorkbenchPlanDecision[] | undefined, ratio: string) {
+    return [{ label: "画幅", value: ratio, reason: "继承参考素材的原始构图比例" }, ...(decisions || []).filter((item) => item.label !== "画幅")].slice(0, 5);
 }
 
 function withVideoReferenceDecision(decisions: WorkbenchPlanDecision[] | undefined) {

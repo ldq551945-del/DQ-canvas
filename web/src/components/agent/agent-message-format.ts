@@ -19,7 +19,12 @@ export function formatAgentMessageText(text: string) {
     if (/^正在执行任务 task-[^（]+（第 \d+ 次）…?$/.test(text.trim())) return "正在执行创作任务…";
     if (text.trim() === "任务依赖无法继续执行") return "部分创作任务未能完成，请调整需求后重试。";
     if (text.trim() === "创作计划与后台生成任务已全部完成。") return "创作任务已完成。";
-    return text;
+    return text
+        .split("\n")
+        .filter((line) => !/^「[^」]+」已生成(?:并返回画布)?。$/.test(line.trim()))
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 }
 
 function actionableErrorMessage(value: string) {

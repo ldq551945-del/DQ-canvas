@@ -7,6 +7,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
+import { parseImageDimensions } from "@/lib/image-size";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
@@ -22,6 +23,7 @@ import { linkStoredGenerationTask, type GenerationTaskContext } from "@/lib/serv
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
+import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 import {
     type CreateImageTaskBody,
@@ -40,7 +42,6 @@ import {
     IMAGE_MAX_RATIO,
     IMAGE_OUTPUT_FORMAT,
     TASK_HEARTBEAT_MS,
-    MODEL_REQUEST_TIMEOUT_MS,
     IMAGE_TASK_POLL_INTERVAL_MS,
     IMAGE_TASK_POLL_ATTEMPTS,
     MAX_INLINE_IMAGE_BYTES,
@@ -68,13 +69,12 @@ export function sanitizeConfigs(config: ImageTaskConfig | undefined, settings: A
     const requestedModel = config?.model || settings.defaultModels.imageModel;
     return resolveLogicalModelCandidates(settings, "image", requestedModel).map((resolved) => {
         const channel = toSystemGenerationChannel(resolved);
-        const backendChannel = settings.systemChannels.find((item) => item.id === resolved.channelId);
         return {
             ...channel,
             channelId: resolved.channelId,
             ...resolveImageTaskOptions(config || {}, settings.generationDefaults),
             systemPrompt: "",
-            advancedConfig: sanitizeAdvancedConfig(backendChannel?.advancedConfig),
+            advancedConfig: sanitizeAdvancedConfig(channel.advancedConfig),
         };
     });
 }
@@ -112,10 +112,33 @@ export async function preferredImageResponseFormat(config: ImageTaskConfig): Pro
 
 export async function openAiImageTaskPath(config: ImageTaskConfig, kind: ImageTask["kind"]) {
     const configured = (config.advancedConfig?.createPath || "").trim();
-    if (configured) return configured.startsWith("/") ? configured : `/${configured}`;
-    if (kind !== "edit") return "/images/generations";
+    const configuredPath = configured ? normalizeImageTaskPath(configured) : "";
+    if (kind !== "edit") return configuredPath || "/images/generations";
     const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
-    return shouldUseSub2ApiImageEdit(config, apiBase) ? "/images/generations" : "/images/edits";
+    if (shouldUseSub2ApiImageEdit(config, apiBase)) return configuredPath || "/images/generations";
+
+    const ruleEditPath = configuredImageEditPath(config);
+    if (ruleEditPath) return ruleEditPath;
+    if (!configuredPath) return isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol }) ? "/images/generations" : "/images/edits";
+
+    const referenceMode = configuredImageEditReferenceMode(config);
+    if (referenceMode === "json" || referenceMode === "public-url" || globalAiOpcImagePreset(config) || isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol })) return configuredPath;
+    if (isStandardOpenAiImageGenerationPath(configuredPath)) return configuredPath.replace(/\/generations$/i, "/edits");
+    return configuredPath;
+}
+
+export function configuredImageEditPath(config: ImageTaskConfig) {
+    const rule = (config.advancedConfig?.referenceRule || "").trim();
+    const match = rule.match(/\/(?:[a-z0-9._-]+\/)*images\/edits\b/i);
+    return match?.[0] ? normalizeImageTaskPath(match[0]) : "";
+}
+
+export function normalizeImageTaskPath(path: string) {
+    return path.startsWith("/") ? path : `/${path}`;
+}
+
+export function isStandardOpenAiImageGenerationPath(path: string) {
+    return /^\/(?:v1\/)?images\/generations$/i.test(path);
 }
 
 export async function shouldUseJsonImageEdit(config: ImageTaskConfig) {
@@ -218,11 +241,19 @@ export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdemp
 export function taskFetch(config: ImageTaskConfig, url: string, init: RequestInit) {
     const nextInit = {
         ...init,
-        signal: init.signal || AbortSignal.timeout(MODEL_REQUEST_TIMEOUT_MS),
+        signal: init.signal || AbortSignal.timeout(imageTaskRequestTimeoutMs(config)),
     };
     if (!isInternalApiBaseUrl(config.baseUrl)) return fetch(url, nextInit);
     if (typeof FormData !== "undefined" && nextInit.body instanceof FormData) return fetch(url, nextInit);
     return fetchInternalApi(url, nextInit);
+}
+
+export function imageTaskRequestTimeoutMs(config: ImageTaskConfig) {
+    return resolveModelRequestTimeoutMs(config, "image");
+}
+
+export function imageTaskPollAttempts(config: ImageTaskConfig) {
+    return resolveModelPollingAttempts(config, "image", IMAGE_TASK_POLL_INTERVAL_MS, IMAGE_TASK_POLL_ATTEMPTS);
 }
 
 export function geminiHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
@@ -257,9 +288,9 @@ export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: 
 export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: string, mediaBaseUrl: string, pollBaseUrl: string, cookie: string, explicitPollUrl = ""): Promise<ImageTaskResult> {
     const pollUrls = imageTaskPollUrls(config, pollBaseUrl, taskId, explicitPollUrl);
     let lastError = "";
-    for (let attempt = 0; attempt < IMAGE_TASK_POLL_ATTEMPTS; attempt += 1) {
+    for (let attempt = 0; attempt < imageTaskPollAttempts(config); attempt += 1) {
         for (const pollUrl of pollUrls) {
-            const response = await taskFetch(config, pollUrl, { method: "GET", headers: taskHeaders(config, cookie), cache: "no-store" });
+            const response = await taskFetch(config, pollUrl, { method: "GET", headers: taskHeaders(config, cookie), cache: "no-store", signal: AbortSignal.timeout(Math.min(imageTaskRequestTimeoutMs(config), 60_000)) });
             if (!response.ok) {
                 const message = await readFetchError(response, "图片任务查询失败");
                 lastError = message;
@@ -496,8 +527,10 @@ export function resolveProxiedMediaSource(value: string, origin: string) {
 export function shouldFallbackToJsonImageEdit(status: number, message: string) {
     if (status === 404 || status === 405 || status === 415) return true;
     if (status !== 400 && status !== 422) return false;
-    return /multipart|form-?data|file upload|prompt.*required|required.*prompt|image url|image file|input image|reference image|invalid image|images\[\]|unsupported|not supported|failed to parse request body|parse request body|invalid request body|request body.*(?:parse|invalid)|body.*(?:parse|invalid)|cannot parse/i.test(
-        message,
+    return (
+        /multipart|form-?data|file upload|prompt.*required|required.*prompt|image url|image file|input image|reference image|invalid image|images\[\]|unsupported|not supported|failed to parse request body|parse request body|invalid request body|request body.*(?:parse|invalid)|body.*(?:parse|invalid)|cannot parse/i.test(
+            message,
+        ) || isPydanticDictionaryError(message)
     );
 }
 
@@ -509,11 +542,15 @@ export function shouldTryNextImageResponseFormat(responseFormat: (typeof IMAGE_R
 }
 
 export function shouldRetryJsonImageEditPayload(status: number, message: string) {
-    if (status === 400 || status === 422)
-        return /image|images|image_url|input_image|reference|invalid type|unmarshal|deserialize|field|failed to parse request body|parse request body|invalid request body|request body.*(?:parse|invalid)|body.*(?:parse|invalid)|cannot parse/i.test(
-            message,
-        );
-    return false;
+    if (status !== 400 && status !== 422) return false;
+    return (
+        /image|images|image_url|input_image|reference|invalid type|unmarshal|deserialize|field|failed to parse request body|parse request body|invalid request body|request body.*(?:parse|invalid)|body.*(?:parse|invalid)|cannot parse/i.test(message) ||
+        isPydanticDictionaryError(message)
+    );
+}
+
+export function isPydanticDictionaryError(message: string) {
+    return /valid dictionary|dictionary or object|extract fields/i.test(message);
 }
 
 export function shouldFallbackToResponsesImage(status: number, message: string) {
@@ -713,15 +750,10 @@ export function parseImageRatio(value: string) {
     return { width, height };
 }
 
-export function parseImageDimensions(value: string) {
-    const match = value.match(/^(\d+)x(\d+)$/i);
-    if (!match) return null;
-    return { width: Number(match[1]), height: Number(match[2]) };
-}
+export { parseImageDimensions };
 
 export function validateImageSize(width: number, height: number) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图片尺寸必须是正整数，例如 1024x1024");
-    if (width % IMAGE_SIZE_STEP !== 0 || height % IMAGE_SIZE_STEP !== 0) throw new Error("图片尺寸的宽高必须是 16 的倍数，请调整尺寸");
     if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error("图片尺寸最长边不能超过 3840px，请调整尺寸");
     if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图片宽高比不能超过 3:1，请调整尺寸");
     const pixels = width * height;

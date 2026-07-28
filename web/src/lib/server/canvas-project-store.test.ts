@@ -10,7 +10,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
     writeJsonDataFile: vi.fn(async (name: string, value: unknown) => mocks.files.set(name, structuredClone(value))),
 }));
 
-import { createCanvasProject, deleteCanvasProjects, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, updateCanvasProject } from "./canvas-project-store";
+import { createCanvasProject, deleteCanvasProjects, getCanvasProject, getLatestCanvasProjectOverview, listCanvasProjects, listCanvasProjectSummaries, updateCanvasProject } from "./canvas-project-store";
 
 describe("canvas project file provider", () => {
     beforeEach(() => {
@@ -31,6 +31,37 @@ describe("canvas project file provider", () => {
         await updateCanvasProject("user-one", updated);
         expect(await getCanvasProject("one", "user-one")).toMatchObject({ title: "已更新", nodes: [{ id: "node-one" }] });
         expect(await deleteCanvasProjects("user-one", ["one", "two"])).toBe(1);
+    });
+
+    it("returns file-provider summaries without changing stored project details", async () => {
+        await createCanvasProject("user-one", { ...project("one", "项目一"), nodes: [{ id: "node-one" }] as CanvasProject["nodes"] });
+
+        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "one", title: "项目一", nodeCount: 1, connectionCount: 0 }]);
+        await expect(getCanvasProject("one", "user-one")).resolves.toMatchObject({ nodes: [{ id: "node-one" }] });
+    });
+
+    it("projects only Canvas list summary fields in PostgreSQL", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValue({
+            rows: [
+                {
+                    id: "canvas-one",
+                    title: "画布一",
+                    source_handoff_id: "handoff-one",
+                    creative_conversation_id: "conversation-one",
+                    node_count: 8,
+                    connection_count: 3,
+                    created_at: "2026-07-20T00:00:00.000Z",
+                    updated_at: "2026-07-22T00:00:00.000Z",
+                },
+            ],
+        });
+
+        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "canvas-one", nodeCount: 8, connectionCount: 3 }]);
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("jsonb_array_length");
+        expect(statement).not.toMatch(/SELECT\s+project_json\s+FROM/i);
+        expect(params).toEqual(["user-one"]);
     });
 
     it("returns only the latest file-provider project summary", async () => {

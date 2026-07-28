@@ -1,3 +1,4 @@
+import { formatAccountId } from "@/lib/account-id";
 import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type {
     AuthenticatedUserRecord,
@@ -49,6 +50,7 @@ export class UsersRepository {
             WHERE (
                 $1 = ''
                 OR lower(username) LIKE $2
+                OR lpad(account_id::text, 4, '0') LIKE $2
                 OR lower(coalesce(email, '')) LIKE $2
                 OR lower(display_name) LIKE $2
                 OR lower(role) LIKE $2
@@ -70,6 +72,7 @@ export class UsersRepository {
             WHERE (
                 $1 = ''
                 OR lower(username) LIKE $2
+                OR lpad(account_id::text, 4, '0') LIKE $2
                 OR lower(coalesce(email, '')) LIKE $2
                 OR lower(display_name) LIKE $2
                 OR lower(role) LIKE $2
@@ -243,6 +246,17 @@ export class UsersRepository {
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
 
+    async getByPublicIdentity(identity: string) {
+        const result = await this.db.query(
+            `SELECT * FROM users
+             WHERE lower(username) = lower($1) OR id = $1
+             ORDER BY CASE WHEN lower(username) = lower($1) THEN 0 ELSE 1 END
+             LIMIT 1`,
+            [identity],
+        );
+        return result.rows[0] ? mapUser(result.rows[0]) : null;
+    }
+
     async getByLogin(username: string, email?: string) {
         const result = await this.db.query(
             `
@@ -261,11 +275,27 @@ export class UsersRepository {
     async create(user: UserRecord) {
         const result = await this.db.query(
             `
-            INSERT INTO users (id, username, email, display_name, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             RETURNING *
             `,
-            [user.id, user.username, user.email || null, user.displayName, user.role, user.status, user.planId, user.pointsBalance, user.passwordHash, user.lastLoginAt || null, user.createdAt, user.updatedAt],
+            [
+                user.id,
+                Number(user.accountId),
+                user.username,
+                user.email || null,
+                user.displayName,
+                user.bio,
+                user.avatarStorageKey || null,
+                user.role,
+                user.status,
+                user.planId,
+                user.pointsBalance,
+                user.passwordHash,
+                user.lastLoginAt || null,
+                user.createdAt,
+                user.updatedAt,
+            ],
         );
         return mapUser(result.rows[0]);
     }
@@ -277,16 +307,18 @@ export class UsersRepository {
                 username = COALESCE($2, username),
                 email = COALESCE($3, email),
                 display_name = COALESCE($4, display_name),
-                role = COALESCE($5, role),
-                status = COALESCE($6, status),
-                plan_id = COALESCE($7, plan_id),
-                points_balance = COALESCE($8, points_balance),
-                password_hash = COALESCE($9, password_hash),
-                last_login_at = COALESCE($10, last_login_at)
+                bio = COALESCE($5, bio),
+                avatar_storage_key = COALESCE($6, avatar_storage_key),
+                role = COALESCE($7, role),
+                status = COALESCE($8, status),
+                plan_id = COALESCE($9, plan_id),
+                points_balance = COALESCE($10, points_balance),
+                password_hash = COALESCE($11, password_hash),
+                last_login_at = COALESCE($12, last_login_at)
             WHERE id = $1
             RETURNING *
             `,
-            [id, patch.username, patch.email, patch.displayName, patch.role, patch.status, patch.planId, patch.pointsBalance, patch.passwordHash, patch.lastLoginAt],
+            [id, patch.username, patch.email, patch.displayName, patch.bio, patch.avatarStorageKey, patch.role, patch.status, patch.planId, patch.pointsBalance, patch.passwordHash, patch.lastLoginAt],
         );
         return result.rows[0] ? mapUser(result.rows[0]) : null;
     }
@@ -512,6 +544,7 @@ export class CdkRepository {
                         AND (
                             lower(search_users.username) LIKE $2
                             OR lower(coalesce(search_users.display_name, '')) LIKE $2
+                            OR lpad(search_users.account_id::text, 4, '0') LIKE $2
                         )
                   )
               )
@@ -549,6 +582,7 @@ export class CdkRepository {
                         'cdk_code_id', redemptions.cdk_code_id,
                         'user_id', redemptions.user_id,
                         'redeemed_at', redemptions.redeemed_at,
+                        'account_id', users.account_id,
                         'username', users.username,
                         'display_name', users.display_name
                     ) ORDER BY redemptions.redeemed_at ASC
@@ -621,6 +655,7 @@ function mapCdkListCode(row: Record<string, unknown>) {
                       cdkCodeId: stringValue(item.cdk_code_id),
                       userId: stringValue(item.user_id),
                       redeemedAt: stringValue(item.redeemed_at),
+                      accountId: item.account_id === undefined || item.account_id === null ? undefined : formatAccountId(item.account_id),
                       username: optionalString(item.username),
                       displayName: optionalString(item.display_name),
                   },

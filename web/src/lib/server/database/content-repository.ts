@@ -128,9 +128,11 @@ export class PromptsRepository {
         return Boolean(result.rows[0]);
     }
 
-    async replaceSeededPrompts(sourcePrefix: string, source: string, prompts: PromptRecord[]) {
-        await this.db.query("DELETE FROM prompts WHERE source LIKE $1", [`${sourcePrefix}%`]);
-        await this.db.query("DELETE FROM prompt_seed_sources WHERE source LIKE $1", [`${sourcePrefix}%`]);
+    async replaceSeededPrompts(sourcePrefixes: string[], source: string, prompts: PromptRecord[]) {
+        for (const sourcePrefix of sourcePrefixes) {
+            await this.db.query("DELETE FROM prompts WHERE source LIKE $1", [`${sourcePrefix}%`]);
+            await this.db.query("DELETE FROM prompt_seed_sources WHERE source LIKE $1", [`${sourcePrefix}%`]);
+        }
         await this.db.query("INSERT INTO prompt_seed_sources (source) VALUES ($1) ON CONFLICT (source) DO NOTHING", [source]);
         for (const prompt of prompts) await this.upsert(prompt);
     }
@@ -296,7 +298,7 @@ export class GenerationLogsRepository {
                 FROM ranked_assets
                 WHERE duplicate_rank = 1
                 ORDER BY created_at DESC, sort_order ASC
-                LIMIT 8
+                LIMIT 6
             )
             SELECT
                 COALESCE((
@@ -326,7 +328,7 @@ export class GenerationLogsRepository {
                     if (!id || !url || /^(data|blob):/i.test(url)) return [];
                     return [{ id, kind: item.kind === "video" ? "video" : "image", title: textValue(item.title), url, createdAt: isoValue(item.createdAt) }];
                 })
-                .slice(0, 8),
+                .slice(0, 6),
         };
     }
 
@@ -363,9 +365,9 @@ export class GenerationLogsRepository {
             `
             INSERT INTO generation_logs (
                 id, user_id, conversation_id, username, display_name, kind, source, status, title, prompt, model, summary,
-                duration_ms, count, success_count, fail_count, task_id, error, created_at, updated_at, completed_at
+                duration_ms, count, success_count, fail_count, request_snapshot, task_id, error, created_at, updated_at, completed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22)
             ON CONFLICT (id) DO UPDATE SET
                 conversation_id = EXCLUDED.conversation_id,
                 username = EXCLUDED.username,
@@ -379,6 +381,7 @@ export class GenerationLogsRepository {
                 count = EXCLUDED.count,
                 success_count = EXCLUDED.success_count,
                 fail_count = EXCLUDED.fail_count,
+                request_snapshot = EXCLUDED.request_snapshot,
                 task_id = EXCLUDED.task_id,
                 error = EXCLUDED.error,
                 completed_at = EXCLUDED.completed_at
@@ -402,6 +405,7 @@ export class GenerationLogsRepository {
                 log.count,
                 log.successCount,
                 log.failCount,
+                JSON.stringify(log.requestSnapshot || {}),
                 log.taskId || null,
                 log.error || null,
                 log.createdAt,

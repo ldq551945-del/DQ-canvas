@@ -2,7 +2,8 @@ import { lookup } from "node:dns/promises";
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
-import { limitMediaResponseBody, mediaResponseExceedsLimit } from "@/lib/server/media-response-limit";
+import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
+import { limitMediaResponseBody, MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, mediaResponseExceedsLimit, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
 import { checkMediaProxyRateLimit, isPublicIpAddress, rateLimitHeaders } from "@/lib/server/security";
 
 export const runtime = "nodejs";
@@ -27,23 +28,36 @@ async function proxyMedia(request: Request, method: "GET" | "HEAD") {
 
     const target = await readTargetUrl(request);
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
+    const range = normalizeMediaProxyRange(request.headers.get("range"));
+    if (range === "invalid") return NextResponse.json({ error: "Invalid media range" }, { status: 416 });
+    const permit = acquireMediaConcurrency("proxy", `user:${currentUser.id}`);
+    if (!permit) return NextResponse.json({ error: "媒体并发访问过多，请稍后重试" }, { status: 429, headers: { "Retry-After": "2" } });
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), MEDIA_PROXY_TIMEOUT_MS);
     try {
-        const range = request.headers.get("range");
         const upstream = await fetchMedia(target, method, range, controller.signal);
 
         if (!upstream.ok && upstream.status !== 206) {
+            permit.release();
             return NextResponse.json({ error: "Media fetch failed" }, { status: upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502 });
         }
 
-        if (mediaResponseExceedsLimit(upstream.headers)) return NextResponse.json({ error: "Media is too large" }, { status: 413 });
+        const maxBytes = range ? MAX_MEDIA_PROXY_RANGE_BYTES : MAX_MEDIA_PROXY_BYTES;
+        if (mediaResponseExceedsLimit(upstream.headers, maxBytes)) {
+            permit.release();
+            await upstream.body?.cancel("Media is too large");
+            return NextResponse.json({ error: "Media is too large" }, { status: 413 });
+        }
 
         const headers = mediaHeaders(upstream.headers);
-        if (method === "HEAD") return new NextResponse(null, { status: upstream.status, headers });
-        return new NextResponse(limitMediaResponseBody(upstream.body), { status: upstream.status, headers });
+        if (method === "HEAD") {
+            permit.release();
+            return new NextResponse(null, { status: upstream.status, headers });
+        }
+        return withMediaConcurrency(new NextResponse(limitMediaResponseBody(upstream.body, maxBytes), { status: upstream.status, headers }), permit);
     } catch {
+        permit.release();
         return NextResponse.json({ error: "Media fetch failed" }, { status: 502 });
     } finally {
         clearTimeout(timer);
@@ -68,7 +82,7 @@ async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | n
         const response = await fetch(current, {
             method,
             headers: {
-                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.2",
+                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.3",
                 ...(range ? { Range: range } : {}),
             },
             cache: "no-store",

@@ -34,13 +34,13 @@ export async function POST(request: Request) {
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     try {
-        const body = await readJsonBody<{ productId?: unknown; quantity?: unknown; provider?: unknown }>(request);
+        const body = await readJsonBody<{ productId?: unknown; quantity?: unknown; provider?: unknown; userCouponId?: unknown }>(request);
         const order = await createBillingOrder({ ...body, userId: currentUser.id });
         await safeRecordAuditLog({
             action: "billing.order.create",
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "billing_order", id: order.id, label: order.orderNo },
-            metadata: { productId: order.productId, amountCents: order.amountCents, currency: order.currency, provider: order.provider },
+            metadata: { productId: order.productId, amountCents: order.amountCents, currency: order.currency, provider: order.provider, userCouponId: order.userCouponId },
         });
         return NextResponse.json({ order });
     } catch (error) {

@@ -35,9 +35,11 @@ export default async function AdminSetupPage() {
         <AuthUserHydrator
             user={{
                 id: currentUser.id,
+                accountId: currentUser.accountId,
                 username: currentUser.username,
                 email: currentUser.email,
                 displayName: currentUser.displayName,
+                bio: currentUser.bio,
                 role: currentUser.role,
                 status: currentUser.status,
                 planId: currentUser.planId,
@@ -90,7 +92,7 @@ export default async function AdminSetupPage() {
                             <div className="mt-5 grid gap-2">
                                 <a
                                     href={`#${nextStep.id}`}
-                                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white"
+                                    className="inline-flex h-10 items-center justify-center gap-2 rounded-md !bg-zinc-950 px-4 text-sm font-semibold !text-white transition hover:!bg-zinc-800 dark:!bg-zinc-100 dark:!text-zinc-950 dark:hover:!bg-white"
                                 >
                                     查看下一项
                                     <ArrowRight className="size-4" />
@@ -131,7 +133,7 @@ export default async function AdminSetupPage() {
                             </div>
                             <Link
                                 href="/admin"
-                                className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white"
+                                className="mt-5 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md !bg-zinc-950 px-4 text-sm font-semibold !text-white transition hover:!bg-zinc-800 dark:!bg-zinc-100 dark:!text-zinc-950 dark:hover:!bg-white"
                             >
                                 进入完整后台
                                 <ArrowRight className="size-4" />
@@ -167,7 +169,7 @@ export default async function AdminSetupPage() {
                                         </div>
                                         <Link
                                             href={step.href}
-                                            className="mt-5 inline-flex h-10 items-center justify-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white transition hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-950 dark:hover:bg-white"
+                                            className="mt-5 inline-flex h-10 items-center justify-center gap-2 rounded-md !bg-zinc-950 px-4 text-sm font-semibold !text-white transition hover:!bg-zinc-800 dark:!bg-zinc-100 dark:!text-zinc-950 dark:hover:!bg-white"
                                         >
                                             {step.actionLabel}
                                             <ArrowRight className="size-4" />

@@ -7,6 +7,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminMediaTypeTabs } from "@/components/admin/admin-media-type-tabs";
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
+import { AdminAccountId, AdminUserSearchSelect } from "@/components/admin/admin-user-identity";
+import { imagePreviewUrl } from "@/lib/media-image-url";
 import { managedMediaTypeLabel, mediaSourceGroupOptions, mediaSourceLabel } from "@/lib/media-management-contract";
 import type { ExternalStorageFile, ExternalStorageFilesPayload, ObjectStorageMigrationResult, ObjectStorageSettings, ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
 import { deleteExternalStorageFiles, getExternalStorageFiles, getObjectStorageSettings, migrateLocalMedia, saveObjectStorageSettings, testObjectStorageSettings } from "@/services/api/object-storage";
@@ -32,14 +34,15 @@ export function AdminExternalStorage() {
     const [prefixInput, setPrefixInput] = useState("");
     const [type, setType] = useState("");
     const [source, setSource] = useState("");
+    const [ownerUserId, setOwnerUserId] = useState("");
     const [cursor, setCursor] = useState("");
     const [cursorHistory, setCursorHistory] = useState<string[]>([]);
 
     const loadFiles = useCallback(
-        async (targetCursor: string, targetPrefix: string, targetType: string, targetSource: string) => {
+        async (targetCursor: string, targetPrefix: string, targetType: string, targetSource: string, targetOwnerUserId: string) => {
             setLoadingFiles(true);
             try {
-                setFiles(await getExternalStorageFiles({ prefix: targetPrefix, cursor: targetCursor, limit: PAGE_SIZE, type: targetType, source: targetSource }));
+                setFiles(await getExternalStorageFiles({ prefix: targetPrefix, cursor: targetCursor, limit: PAGE_SIZE, type: targetType, source: targetSource, ownerUserId: targetOwnerUserId }));
                 setSelectedKeys([]);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "外部存储文件加载失败");
@@ -75,9 +78,9 @@ export function AdminExternalStorage() {
     }, [form, message]);
 
     useEffect(() => {
-        if (settings?.bucket) void loadFiles(cursor, prefix, type, source);
+        if (settings?.bucket) void loadFiles(cursor, prefix, type, source, ownerUserId);
         else setFiles(undefined);
-    }, [cursor, loadFiles, prefix, settings?.bucket, settings?.updatedAt, source, type]);
+    }, [cursor, loadFiles, ownerUserId, prefix, settings?.bucket, settings?.updatedAt, source, type]);
 
     const save = async (values: ObjectStorageSettingsUpdate) => {
         setSaving(true);
@@ -127,7 +130,7 @@ export function AdminExternalStorage() {
                 setCursor("");
                 setCursorHistory([]);
             } else {
-                await loadFiles("", prefix, type, source);
+                await loadFiles("", prefix, type, source, ownerUserId);
             }
         } catch (error) {
             message.error(error instanceof Error ? error.message : "本地媒体迁移失败");
@@ -143,14 +146,14 @@ export function AdminExternalStorage() {
                 const result = await deleteExternalStorageFiles(keys);
                 if (result.blocked.length) message.warning(`${result.blocked.length} 个对象仍被业务记录引用，已保留`);
                 else message.success(`已删除 ${result.deleted} 个对象`);
-                await loadFiles(cursor, prefix, type, source);
+                await loadFiles(cursor, prefix, type, source, ownerUserId);
             } catch (error) {
                 message.error(error instanceof Error ? error.message : "外部存储对象删除失败");
             } finally {
                 setDeleting(false);
             }
         },
-        [cursor, loadFiles, message, prefix, source, type],
+        [cursor, loadFiles, message, ownerUserId, prefix, source, type],
     );
 
     const columns = useMemo<TableColumnsType<ExternalStorageFile>>(
@@ -187,7 +190,10 @@ export function AdminExternalStorage() {
                 width: 180,
                 render: (_, file) => (
                     <div className="text-xs text-zinc-500">
-                        <div className="truncate">{file.ownerUserId || "未登记"}</div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span className="truncate text-zinc-800 dark:text-zinc-200">{file.ownerDisplayName || file.ownerUsername || (file.ownerUserId ? "用户信息不可用" : "未登记")}</span>
+                            <AdminAccountId accountId={file.ownerAccountId} className="shrink-0" />
+                        </div>
                         <div className="mt-1 truncate">{mediaSourceLabel(file.source)}</div>
                     </div>
                 ),
@@ -217,7 +223,7 @@ export function AdminExternalStorage() {
         setPrefix(next);
         setCursor("");
         setCursorHistory([]);
-        if (unchanged) void loadFiles("", next, type, source);
+        if (unchanged) void loadFiles("", next, type, source, ownerUserId);
     };
 
     return (
@@ -302,7 +308,7 @@ export function AdminExternalStorage() {
                                     icon={<RefreshCw className="size-4" />}
                                     loading={loadingFiles}
                                     disabled={!settings?.bucket}
-                                    onClick={() => void loadFiles(cursor, prefix, type, source)}
+                                    onClick={() => void loadFiles(cursor, prefix, type, source, ownerUserId)}
                                 >
                                     <span className="hidden sm:inline">刷新</span>
                                 </Button>
@@ -336,7 +342,7 @@ export function AdminExternalStorage() {
                                 setType(value);
                             }}
                         />
-                        <div className="grid max-w-[980px] grid-cols-[minmax(0,1fr)_40px] gap-3 md:grid-cols-[minmax(320px,1fr)_40px_220px]">
+                        <div className="grid max-w-[1180px] grid-cols-[minmax(0,1fr)_40px] gap-3 xl:grid-cols-[minmax(260px,1fr)_40px_190px_220px]">
                             <Input
                                 value={prefixInput}
                                 allowClear
@@ -352,17 +358,30 @@ export function AdminExternalStorage() {
                             <Tooltip title="筛选">
                                 <Button aria-label="筛选外部存储文件" className="!w-10 !px-0" icon={<Search className="size-4" />} disabled={!settings?.bucket} onClick={() => applyPrefixFilter(prefixInput)} />
                             </Tooltip>
-                            <Select
-                                className="col-span-2 md:col-span-1"
-                                value={source}
-                                disabled={!settings?.bucket}
-                                options={mediaSourceGroupOptions.map((option) => ({ ...option }))}
-                                onChange={(value) => {
-                                    setCursor("");
-                                    setCursorHistory([]);
-                                    setSource(value);
-                                }}
-                            />
+                            <div className="col-span-2 min-w-0 xl:col-span-1">
+                                <Select
+                                    className="w-full"
+                                    value={source}
+                                    disabled={!settings?.bucket}
+                                    options={mediaSourceGroupOptions.map((option) => ({ ...option }))}
+                                    onChange={(value) => {
+                                        setCursor("");
+                                        setCursorHistory([]);
+                                        setSource(value);
+                                    }}
+                                />
+                            </div>
+                            <div className="col-span-2 min-w-0 xl:col-span-1">
+                                <AdminUserSearchSelect
+                                    value={ownerUserId || undefined}
+                                    placeholder="按用户或 ID 筛选"
+                                    onChange={(value) => {
+                                        setCursor("");
+                                        setCursorHistory([]);
+                                        setOwnerUserId(value || "");
+                                    }}
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -398,7 +417,11 @@ export function AdminExternalStorage() {
                                     <div className="mt-1 text-xs text-zinc-500">
                                         {managedMediaTypeLabel(file.type)} · {formatBytes(file.bytes)} · {file.storageKey ? `引用 ${file.referenceCount}` : file.variant ? "预览变体" : "独立对象"}
                                     </div>
-                                    <div className="mt-1 truncate text-xs text-zinc-500">{mediaSourceLabel(file.source)}</div>
+                                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
+                                        <span className="truncate">{file.ownerDisplayName || file.ownerUsername || (file.ownerUserId ? "用户信息不可用" : "未登记")}</span>
+                                        <AdminAccountId accountId={file.ownerAccountId} className="shrink-0" />
+                                        <span className="truncate">{mediaSourceLabel(file.source)}</span>
+                                    </div>
                                     <div className="mt-1 truncate font-mono text-[11px] text-zinc-500">{file.key}</div>
                                 </div>
                                 <div className="flex shrink-0 flex-col gap-0.5">
@@ -466,7 +489,7 @@ function MediaThumbnail({ file, onPreview }: { file: ExternalStorageFile; onPrev
             onClick={() => onPreview(file)}
         >
             {file.type === "image" ? (
-                <Image preview={false} src={file.previewUrl} alt="" width={48} height={48} className="size-12 object-cover" />
+                <Image preview={false} src={imagePreviewUrl(file.previewUrl, 256)} alt="" width={48} height={48} className="size-12 object-cover" />
             ) : file.type === "video" ? (
                 <Film className="size-5" />
             ) : file.type === "audio" ? (
@@ -479,7 +502,7 @@ function MediaThumbnail({ file, onPreview }: { file: ExternalStorageFile; onPrev
 }
 
 function MediaViewer({ file }: { file: ExternalStorageFile }) {
-    if (file.type === "image") return <Image src={file.previewUrl} alt={file.originalName || file.name} className="max-h-[70dvh] w-full object-contain" />;
+    if (file.type === "image") return <Image src={imagePreviewUrl(file.previewUrl, 1920)} alt={file.originalName || file.name} className="max-h-[70dvh] w-full object-contain" />;
     if (file.type === "video") return <video src={file.previewUrl} controls className="max-h-[70dvh] w-full rounded-md bg-black" />;
     if (file.type === "audio") return <audio src={file.previewUrl} controls className="w-full" />;
     return <div className="py-12 text-center text-sm text-zinc-500">此对象不支持在线预览</div>;

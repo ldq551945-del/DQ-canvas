@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
     const dramaProjects: Array<{ id: string; sourceHandoffId?: string }> = [];
     const canvasState = {
         hydrated: true,
+        summaries: canvasProjects,
         projects: canvasProjects,
         hydrate: vi.fn(async () => undefined),
         importProject: vi.fn(async (_project: unknown, sourceHandoffId?: string) => {

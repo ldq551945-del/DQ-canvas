@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
     adjustPoints: vi.fn(),
     createOrderPlanAssignment: vi.fn(),
     lockAuthMutation: vi.fn(),
+    getReferralRelationshipByInviteeUserId: vi.fn(),
+    getReferralRewardsByTriggerOrder: vi.fn(),
 }));
 
 vi.mock("@/lib/server/auth-mutation-lock", () => ({ lockAuthMutation: mocks.lockAuthMutation }));
@@ -40,6 +42,10 @@ vi.mock("@/lib/server/database", () => ({
             update: mocks.updateUser,
         },
         settings: { getSettings: mocks.getSettings },
+        referrals: {
+            getRelationshipByInviteeUserId: mocks.getReferralRelationshipByInviteeUserId,
+            getRewardsByTriggerOrder: mocks.getReferralRewardsByTriggerOrder,
+        },
     })),
     ensurePostgresSchema: vi.fn(),
     isPostgresDatabaseEnabled: vi.fn(() => true),
@@ -56,8 +62,10 @@ import { completeBillingOrderPayment, refundBillingOrder } from "./billing-servi
 const now = "2026-07-23T00:00:00.000Z";
 const baseUser = {
     id: "user-one",
+    accountId: "0001",
     username: "tester",
     displayName: "测试用户",
+    bio: "",
     role: "user",
     status: "active",
     planId: "existing-plan",
@@ -74,6 +82,9 @@ const pointsOrder = {
     productKind: "points",
     status: "pending",
     subject: "500 积分",
+    listAmountCents: 990,
+    promotionDiscountCents: 0,
+    couponDiscountCents: 0,
     amountCents: 990,
     currency: "CNY",
     pointsAmount: 500,
@@ -114,6 +125,8 @@ describe("billing payment completion", () => {
             return { record: { amount: appliedAmount } };
         });
         mocks.getSettings.mockResolvedValue({ settings: { defaultPlanId: "free" } });
+        mocks.getReferralRelationshipByInviteeUserId.mockResolvedValue(undefined);
+        mocks.getReferralRewardsByTriggerOrder.mockResolvedValue([]);
     });
 
     it("credits a points product without replacing the user's plan and remains idempotent", async () => {

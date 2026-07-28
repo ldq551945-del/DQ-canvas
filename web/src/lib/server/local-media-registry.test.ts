@@ -54,10 +54,10 @@ describe("listLocalMediaRegistrationsForUser", () => {
             .mockResolvedValueOnce({ rows: [{ total: "42" }] })
             .mockResolvedValueOnce({ rows: [{ total_files: "42", total_bytes: "512", temporary_files: "2", temporary_bytes: "12", permanent_files: "40", permanent_bytes: "500", expired_temporary_files: "1" }] });
 
-        const page = await listLocalMediaRegistrationPage({ page: 2, pageSize: 10, type: "image", source: "agent", search: "cover" });
+        const page = await listLocalMediaRegistrationPage({ page: 2, pageSize: 10, type: "image", source: "agent", search: "0001", ownerUserIds: ["user-one"] });
 
-        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("LIMIT $5 OFFSET $6"), [null, "image", "agent", "cover", 10, 10]);
-        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("count(*) AS total"), [null, "image", "agent", "cover"]);
+        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("LIMIT $6 OFFSET $7"), [null, "image", "agent", "0001", ["user-one"], 10, 10]);
+        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("owner_user_id = ANY($5::text[])"), [null, "image", "agent", "0001", ["user-one"]]);
         expect(page).toMatchObject({ total: 42, items: [{ storageKey: "permanent/image.png" }], summary: { totalFiles: 42, expiredTemporaryFiles: 1 } });
     });
 

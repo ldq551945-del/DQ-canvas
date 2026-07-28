@@ -28,7 +28,8 @@ export function AdminUsersSection({ controller }: { controller: AdminDashboardCo
                         allowClear
                         className="w-full min-w-0 sm:max-w-2xl xl:max-w-3xl"
                         prefix={<Search className="size-4 text-stone-400" />}
-                        placeholder="搜索昵称、用户名、邮箱、角色或状态"
+                        placeholder="搜索昵称、用户名、邮箱、用户 ID、角色或状态"
+                        aria-label="搜索用户"
                         value={userSearch}
                         onChange={(event) => setUserSearch(event.target.value)}
                     />
@@ -60,7 +61,7 @@ export function AdminUsersSection({ controller }: { controller: AdminDashboardCo
                         title: record.id === currentUser.id ? "不能选择当前登录账号" : undefined,
                     }),
                 }}
-                scroll={screens.sm ? { x: 1250 } : undefined}
+                scroll={screens.sm ? { x: 1370 } : undefined}
                 size="middle"
             />
         </Panel>

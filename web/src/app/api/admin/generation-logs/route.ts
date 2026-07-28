@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
+import { getPublicUsersByIds } from "@/lib/auth/store";
 import { deleteGenerationLogs, listGenerationLogs } from "@/lib/server/generation-log-store";
 
 export const runtime = "nodejs";
@@ -26,7 +27,9 @@ export async function GET(request: NextRequest) {
         end: params.get("end") || "",
     });
 
-    return NextResponse.json({ logs: result.items, total: result.total, page: result.page, pageSize: result.pageSize });
+    const users = await getPublicUsersByIds(result.items.map((item) => item.userId));
+    const accountIdByUserId = new Map(users.map((user) => [user.id, user.accountId]));
+    return NextResponse.json({ logs: result.items.map((item) => ({ ...item, accountId: accountIdByUserId.get(item.userId) })), total: result.total, page: result.page, pageSize: result.pageSize });
 }
 
 export async function DELETE(request: Request) {

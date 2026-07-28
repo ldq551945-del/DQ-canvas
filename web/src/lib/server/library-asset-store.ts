@@ -4,6 +4,8 @@ import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/
 
 type AssetRecord = { userId: string; asset: Asset };
 type AssetDatabase = { version: 1; assets: AssetRecord[] };
+export type LibraryAssetPageInput = { page: number; pageSize: number; kind?: Asset["kind"]; keyword?: string };
+export type LibraryAssetPage = LibraryAssetPageInput & { items: Asset[]; total: number };
 
 const FILE_NAME = "library-assets.json";
 let mutationQueue = Promise.resolve();
@@ -18,6 +20,48 @@ export async function listLibraryAssets(userId: string) {
         .filter((record) => record.userId === userId)
         .map((record) => record.asset)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function listLibraryAssetPage(userId: string, input: LibraryAssetPageInput): Promise<LibraryAssetPage> {
+    const keyword = input.keyword?.trim().toLowerCase() || "";
+    const offset = (input.page - 1) * input.pageSize;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ assets: Asset[]; total: unknown }>(
+            `WITH filtered AS (
+                 SELECT id, updated_at, asset_json
+                 FROM library_assets
+                 WHERE user_id = $1
+                   AND ($2::text IS NULL OR kind = $2)
+                   AND ($3::text = '' OR lower(concat_ws(' ', title, asset_json->>'source', asset_json->>'note', asset_json->'tags', asset_json->'data'->>'content', asset_json->'data'->>'mimeType')) LIKE $4)
+             ), page_items AS (
+                 SELECT id, updated_at, asset_json
+                 FROM filtered
+                 ORDER BY updated_at DESC, id ASC
+                 LIMIT $5 OFFSET $6
+             )
+             SELECT (SELECT count(*) FROM filtered) AS total,
+                    COALESCE((SELECT jsonb_agg(asset_json ORDER BY updated_at DESC, id ASC) FROM page_items), '[]'::jsonb) AS assets`,
+            [userId, input.kind || null, keyword, `%${keyword}%`, input.pageSize, offset],
+        );
+        const row = result.rows[0];
+        return { ...input, items: Array.isArray(row?.assets) ? row.assets : [], total: Math.max(0, Number(row?.total) || 0) };
+    }
+    const filtered = (await readDatabase()).assets
+        .filter((record) => record.userId === userId)
+        .map((record) => record.asset)
+        .filter((asset) => (!input.kind || asset.kind === input.kind) && (!keyword || assetSearchText(asset).includes(keyword)))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+    return { ...input, items: filtered.slice(offset, offset + input.pageSize), total: filtered.length };
+}
+
+export async function getLibraryAsset(userId: string, id: string) {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ asset_json: Asset }>("SELECT asset_json FROM library_assets WHERE id = $1 AND user_id = $2", [id, userId]);
+        return result.rows[0]?.asset_json || null;
+    }
+    return (await readDatabase()).assets.find((record) => record.userId === userId && record.asset.id === id)?.asset || null;
 }
 
 export async function createLibraryAsset(userId: string, asset: Asset) {
@@ -81,4 +125,8 @@ function mutateDatabase(mutator: (database: AssetDatabase) => AssetDatabase) {
     const operation = mutationQueue.then(async () => writeJsonDataFile(FILE_NAME, mutator(await readDatabase())));
     mutationQueue = operation.catch(() => undefined);
     return operation;
+}
+
+function assetSearchText(asset: Asset) {
+    return [asset.title, asset.source || "", asset.note || "", asset.tags.join(" "), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
 }

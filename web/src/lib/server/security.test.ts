@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkRateLimit, getClientIp, rateLimitHeaders } from "./security";
+import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkPublicMediaRateLimit, checkRateLimit, getClientIp, rateLimitHeaders } from "./security";
 
 describe("checkRateLimit", () => {
     it("blocks requests beyond the configured window limit", async () => {
@@ -60,6 +60,35 @@ describe("checkRateLimit", () => {
         const identity = `signature:${crypto.randomUUID()}`;
         for (let index = 0; index < 60; index += 1) expect((await checkLocalMediaRateLimit(identity, new Request("http://localhost"))).allowed).toBe(true);
         expect((await checkLocalMediaRateLimit(identity, new Request("http://localhost"))).allowed).toBe(false);
+    });
+
+    it("does not make normal hotspot reads share the per-IP public limit when proxy headers are untrusted", async () => {
+        const previous = process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+        delete process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+        try {
+            const resource = `public:${crypto.randomUUID()}`;
+            for (let index = 0; index < 241; index += 1) expect((await checkPublicMediaRateLimit(resource, new Request("http://localhost"))).allowed).toBe(true);
+        } finally {
+            if (previous === undefined) delete process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+            else process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS = previous;
+        }
+    });
+
+    it("limits a trusted client IP across different public resources", async () => {
+        const previous = process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+        process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS = "1";
+        const clientIp = `203.0.113.${Math.floor(Math.random() * 200) + 1}`;
+        try {
+            for (let index = 0; index < 240; index += 1) {
+                const request = new Request("http://localhost", { headers: { "x-forwarded-for": clientIp } });
+                expect((await checkPublicMediaRateLimit(`public:${crypto.randomUUID()}`, request)).allowed).toBe(true);
+            }
+            const blocked = await checkPublicMediaRateLimit(`public:${crypto.randomUUID()}`, new Request("http://localhost", { headers: { "x-forwarded-for": clientIp } }));
+            expect(blocked.allowed).toBe(false);
+        } finally {
+            if (previous === undefined) delete process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS;
+            else process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS = previous;
+        }
     });
 
     it("returns a Retry-After header in seconds", () => {

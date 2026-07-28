@@ -17,6 +17,7 @@ import {
     localAssetUrls,
     mutateGenerationLogDb,
     normalizeAssets,
+    normalizeGenerationLogRequestSnapshot,
     normalizeModelName,
     normalizeNonNegativeInteger,
     normalizeNonNegativeNumber,
@@ -270,6 +271,7 @@ function buildGenerationLog(
         successCount: normalizeNonNegativeInteger(input.successCount, existing?.successCount || (input.status === "success" ? 1 : 0)),
         failCount: normalizeNonNegativeInteger(input.failCount, existing?.failCount || (input.status === "failed" ? 1 : 0)),
         assets: assets.length ? assets : existing?.assets || [],
+        requestSnapshot: normalizeGenerationLogRequestSnapshot(input.requestSnapshot) || existing?.requestSnapshot,
         taskId: normalizeOptionalText(input.taskId, existing?.taskId, 160),
         error: normalizeOptionalText(input.error, existing?.error, 1000),
         createdAt: normalizeTime(input.createdAt, existing?.createdAt || now),
@@ -278,8 +280,12 @@ function buildGenerationLog(
     };
 }
 
-function toStoredGenerationLog(log: { source: string } & Omit<StoredGenerationLog, "source">): StoredGenerationLog {
-    return { ...log, source: isGenerationSource(log.source) ? log.source : "unknown" };
+function toStoredGenerationLog(log: { source: string; requestSnapshot?: unknown } & Omit<StoredGenerationLog, "source" | "requestSnapshot">): StoredGenerationLog {
+    return {
+        ...log,
+        source: isGenerationSource(log.source) ? log.source : "unknown",
+        requestSnapshot: normalizeGenerationLogRequestSnapshot(log.requestSnapshot),
+    };
 }
 
 function uniqueGenerationLogs<T extends { id: string }>(logs: T[]) {

@@ -22,6 +22,7 @@ import {
 import { GenerationConcurrencyPanel, GenerationDefaultsPanel, localAgentReadiness } from "@/components/admin/admin-generation-settings";
 import type { AgentReadiness } from "@/components/admin/admin-generation-settings";
 import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
+import { AdminAccountId } from "@/components/admin/admin-user-identity";
 import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
 import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
@@ -279,27 +280,29 @@ export function AdminCdkSection({ controller }: { controller: AdminDashboardCont
                                 allowClear
                                 className="w-full xl:max-w-64"
                                 prefix={<Search className="size-4 text-stone-400" />}
-                                placeholder="搜索明文、备注、兑换用户"
+                                placeholder="搜索明文、备注、兑换用户或用户 ID"
                                 value={cdkSearch}
                                 onChange={(event) => {
                                     setCdkSearch(event.target.value);
                                     setCdkPage(1);
                                 }}
                             />
-                            <Select
-                                className="w-full xl:w-36"
-                                value={cdkFilter}
-                                onChange={(value) => {
-                                    setCdkFilter(value);
-                                    setCdkPage(1);
-                                }}
-                                options={[
-                                    { value: "all", label: "全部" },
-                                    { value: "redeemed", label: "已兑换" },
-                                    { value: "unused", label: "未兑换" },
-                                    { value: "expired", label: "已过期" },
-                                ]}
-                            />
+                            <div className="w-full xl:w-36 xl:shrink-0">
+                                <Select
+                                    className="w-full"
+                                    value={cdkFilter}
+                                    onChange={(value) => {
+                                        setCdkFilter(value);
+                                        setCdkPage(1);
+                                    }}
+                                    options={[
+                                        { value: "all", label: "全部" },
+                                        { value: "redeemed", label: "已兑换" },
+                                        { value: "unused", label: "未兑换" },
+                                        { value: "expired", label: "已过期" },
+                                    ]}
+                                />
+                            </div>
                             <Popconfirm title="批量删除选中 CDK？" description="删除后用户将不能再兑换这些密钥，已有积分流水不会被删除。" okText="删除" cancelText="取消" onConfirm={() => void bulkDeleteCdkCodes()}>
                                 <Button danger disabled={!selectedCdkIds.length} loading={bulkDeletingCdk} icon={<Trash2 className="size-4" />}>
                                     批量删除
@@ -348,7 +351,16 @@ export function AdminCdkSection({ controller }: { controller: AdminDashboardCont
                                                     </div>
                                                     <div className="col-span-2">
                                                         <div className="text-stone-400 dark:text-stone-500">最近兑换</div>
-                                                        <div className="mt-0.5 truncate font-medium text-stone-800 dark:text-stone-100">{latest ? `${latest.displayName} @${latest.username}` : "暂无兑换"}</div>
+                                                        {latest ? (
+                                                            <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-medium text-stone-800 dark:text-stone-100">
+                                                                <span className="truncate">
+                                                                    {latest.displayName} @{latest.username}
+                                                                </span>
+                                                                <AdminAccountId accountId={latest.accountId} className="shrink-0" />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="mt-0.5 font-medium text-stone-800 dark:text-stone-100">暂无兑换</div>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="flex flex-wrap justify-end gap-2">

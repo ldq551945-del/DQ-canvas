@@ -1,10 +1,11 @@
-import { BookMarked, Clapperboard, FileText, ImagePlus, Images, Maximize2, Sparkles, Video } from "lucide-react";
+import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, ImagePlus, Images, Maximize2, Sparkles, UserRound, Video } from "lucide-react";
 
 export const navigationGroups = [
     { id: "create", label: "创作" },
     { id: "projects", label: "项目" },
     { id: "professional", label: "专业工具" },
     { id: "assets", label: "资产" },
+    { id: "community", label: "社区" },
 ] as const;
 
 export const navigationTools = [
@@ -45,11 +46,18 @@ export const navigationTools = [
         icon: Video,
     },
     {
-        slug: "prompts",
-        label: "提示词库",
-        description: "公共提示词",
+        slug: "works",
+        label: "作品管理",
+        description: "发布、审核与分享",
         group: "assets",
-        icon: FileText,
+        icon: GalleryVerticalEnd,
+    },
+    {
+        slug: "assets",
+        label: "我的素材",
+        description: "图片、视频与音频",
+        group: "assets",
+        icon: Images,
     },
     {
         slug: "my-prompts",
@@ -59,11 +67,25 @@ export const navigationTools = [
         icon: BookMarked,
     },
     {
-        slug: "assets",
-        label: "我的素材",
-        description: "图片、视频与音频",
+        slug: "prompts",
+        label: "提示词库",
+        description: "公共提示词",
         group: "assets",
-        icon: Images,
+        icon: FileText,
+    },
+    {
+        slug: "community",
+        label: "作品广场",
+        description: "发现公开作品",
+        group: "community",
+        icon: Compass,
+    },
+    {
+        slug: "me",
+        label: "个人主页",
+        description: "已发布与我的喜欢",
+        group: "community",
+        icon: UserRound,
     },
 ] as const;
 

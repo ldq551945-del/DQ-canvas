@@ -4,6 +4,7 @@ import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 export type AdminGenerationTask = {
     id: string;
     userId: string;
+    accountId?: string;
     username: string;
     displayName: string;
     type: GenerationTaskType;

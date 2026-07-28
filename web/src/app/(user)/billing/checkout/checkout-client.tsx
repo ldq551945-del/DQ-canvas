@@ -1,17 +1,17 @@
 "use client";
 
-import { App, Button, Empty, QRCode, Spin, Tag } from "antd";
-import { ArrowLeft, Check, CheckCircle2, Copy, CreditCard, ExternalLink, FileText, Landmark, LockKeyhole, Minus, Plus, QrCode, ReceiptText, ShieldCheck, WalletCards } from "lucide-react";
+import { App, Button, Empty, Popover, QRCode, Spin, Tag } from "antd";
+import { ArrowLeft, Check, CheckCircle2, ChevronDown, Copy, CreditCard, ExternalLink, FileText, Landmark, LockKeyhole, Minus, Plus, QrCode, ReceiptText, RefreshCw, ShieldCheck, TicketPercent, WalletCards } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createBillingOrder, createPaymentCheckout, listBillingProducts, type BillingProduct, type PaymentCheckout } from "@/services/api/billing";
+import { createBillingOrder, createPaymentCheckout, listBillingCoupons, listBillingProducts, quoteBillingOrder, type BillingProduct, type BillingQuote, type PaymentCheckout, type UserCoupon } from "@/services/api/billing";
 
 const providers = [
     { label: "Stripe", value: "stripe", icon: CreditCard, description: "国际银行卡与数字钱包" },
-    { label: "支付宝", value: "alipay", icon: Landmark, description: "支付宝网页支付" },
+    { label: "支付宝", value: "alipay", icon: Landmark, description: "支付宝安全支付" },
     { label: "微信支付", value: "wechat", icon: QrCode, description: "微信扫码支付" },
     { label: "PayPly", value: "payply", icon: WalletCards, description: "自定义支付接口" },
     { label: "人工确认", value: "manual", icon: FileText, description: "线下转账或人工开通" },
@@ -24,11 +24,35 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
     const [paymentProviders, setPaymentProviders] = useState<string[]>([]);
     const [provider, setProvider] = useState("");
     const [quantity, setQuantity] = useState(1);
+    const [coupons, setCoupons] = useState<UserCoupon[]>([]);
+    const [selectedCouponId, setSelectedCouponId] = useState("");
+    const [couponOpen, setCouponOpen] = useState(false);
+    const [couponsLoading, setCouponsLoading] = useState(false);
+    const [quote, setQuote] = useState<BillingQuote | null>(null);
+    const [quoteLoading, setQuoteLoading] = useState(false);
+    const [quoteError, setQuoteError] = useState("");
     const [mobileSection, setMobileSection] = useState<"summary" | "payment">("payment");
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [checkout, setCheckout] = useState<PaymentCheckout | null>(null);
+    const quoteRequest = useRef(0);
     const availableProviders = useMemo(() => providers.filter((item) => paymentProviders.includes(item.value)), [paymentProviders]);
+    const selectedCoupon = useMemo(() => coupons.find((coupon) => coupon.id === selectedCouponId), [coupons, selectedCouponId]);
+
+    const loadCoupons = useCallback(async () => {
+        setCouponsLoading(true);
+        try {
+            const payload = await listBillingCoupons({ productId, quantity, pageSize: 50 });
+            setCoupons(payload.coupons || []);
+            setSelectedCouponId((current) => (current && payload.coupons.some((coupon) => coupon.id === current && coupon.applicable) ? current : ""));
+            return payload.coupons || [];
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "优惠券加载失败");
+            return [];
+        } finally {
+            setCouponsLoading(false);
+        }
+    }, [message, productId, quantity]);
 
     useEffect(() => {
         let active = true;
@@ -50,17 +74,51 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
         };
     }, [message, productId]);
 
-    const totalCents = (product?.amountCents || 0) * quantity;
+    useEffect(() => {
+        void loadCoupons();
+    }, [loadCoupons]);
+
+    useEffect(() => {
+        if (!product) return;
+        const requestId = ++quoteRequest.current;
+        setQuoteLoading(true);
+        setQuoteError("");
+        void quoteBillingOrder({ productId: product.id, quantity, userCouponId: selectedCouponId || undefined })
+            .then((payload) => {
+                if (quoteRequest.current === requestId) setQuote(payload.quote);
+            })
+            .catch((error) => {
+                if (quoteRequest.current !== requestId) return;
+                setQuote(null);
+                setQuoteError(error instanceof Error ? error.message : "结算价格加载失败");
+            })
+            .finally(() => {
+                if (quoteRequest.current === requestId) setQuoteLoading(false);
+            });
+    }, [product, quantity, selectedCouponId]);
+
+    const fallbackUnitAmountCents = product?.pricing?.saleUnitAmountCents ?? product?.amountCents ?? 0;
+    const pricing = quote || {
+        productId: product?.id || "",
+        quantity,
+        listAmountCents: (product?.pricing?.listUnitAmountCents ?? product?.amountCents ?? 0) * quantity,
+        promotionDiscountCents: (product?.pricing?.discountCents ?? 0) * quantity,
+        couponDiscountCents: 0,
+        payableAmountCents: fallbackUnitAmountCents * quantity,
+        promotion: product?.pricing?.promotion,
+        pricingSnapshot: null,
+    };
 
     const submit = async () => {
         if (!product || !provider) return;
         setSubmitting(true);
         try {
-            const order = await createBillingOrder({ productId: product.id, provider, quantity });
+            const order = await createBillingOrder({ productId: product.id, provider, quantity, userCouponId: selectedCouponId || undefined });
             const result = await createPaymentCheckout(order.order.id, { provider });
             setCheckout(result.checkout);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "创建支付订单失败");
+            await loadCoupons();
         } finally {
             setSubmitting(false);
         }
@@ -149,13 +207,16 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
 
                             <div className="mt-4 flex items-end gap-1 sm:mt-8">
                                 <span className="pb-1 text-sm">¥</span>
-                                <span className="text-3xl font-semibold tracking-[-0.04em] sm:text-5xl">{formatYuan(totalCents)}</span>
+                                <span className="text-3xl font-semibold sm:text-5xl">{formatYuan(pricing.payableAmountCents)}</span>
                                 <span className="pb-1 text-sm text-stone-400 dark:text-stone-500">今日需支付</span>
                             </div>
 
                             <div className="mt-3 overflow-hidden rounded-lg border border-white/10 bg-white/[0.06] sm:mt-8 sm:rounded-2xl dark:border-stone-300 dark:bg-white">
-                                <SummaryRow label="套餐单价" value={`¥ ${formatYuan(product.amountCents)}`} />
+                                <SummaryRow label="日常价" value={`¥ ${formatYuan(pricing.listAmountCents)}`} />
                                 <SummaryRow label="购买数量" value={`× ${quantity}`} />
+                                {pricing.promotionDiscountCents > 0 ? <SummaryRow label={pricing.promotion?.label || "活动优惠"} value={`- ¥ ${formatYuan(pricing.promotionDiscountCents)}`} /> : null}
+                                {pricing.couponDiscountCents > 0 ? <SummaryRow label="优惠券" value={`- ¥ ${formatYuan(pricing.couponDiscountCents)}`} /> : null}
+                                <SummaryRow label="应付金额" value={`¥ ${formatYuan(pricing.payableAmountCents)}`} />
                                 <SummaryRow label={product.productKind === "points" ? "充值积分" : "创作积分"} value={`${formatCreditAmount(product.pointsAmount * quantity)} 积分`} icon={<CreditSymbol />} />
                                 <SummaryRow label="权益周期" value={product.productKind === "points" ? "一次性到账" : product.periodDays ? `${product.periodDays * quantity} 天` : "长期有效"} />
                             </div>
@@ -175,7 +236,7 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
                             </div>
                             <div className="shrink-0 text-right">
                                 <div className="text-[11px] text-stone-500 dark:text-stone-400">应付金额</div>
-                                <div className="mt-0.5 text-xl font-semibold tabular-nums text-stone-950 dark:text-white">¥ {formatYuan(totalCents)}</div>
+                                <div className="mt-0.5 text-xl font-semibold tabular-nums text-stone-950 dark:text-white">¥ {formatYuan(pricing.payableAmountCents)}</div>
                             </div>
                         </div>
                         {!checkout ? (
@@ -225,6 +286,49 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
                                 </div>
 
                                 <div className="mt-4 border-t border-stone-200 pt-4 sm:mt-7 sm:pt-7 dark:border-stone-800">
+                                    <div className="mb-3 border-b border-stone-200 pb-3 dark:border-stone-800 sm:mb-4 sm:pb-4">
+                                        <div className="flex min-w-0 items-center justify-between gap-3">
+                                            <span className="inline-flex min-w-0 items-center gap-2 text-sm font-semibold">
+                                                <TicketPercent className="size-4 shrink-0 text-rose-600 dark:text-rose-300" />
+                                                优惠券
+                                                {!couponsLoading ? <span className="text-xs font-normal text-stone-500 dark:text-stone-400">{coupons.filter(isCouponAvailable).length} 张可用</span> : null}
+                                            </span>
+                                            <Popover
+                                                trigger="click"
+                                                placement="bottomRight"
+                                                open={couponOpen}
+                                                onOpenChange={setCouponOpen}
+                                                styles={{ container: { padding: 8 } }}
+                                                content={
+                                                    <CouponPickerMenu
+                                                        coupons={coupons}
+                                                        selectedCouponId={selectedCouponId}
+                                                        loading={couponsLoading}
+                                                        onRefresh={() => void loadCoupons()}
+                                                        onSelect={(value) => {
+                                                            setSelectedCouponId(value);
+                                                            setCouponOpen(false);
+                                                        }}
+                                                    />
+                                                }
+                                            >
+                                                <button
+                                                    type="button"
+                                                    className="flex h-8 min-w-0 max-w-[65%] items-center gap-1.5 rounded-md border border-stone-200 bg-white px-2.5 text-left text-xs font-medium transition hover:border-stone-400 hover:bg-stone-50 dark:border-stone-700 dark:bg-stone-950 dark:hover:border-stone-500 dark:hover:bg-stone-900"
+                                                    aria-label="选择优惠券"
+                                                    aria-expanded={couponOpen}
+                                                >
+                                                    <span className="truncate">{selectedCoupon ? `${selectedCoupon.template?.name || "优惠券"} · ${couponDiscountLabel(selectedCoupon)}` : couponsLoading ? "读取中" : "选择"}</span>
+                                                    <ChevronDown className={`size-3.5 shrink-0 text-stone-400 transition ${couponOpen ? "rotate-180" : ""}`} />
+                                                </button>
+                                            </Popover>
+                                        </div>
+                                        {quoteLoading ? (
+                                            <p className="mt-1.5 text-right text-xs text-stone-500 dark:text-stone-400">正在核算最新应付金额...</p>
+                                        ) : quoteError ? (
+                                            <p className="mt-1.5 text-right text-xs text-rose-600 dark:text-rose-300">{quoteError}，请刷新后重试。</p>
+                                        ) : null}
+                                    </div>
                                     <label className="flex items-center justify-between gap-5">
                                         <span className="min-w-0">
                                             <span className="block text-sm font-semibold">购买数量</span>
@@ -258,7 +362,7 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
                                     </label>
 
                                     <div className="mt-4 border-t border-dashed border-stone-200 pt-4 sm:mt-7 sm:pt-6 dark:border-stone-800">
-                                        <Button block type="primary" size="large" className="profile-primary-button !h-10 sm:!h-12" loading={submitting} disabled={!provider} onClick={() => void submit()}>
+                                        <Button block type="primary" size="large" className="profile-primary-button !h-10 sm:!h-12" loading={submitting} disabled={!provider || quoteLoading || Boolean(quoteError)} onClick={() => void submit()}>
                                             <span className="inline-flex items-center gap-2">
                                                 <LockKeyhole className="size-4" /> 确认订单并继续支付
                                             </span>
@@ -309,4 +413,51 @@ function SummaryRow({ label, value, icon }: { label: string; value: string; icon
 
 function formatYuan(amountCents: number) {
     return (Math.max(0, amountCents) / 100).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function CouponPickerMenu({ coupons, selectedCouponId, loading, onRefresh, onSelect }: { coupons: UserCoupon[]; selectedCouponId: string; loading: boolean; onRefresh: () => void; onSelect: (value: string) => void }) {
+    const hasOptions = coupons.length > 0 || Boolean(selectedCouponId);
+    return (
+        <div className="w-[min(292px,calc(100vw-32px))] text-foreground">
+            <div className="flex h-8 items-center justify-between border-b border-border pb-1.5">
+                <p className="text-sm font-semibold">选择优惠券</p>
+                <Button type="text" shape="circle" size="small" icon={<RefreshCw className="size-3.5" />} loading={loading} onClick={onRefresh} aria-label="刷新优惠券" />
+            </div>
+            <div className="thin-scrollbar mt-1.5 max-h-48 space-y-1 overflow-y-auto">
+                {hasOptions ? <CouponPickerItem selected={!selectedCouponId} title="不使用优惠券" detail="按当前活动价格结算" onClick={() => onSelect("")} /> : null}
+                {coupons.map((coupon) => (
+                    <CouponPickerItem key={coupon.id} selected={selectedCouponId === coupon.id} disabled={!isCouponAvailable(coupon)} title={coupon.template?.name || "优惠券"} detail={couponDiscountLabel(coupon)} onClick={() => onSelect(coupon.id)} />
+                ))}
+                {!loading && !coupons.length ? <p className="px-2 py-2.5 text-center text-xs text-muted-foreground">当前没有可用优惠券</p> : null}
+            </div>
+        </div>
+    );
+}
+
+function CouponPickerItem({ selected, disabled = false, title, detail, onClick }: { selected: boolean; disabled?: boolean; title: string; detail: string; onClick: () => void }) {
+    return (
+        <button
+            type="button"
+            disabled={disabled}
+            className={`flex min-h-10 w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition ${selected ? "!bg-foreground !text-background" : "!bg-transparent !text-foreground hover:!bg-muted"} disabled:cursor-not-allowed disabled:!text-muted-foreground disabled:opacity-60`}
+            onClick={onClick}
+        >
+            <span className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-semibold">{title}</span>
+                <span className="mt-0.5 block truncate text-[11px] opacity-65">{detail}</span>
+            </span>
+            <span className={`grid size-4 shrink-0 place-items-center rounded-full border ${selected ? "border-current" : "border-border"}`}>{selected ? <Check className="size-3" /> : null}</span>
+        </button>
+    );
+}
+
+function isCouponAvailable(coupon: UserCoupon) {
+    return coupon.status === "available" && coupon.applicable !== false;
+}
+
+function couponDiscountLabel(coupon: UserCoupon) {
+    const template = coupon.template;
+    if (!template) return coupon.unavailableReason || "规则不可用";
+    const discount = template.discountType === "fixed" ? `减 ¥${formatYuan(template.discountValue)}` : `${(template.discountValue / 100).toLocaleString("zh-CN", { maximumFractionDigits: 2 })}% 优惠`;
+    return coupon.unavailableReason ? `${discount} · ${coupon.unavailableReason}` : discount;
 }

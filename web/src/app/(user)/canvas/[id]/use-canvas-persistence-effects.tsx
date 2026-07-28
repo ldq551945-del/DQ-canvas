@@ -45,8 +45,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         hydrated,
         hydratedUserId,
         hydrate,
+        loadProject,
         createProject,
-        openProject,
         updateProject,
         renameProject,
         deleteProjects,
@@ -162,41 +162,46 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
 
     useEffect(() => {
         if (!userId || !hydrated || hydratedUserId !== userId) return;
+        let cancelled = false;
         setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            router.replace("/canvas");
-            return;
-        }
-
-        const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
-            setNodes(restoredNodes);
-            setConnections(project.connections);
-            setChatSessions(restoredSessions);
-            setActiveChatId(project.activeChatId || null);
-            setBackgroundMode(project.backgroundMode);
-            setShowImageInfo(project.showImageInfo || false);
-            setViewport(project.viewport);
-            historyRef.current = { past: [], future: [] };
-            if (historyCommitTimerRef.current) {
-                clearTimeout(historyCommitTimerRef.current);
-                historyCommitTimerRef.current = null;
-            }
-            lastHistoryRef.current = {
-                nodes: restoredNodes,
-                connections: project.connections,
-                chatSessions: restoredSessions,
-                activeChatId: project.activeChatId || null,
-                backgroundMode: project.backgroundMode,
-                showImageInfo: project.showImageInfo || false,
-            };
-            setHistoryState({ canUndo: false, canRedo: false });
-            setProjectLoaded(true);
+        void loadProject(projectId)
+            .then(async (project) => {
+                const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
+                const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+                if (cancelled) return;
+                setNodes(restoredNodes);
+                setConnections(project.connections);
+                setChatSessions(restoredSessions);
+                setActiveChatId(project.activeChatId || null);
+                setBackgroundMode(project.backgroundMode);
+                setShowImageInfo(project.showImageInfo || false);
+                setViewport(project.viewport);
+                historyRef.current = { past: [], future: [] };
+                if (historyCommitTimerRef.current) {
+                    clearTimeout(historyCommitTimerRef.current);
+                    historyCommitTimerRef.current = null;
+                }
+                lastHistoryRef.current = {
+                    nodes: restoredNodes,
+                    connections: project.connections,
+                    chatSessions: restoredSessions,
+                    activeChatId: project.activeChatId || null,
+                    backgroundMode: project.backgroundMode,
+                    showImageInfo: project.showImageInfo || false,
+                };
+                setHistoryState({ canUndo: false, canRedo: false });
+                setProjectLoaded(true);
+            })
+            .catch((error) => {
+                if (cancelled) return;
+                const text = error instanceof Error ? error.message : "画布项目加载失败";
+                if (text.includes("不存在")) router.replace("/canvas");
+                else message.error(text);
+            });
+        return () => {
+            cancelled = true;
         };
-        void restore();
-    }, [hydrated, hydratedUserId, openProject, projectId, router, userId]);
+    }, [hydrated, hydratedUserId, loadProject, message, projectId, router, userId]);
 
     useEffect(() => {
         if (!projectLoaded) return;

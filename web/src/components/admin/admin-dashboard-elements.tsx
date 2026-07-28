@@ -69,9 +69,26 @@ import dayjs from "dayjs";
 import { nanoid } from "nanoid";
 
 import { formatCreditAmount } from "@/constant/credits";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
+import { AdminAccountId } from "@/components/admin/admin-user-identity";
+import { channelModelCapability, normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
+import { normalizeModelId } from "@/lib/model-capability";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import type { AgentSkill, AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
+import type {
+    AgentSkill,
+    AuthSettings,
+    CreatedCdkCode,
+    PublicAnnouncement,
+    PublicCdkCode,
+    PublicUser,
+    SiteFriendLink,
+    SiteShowcaseItem,
+    SiteSocialKey,
+    SystemChannelAdvancedConfig,
+    SystemChannelModelConfig,
+    SystemModelChannel,
+    UserRole,
+    UserStatus,
+} from "@/lib/auth/store";
 import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
@@ -156,6 +173,14 @@ export function buildAdvancedConfigFromHealth(channel: SystemModelChannel, resul
     const image = firstOkResult(results, "image");
     const video = firstOkResult(results, "video");
     const protocol = video?.protocolKey || image?.protocolKey || text?.protocolKey || current.protocol || "auto";
+    const modelCapabilities = { ...(current.modelCapabilities || {}) };
+    const modelConfigs = { ...(current.modelConfigs || {}) };
+    results.forEach((result) => {
+        if (!result.ok || !result.model) return;
+        const key = normalizeModelId(result.model);
+        modelCapabilities[key] = result.kind;
+        modelConfigs[key] = healthModelConfig(result, modelConfigs[key]);
+    });
     return {
         ...current,
         protocol,
@@ -172,6 +197,27 @@ export function buildAdvancedConfigFromHealth(channel: SystemModelChannel, resul
         supportsReferenceImage: Boolean(video?.supportsReferenceImage || image?.supportsReferenceImage || current.supportsReferenceImage),
         supportsReferenceVideo: Boolean(video?.supportsReferenceVideo || current.supportsReferenceVideo),
         supportsReferenceAudio: Boolean(video?.supportsReferenceAudio || current.supportsReferenceAudio),
+        modelCapabilities,
+        modelConfigs,
+    };
+}
+
+function healthModelConfig(result: ChannelHealthResult, current?: SystemChannelModelConfig): SystemChannelModelConfig {
+    return {
+        ...(current || {}),
+        capability: result.kind,
+        source: "health",
+        ...(result.protocolKey ? { protocol: result.protocolKey } : {}),
+        ...(result.createPath ? { createPath: result.createPath } : {}),
+        ...(result.queryPath ? { queryPath: result.queryPath } : {}),
+        ...(result.requestTemplate ? { requestTemplate: result.requestTemplate } : {}),
+        ...(result.resultField ? { resultField: result.resultField } : {}),
+        ...(result.statusField ? { statusField: result.statusField } : {}),
+        ...(result.durationRange ? { durationRange: result.durationRange } : {}),
+        ...(result.referenceRule || result.referenceHint ? { referenceRule: result.referenceRule || result.referenceHint } : {}),
+        ...(typeof result.supportsReferenceImage === "boolean" ? { supportsReferenceImage: result.supportsReferenceImage } : {}),
+        ...(typeof result.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: result.supportsReferenceVideo } : {}),
+        ...(typeof result.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: result.supportsReferenceAudio } : {}),
     };
 }
 
@@ -179,7 +225,16 @@ export function firstOkResult(results: ChannelHealthResult[], kind: ChannelHealt
     return results.find((result) => result.kind === kind && result.ok);
 }
 
-export type AdminModelsResult = { models: string[]; globalAiOpcPresets?: SystemChannelAdvancedConfig["globalAiOpcPresets"] };
+export type AdminModelsResult = {
+    models: string[];
+    modelCapabilities?: SystemChannelAdvancedConfig["modelCapabilities"];
+    modelConfigs?: SystemChannelAdvancedConfig["modelConfigs"];
+    recommendedConfig?: Partial<SystemChannelAdvancedConfig>;
+    discoveredCount?: number;
+    totalCount?: number;
+    warning?: string;
+    globalAiOpcPresets?: SystemChannelAdvancedConfig["globalAiOpcPresets"];
+};
 
 export async function requestAdminModels(channel: SystemModelChannel): Promise<AdminModelsResult> {
     const advanced = channel.advancedConfig;
@@ -195,14 +250,23 @@ export async function requestAdminModels(channel: SystemModelChannel): Promise<A
             globalAiOpcPreset: advanced?.globalAiOpcPreset,
             globalAiOpcPresets: advanced?.globalAiOpcPresets,
             createPath: advanced?.createPath,
+            modelCatalogPaths: advanced?.modelCatalogPaths,
+            configuredModels: channel.models,
+            modelCapabilities: advanced?.modelCapabilities,
+            modelConfigs: advanced?.modelConfigs,
         }),
     });
-    const payload = (await response.json()) as { models?: string[]; globalAiOpcPresets?: SystemChannelAdvancedConfig["globalAiOpcPresets"]; error?: string };
+    const payload = (await response.json()) as AdminModelsResult & { error?: string };
     if (!response.ok || !payload.models) throw new Error(payload.error || "拉取模型失败");
-    return { models: payload.models, globalAiOpcPresets: payload.globalAiOpcPresets };
+    return payload;
 }
 
 export function selectChannelHealthModel(channel: SystemModelChannel, defaults: AuthSettings["defaultModels"], kind: ChannelHealthKind) {
+    const configured = kind === "image" ? channel.advancedConfig?.imageModel : kind === "video" ? channel.advancedConfig?.videoModel : kind === "text" ? channel.advancedConfig?.textModel : "";
+    const configuredModel = channel.models.find((model) => normalizeModelId(model) === normalizeModelId(configured || ""));
+    if (configuredModel && channelModelCapability(channel, configuredModel) === kind) return configuredModel;
+    const catalogModel = channel.models.find((model) => channelModelCapability(channel, model) === kind);
+    if (catalogModel) return catalogModel;
     const defaultValue = kind === "image" ? defaults.imageModel : kind === "video" ? defaults.videoModel : kind === "audio" ? defaults.audioModel : defaults.textModel;
     const normalizedDefault = modelNameFromOption(defaultValue || "");
     if (normalizedDefault && (!channel.models.length || channel.models.includes(normalizedDefault))) return normalizedDefault;
@@ -297,6 +361,7 @@ export function CdkRedemptionDetail({ code }: { code: PublicCdkCode }) {
                             {item.displayName}
                             <span className="ml-1 font-normal text-stone-500 dark:text-stone-400">@{item.username}</span>
                         </div>
+                        <AdminAccountId accountId={item.accountId} className="mt-0.5" />
                         <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">{new Date(item.redeemedAt).toLocaleString("zh-CN")}</div>
                     </div>
                 ))}

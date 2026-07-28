@@ -31,7 +31,8 @@ export async function exportAssets(assets: Asset[]) {
             if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
             const storageKey = asset.data.storageKey;
             if (!storageKey) return;
-            const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+            const fallback = asset.data.serverUrl || (asset.kind === "image" ? asset.data.dataUrl : asset.data.url);
+            const blob = asset.kind === "image" ? await getImageBlob(storageKey, fallback) : await getMediaBlob(storageKey, fallback);
             if (!blob) return;
             const path = `files/${safeExportFileName(storageKey)}.${exportFileExtension(blob.type, asset.kind)}`;
             files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType, bytes: blob.size });

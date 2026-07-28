@@ -5,6 +5,7 @@ import type { AccountDeletionRequestStatus } from "@/lib/account-deletion-contra
 export type StoredAccountDeletionRequest = {
     id: string;
     userId: string;
+    accountId?: string;
     username: string;
     displayName: string;
     email?: string;
@@ -130,11 +131,13 @@ export async function listAccountDeletionRequests(input: { page?: number; pageSi
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery(
-            `SELECT *, count(*) OVER() AS total_count
-             FROM account_deletion_requests
-             WHERE ($1 = '' OR lower(username_snapshot) LIKE $2 OR lower(display_name_snapshot) LIKE $2 OR lower(coalesce(email_snapshot, '')) LIKE $2)
-               AND ($3::text IS NULL OR status = $3)
-             ORDER BY requested_at DESC
+            `SELECT requests.*, users.account_id, count(*) OVER() AS total_count
+             FROM account_deletion_requests requests
+             LEFT JOIN users ON users.id = requests.user_id
+             WHERE ($1 = '' OR lower(requests.username_snapshot) LIKE $2 OR lower(requests.display_name_snapshot) LIKE $2
+                    OR lower(coalesce(requests.email_snapshot, '')) LIKE $2 OR lpad(users.account_id::text, 4, '0') LIKE $2)
+               AND ($3::text IS NULL OR requests.status = $3)
+             ORDER BY requests.requested_at DESC
              LIMIT $4 OFFSET $5`,
             [keyword, `%${keyword}%`, input.status || null, pageSize, (page - 1) * pageSize],
         );
@@ -143,7 +146,7 @@ export async function listAccountDeletionRequests(input: { page?: number; pageSi
     const db = await readFileDatabase();
     const filtered = db.requests
         .filter((item) => (input.status ? item.status === input.status : true))
-        .filter((item) => (keyword ? [item.username, item.displayName, item.email].filter(Boolean).join(" ").toLowerCase().includes(keyword) : true))
+        .filter((item) => (keyword ? [item.accountId, item.username, item.displayName, item.email].filter(Boolean).join(" ").toLowerCase().includes(keyword) : true))
         .sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt));
     const start = (page - 1) * pageSize;
     return { items: filtered.slice(start, start + pageSize), total: filtered.length, page, pageSize };
@@ -223,6 +226,7 @@ function normalizeRequest(value: unknown): StoredAccountDeletionRequest {
     return {
         id: text(source.id, 120),
         userId: text(source.userId ?? source.user_id, 120),
+        accountId: optionalText(source.accountId ?? source.account_id, 24),
         username: text(source.username ?? source.username_snapshot, 80),
         displayName: text(source.displayName ?? source.display_name_snapshot, 80),
         email: optionalText(source.email ?? source.email_snapshot, 320),

@@ -14,6 +14,7 @@ export type AccountDeletionRequestView = {
 
 export type AdminAccountDeletionRequest = AccountDeletionRequestView & {
     userId: string;
+    accountId?: string;
     username: string;
     displayName: string;
     email?: string;

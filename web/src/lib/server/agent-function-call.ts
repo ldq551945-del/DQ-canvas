@@ -3,13 +3,14 @@ import { validateAgentPlan, type AgentPlan } from "./agent-run-validation";
 
 export type AgentFunctionCallResult = { arguments: string; pointsCost?: number; pointsRemaining?: number; pointsRecordId?: string };
 
-export async function parseAgentPlanCall(call: AgentFunctionCallResult, onInvalid: () => Promise<unknown>, conversationFallback?: { objective: string; reply?: string }): Promise<AgentPlan> {
+export async function parseAgentPlanCall(call: AgentFunctionCallResult, onInvalid: () => Promise<unknown>, conversationFallback?: { objective: string; reply?: string }, options?: { allowProjectHandoff?: boolean }): Promise<AgentPlan> {
     try {
         const raw = parsePlanArguments(call.arguments, conversationFallback);
         const conversation = Boolean(conversationFallback) || raw.intent === "conversation";
         const objective = conversationFallback?.objective || (typeof raw.objective === "string" && raw.objective.trim() ? raw.objective : "普通对话");
         const plan: unknown = {
             ...raw,
+            ...(options?.allowProjectHandoff === false ? { projectHandoff: undefined } : {}),
             ...(conversation
                 ? {
                       intent: "conversation",

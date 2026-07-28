@@ -5,6 +5,7 @@ import { Button, Tag } from "antd";
 import { Mail, Plus, RefreshCw, Send, Sparkles } from "lucide-react";
 
 import { SectionTitle } from "@/components/admin/admin-settings-controls";
+import { SiteLogo } from "@/components/layout/site-logo";
 import type { AuthSettings, SiteSocialKey } from "@/lib/auth/store";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
@@ -16,15 +17,10 @@ export const siteSocialItems: Array<{ key: SiteSocialKey; label: string; placeho
 ];
 
 export function SiteLogoPreview({ logoUrl }: { logoUrl: string }) {
-    if (logoUrl) return <img src={logoUrl} alt="" className="size-12 rounded-md bg-stone-100 object-contain p-1 dark:bg-white/10" referrerPolicy="no-referrer" />;
     return (
-        <span
-            className="size-12 rounded-md bg-stone-950 dark:bg-white"
-            style={{
-                mask: "url(/logo.svg) center / 78% no-repeat",
-                WebkitMask: "url(/logo.svg) center / 78% no-repeat",
-            }}
-        />
+        <span className="grid size-12 place-items-center rounded-md bg-stone-100 p-1 text-stone-950 dark:bg-white/10 dark:text-white">
+            <SiteLogo logoUrl={logoUrl || "/logo.svg"} className="size-10" />
+        </span>
     );
 }
 

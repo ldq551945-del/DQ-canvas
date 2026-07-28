@@ -7,9 +7,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { AdminMediaTypeTabs } from "@/components/admin/admin-media-type-tabs";
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
+import { AdminAccountId } from "@/components/admin/admin-user-identity";
 import type { LocalMediaAsset, LocalMediaStoragePayload } from "@/lib/local-media-storage-contract";
 import { managedMediaTypeLabel, mediaSourceGroupOptions, mediaSourceLabel } from "@/lib/media-management-contract";
-import { imagePreviewUrl } from "@/lib/media-image-url";
+import { imagePreviewUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
 
 const PAGE_SIZE = 20;
 
@@ -115,7 +116,10 @@ export function AdminLocalMediaStorage() {
                 width: 220,
                 render: (_, asset) => (
                     <div className="min-w-0 text-xs text-zinc-500">
-                        <div className="truncate text-zinc-800 dark:text-zinc-200">{asset.ownerDisplayName || asset.ownerUsername || asset.ownerUserId || "未登记用户"}</div>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span className="truncate text-zinc-800 dark:text-zinc-200">{asset.ownerDisplayName || asset.ownerUsername || (asset.ownerUserId ? "用户信息不可用" : "未登记用户")}</span>
+                            <AdminAccountId accountId={asset.ownerAccountId} className="shrink-0" />
+                        </div>
                         <div className="mt-1 truncate">{mediaSourceLabel(asset.source)}</div>
                         {asset.projectId || asset.conversationId || asset.taskId ? (
                             <div className="mt-1 truncate font-mono" title={asset.projectId || asset.conversationId || asset.taskId}>
@@ -209,11 +213,11 @@ export function AdminLocalMediaStorage() {
                             setType(value);
                         }}
                     />
-                    <div className="grid max-w-[1080px] grid-cols-[minmax(0,1fr)_40px] gap-3 md:grid-cols-[minmax(320px,1fr)_40px_200px_180px]">
+                    <div className="grid max-w-[1080px] grid-cols-[minmax(0,1fr)_40px] gap-3 xl:grid-cols-[minmax(320px,1fr)_40px_200px_180px]">
                         <Input
                             value={search}
                             allowClear
-                            placeholder="搜索文件名、用户或关联 ID"
+                            placeholder="搜索文件名、用户、用户 ID 或关联 ID"
                             onChange={(event) => {
                                 const next = event.target.value;
                                 setSearch(next);
@@ -224,29 +228,33 @@ export function AdminLocalMediaStorage() {
                         <Tooltip title="筛选">
                             <Button aria-label="筛选本地媒体文件" className="!w-10 !px-0" icon={<Search className="size-4" />} onClick={() => applySearchFilter(search)} />
                         </Tooltip>
-                        <Select
-                            className="col-span-2 md:col-span-1"
-                            value={source}
-                            options={mediaSourceGroupOptions.map((option) => ({ ...option }))}
-                            onChange={(value) => {
-                                setPage(1);
-                                setSource(value);
-                            }}
-                        />
-                        <Select
-                            className="col-span-2 md:col-span-1"
-                            value={storageClass || undefined}
-                            allowClear
-                            placeholder="存储期限"
-                            options={[
-                                { value: "temporary", label: "临时文件" },
-                                { value: "permanent", label: "长期文件" },
-                            ]}
-                            onChange={(value) => {
-                                setPage(1);
-                                setStorageClass(value || "");
-                            }}
-                        />
+                        <div className="col-span-2 min-w-0 xl:col-span-1">
+                            <Select
+                                className="w-full"
+                                value={source}
+                                options={mediaSourceGroupOptions.map((option) => ({ ...option }))}
+                                onChange={(value) => {
+                                    setPage(1);
+                                    setSource(value);
+                                }}
+                            />
+                        </div>
+                        <div className="col-span-2 min-w-0 xl:col-span-1">
+                            <Select
+                                className="w-full"
+                                value={storageClass || undefined}
+                                allowClear
+                                placeholder="存储期限"
+                                options={[
+                                    { value: "temporary", label: "临时文件" },
+                                    { value: "permanent", label: "长期文件" },
+                                ]}
+                                onChange={(value) => {
+                                    setPage(1);
+                                    setStorageClass(value || "");
+                                }}
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -272,8 +280,10 @@ export function AdminLocalMediaStorage() {
                                 <div className="mt-1 text-xs text-zinc-500">
                                     {asset.storageClass === "permanent" ? "长期" : "临时"} · {managedMediaTypeLabel(asset.type)} · {formatBytes(asset.bytes)}
                                 </div>
-                                <div className="mt-1 truncate text-xs text-zinc-500">
-                                    {asset.ownerDisplayName || asset.ownerUsername || asset.ownerUserId || "未登记用户"} · {mediaSourceLabel(asset.source)}
+                                <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
+                                    <span className="truncate">{asset.ownerDisplayName || asset.ownerUsername || (asset.ownerUserId ? "用户信息不可用" : "未登记用户")}</span>
+                                    <AdminAccountId accountId={asset.ownerAccountId} className="shrink-0" />
+                                    <span className="truncate">{mediaSourceLabel(asset.source)}</span>
                                 </div>
                                 <div className="mt-1 truncate font-mono text-[11px] text-zinc-500">{asset.directory}</div>
                                 <div className="mt-1 text-xs text-zinc-500">{formatRetention(asset)}</div>
@@ -381,7 +391,7 @@ function formatBytes(bytes: number) {
 }
 
 function originalDownloadUrl(url: string) {
-    return `${url}${url.includes("?") ? "&" : "?"}download=original`;
+    return originalMediaDownloadUrl(url);
 }
 
 function formatTime(value: string) {

@@ -24,11 +24,14 @@ export default function CanvasPage() {
     const inputRef = useRef<HTMLInputElement>(null);
     const autoOpenRef = useRef(false);
     const [creating, setCreating] = useState(false);
+    const [exporting, setExporting] = useState(false);
     const userId = useUserStore((state) => state.user?.id || "");
     const hydrated = useCanvasStore((state) => state.hydrated);
     const hydratedUserId = useCanvasStore((state) => state.hydratedUserId);
+    const syncError = useCanvasStore((state) => state.syncError);
     const hydrate = useCanvasStore((state) => state.hydrate);
-    const projects = useCanvasStore((state) => state.projects);
+    const projects = useCanvasStore((state) => state.summaries);
+    const loadProject = useCanvasStore((state) => state.loadProject);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
@@ -82,6 +85,18 @@ export default function CanvasPage() {
             if (inputRef.current) inputRef.current.value = "";
         }
     };
+    const exportSelectedProjects = async () => {
+        if (!selectedIds.length || exporting) return;
+        setExporting(true);
+        try {
+            const selected = await Promise.all(selectedIds.map((id) => loadProject(id)));
+            await exportCanvasProjects(selected);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "画布导出失败");
+        } finally {
+            setExporting(false);
+        }
+    };
 
     useEffect(() => {
         void hydrate();
@@ -114,16 +129,7 @@ export default function CanvasPage() {
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
                             <>
-                                <Button
-                                    disabled={!ready}
-                                    icon={<Download className="size-4" />}
-                                    onClick={() =>
-                                        void exportCanvasProjects(
-                                            projects.filter((project) => selectedIds.includes(project.id)),
-                                            `VOZEB-PRO-${selectedIds.length}个项目`,
-                                        )
-                                    }
-                                >
+                                <Button disabled={!ready} loading={exporting} icon={<Download className="size-4" />} onClick={() => void exportSelectedProjects()}>
                                     导出选中
                                 </Button>
                                 <Button disabled={!ready} onClick={() => setDeleteIds(selectedIds)}>
@@ -146,7 +152,14 @@ export default function CanvasPage() {
                 </header>
 
                 {!ready ? (
-                    <section className="flex min-h-16 items-center justify-center border-y border-stone-200 text-sm text-stone-500 sm:min-h-48 dark:border-stone-800">正在加载画布...</section>
+                    <section className="flex min-h-24 flex-col items-center justify-center gap-3 border-y border-stone-200 px-4 text-center text-sm text-stone-500 sm:min-h-48 dark:border-stone-800">
+                        <span>{syncError || "正在加载画布..."}</span>
+                        {syncError ? (
+                            <Button size="small" onClick={() => void hydrate(true)}>
+                                重新加载
+                            </Button>
+                        ) : null}
+                    </section>
                 ) : projects.length ? (
                     <div className="grid gap-2 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
                         {projects.map((project) => (

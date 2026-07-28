@@ -6,6 +6,7 @@ export type AgentPlan = {
     objective: string;
     audience?: string;
     reply?: string;
+    skillIds?: string[];
     decisions?: Array<{ label: string; value: string; reason: string }>;
     foundation: CreativeFoundation;
     brand?: { summary?: string; colors?: string[]; visualKeywords?: string[] };
@@ -31,6 +32,7 @@ export type AgentPlan = {
 export function validateAgentPlan(value: unknown): asserts value is AgentPlan {
     const plan = value as AgentPlan;
     if (!plan?.objective?.trim() || !Array.isArray(plan.deliverables) || plan.deliverables.length > 50) throw new Error("模型返回的创作计划无效");
+    if (plan.skillIds !== undefined && (!Array.isArray(plan.skillIds) || plan.skillIds.length > 6 || plan.skillIds.some((id) => typeof id !== "string" || !id.trim()))) throw new Error("模型返回的技能选择无效");
     if (plan.intent === "conversation") {
         if (!plan.reply?.trim() || plan.deliverables.length || plan.projectHandoff) throw new Error("模型返回的对话结果无效");
         return;

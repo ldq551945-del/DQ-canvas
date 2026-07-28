@@ -39,6 +39,7 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
                     <div className={`grid gap-1.5 ${products.length === 1 ? "grid-cols-1" : "grid-cols-2"}`} role="tablist" aria-label="套餐选择">
                         {products.map((product) => {
                             const selected = product.id === activeProduct?.id;
+                            const pricing = productPricing(product);
                             return (
                                 <button
                                     key={product.id}
@@ -56,7 +57,10 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
                                     }}
                                 >
                                     <span className="block truncate text-sm font-semibold">{product.name}</span>
-                                    <span className={`mt-1 block truncate text-xs ${selected ? "font-medium text-[#52627a] dark:text-[#d8dee8]" : "text-stone-400 dark:text-stone-500"}`}>¥ {formatYuan(product.amountCents)}</span>
+                                    <span className={`mt-1 flex min-w-0 items-center gap-1.5 truncate text-xs ${selected ? "font-medium text-[#52627a] dark:text-[#d8dee8]" : "text-stone-400 dark:text-stone-500"}`}>
+                                        <span>¥ {formatYuan(pricing.saleUnitAmountCents)}</span>
+                                        {pricing.discountCents > 0 ? <span className="truncate text-[10px] text-stone-400 line-through dark:text-stone-500">¥ {formatYuan(pricing.listUnitAmountCents)}</span> : null}
+                                    </span>
                                 </button>
                             );
                         })}
@@ -79,6 +83,8 @@ export function BillingPlanGrid({ products, onSelect, variant = "page" }: Billin
 
 function PlanCard({ product, index, recommended, variant, onSelect }: { product: BillingProduct; index: number; recommended: boolean; variant: "modal" | "page"; onSelect: (product: BillingProduct) => void }) {
     const metadata = productMetadata(product);
+    const pricing = productPricing(product);
+    const promotion = pricing.discountCents > 0 ? pricing.promotion : undefined;
     const isPointsProduct = product.productKind === "points";
     const features = featureLines(product, metadata.features).slice(0, variant === "modal" ? 3 : 4);
     return (
@@ -87,10 +93,11 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
                 recommended ? "border-[#9aa7ba] ring-1 ring-[#9aa7ba]/45 dark:border-[#74839a] dark:ring-[#74839a]/45" : "border-stone-200 hover:border-stone-300 dark:border-stone-800 dark:hover:border-stone-700"
             }`}
         >
-            <div className="pointer-events-none absolute -right-16 -top-20 size-48 rounded-full bg-[#66758e]/10 blur-3xl dark:bg-[#66758e]/12" />
             <div className="relative flex items-center justify-between gap-3">
                 <span className="text-[10px] font-semibold tracking-[0.14em] text-stone-400 sm:text-[11px] sm:tracking-[0.16em] dark:text-stone-500">VOZEB PASS · {String(index + 1).padStart(2, "0")}</span>
-                {recommended ? (
+                {promotion ? (
+                    <span className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-700 sm:px-3 sm:py-1 sm:text-[11px] dark:border-rose-900/60 dark:bg-rose-950/35 dark:text-rose-200">{promotion.label}</span>
+                ) : recommended ? (
                     <span className="rounded-full border border-[#cfd7e3] bg-[#eef2f7] px-2 py-0.5 text-[10px] font-semibold text-[#52627a] sm:px-3 sm:py-1 sm:text-[11px] dark:border-[#52627a]/60 dark:bg-[#66758e]/15 dark:text-[#d8dee8]">推荐方案</span>
                 ) : metadata.highlight ? (
                     <span className="rounded-full border border-stone-200 px-3 py-1 text-[11px] font-medium text-stone-500 dark:border-stone-700 dark:text-stone-400">{metadata.highlight}</span>
@@ -105,7 +112,7 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
             <div className="relative mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1 border-t border-stone-200 pt-1 sm:mt-5 sm:gap-4 sm:pb-2 sm:pt-5 dark:border-stone-800">
                 <div className="flex items-end gap-1">
                     <span className="pb-1 text-sm font-medium">¥</span>
-                    <span className="text-lg font-semibold leading-none tracking-[-0.045em] sm:text-[2.65rem]">{formatYuan(product.amountCents)}</span>
+                    <span className="text-lg font-semibold leading-none sm:text-[2.65rem]">{formatYuan(pricing.saleUnitAmountCents)}</span>
                     <span className="pb-1 text-sm text-stone-500 dark:text-stone-400">/ {isPointsProduct ? "一次性" : periodLabel(product.periodDays)}</span>
                 </div>
                 <Button type="primary" size="small" className="profile-primary-button !h-7 !rounded-lg px-1.5 text-xs sm:!h-10 sm:min-w-36 sm:!rounded-xl" onClick={() => onSelect(product)}>
@@ -114,6 +121,13 @@ function PlanCard({ product, index, recommended, variant, onSelect }: { product:
                     </span>
                 </Button>
             </div>
+
+            {promotion ? (
+                <div className="relative -mt-0.5 mb-1 flex items-center gap-2 text-xs text-stone-500 sm:mb-0 sm:mt-1 dark:text-stone-400">
+                    <span className="line-through">日常价 ¥ {formatYuan(pricing.listUnitAmountCents)}</span>
+                    <span className="font-medium text-rose-600 dark:text-rose-300">省 ¥ {formatYuan(pricing.discountCents)}</span>
+                </div>
+            ) : null}
 
             <ul className="relative mt-1 space-y-0.5 border-t border-stone-200 pt-1 sm:mt-5 sm:space-y-2.5 sm:pt-5 dark:border-stone-800">
                 <li className="flex gap-2 text-xs leading-5 text-stone-600 dark:text-stone-300 sm:gap-2.5 sm:text-sm">
@@ -169,4 +183,14 @@ function periodLabel(periodDays: number) {
 
 function formatYuan(amountCents: number) {
     return (Math.max(0, amountCents) / 100).toLocaleString("zh-CN", { minimumFractionDigits: amountCents % 100 ? 2 : 0, maximumFractionDigits: 2 });
+}
+
+function productPricing(product: BillingProduct): BillingProduct["pricing"] {
+    return (
+        product.pricing || {
+            listUnitAmountCents: product.amountCents,
+            saleUnitAmountCents: product.amountCents,
+            discountCents: 0,
+        }
+    );
 }

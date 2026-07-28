@@ -38,7 +38,7 @@ export type PromptDatabase = {
     seedSources: string[];
 };
 
-type OriginalAuthorSeed = {
+type BuiltInPromptSeed = {
     id: string;
     title: string;
     coverUrl: string;
@@ -62,8 +62,10 @@ type PromptListOptions = {
 
 const PROMPT_DATA_FILE = "prompts.json";
 const DEFAULT_COVER_URL = "";
-const ORIGINAL_AUTHOR_SEED_SOURCE_PREFIX = "vozeb-pro/original-author-prompts";
-const ORIGINAL_AUTHOR_SEED_SOURCE = `${ORIGINAL_AUTHOR_SEED_SOURCE_PREFIX}:v3`;
+const LEGACY_PROMPT_SEED_SOURCE_PREFIX = "vozeb-pro/original-author-prompts";
+const AWESOME_PROMPT_SEED_SOURCE_PREFIX = "tigerowo/awesome-gpt-image-2-prompts";
+const AWESOME_PROMPT_SEED_SOURCE = `${AWESOME_PROMPT_SEED_SOURCE_PREFIX}:60e9c65baecfd6d6d51ac4e4d87f146af834bb64:v3`;
+const MANAGED_PROMPT_SEED_SOURCE_PREFIXES = [LEGACY_PROMPT_SEED_SOURCE_PREFIX, AWESOME_PROMPT_SEED_SOURCE_PREFIX];
 let mutationQueue = Promise.resolve();
 
 export async function listPrompts(options: PromptListOptions) {
@@ -239,20 +241,22 @@ async function readPromptDb({ includeSeeds }: { includeSeeds: boolean }): Promis
         prompts: Array.isArray(db.prompts) ? db.prompts.map(normalizeStoredPrompt).filter(Boolean) : [],
         seedSources: Array.isArray(db.seedSources) ? db.seedSources.filter(Boolean) : [],
     };
-    return includeSeeds ? ensureOriginalAuthorPrompts(normalized) : normalized;
+    return includeSeeds ? ensureBuiltInPromptLibrary(normalized) : normalized;
 }
 
-async function ensureOriginalAuthorPrompts(db: PromptDatabase) {
-    if (db.seedSources.includes(ORIGINAL_AUTHOR_SEED_SOURCE)) return db;
-    const seeds = (await import("@/lib/prompts/original-author-seeds.json")).default as OriginalAuthorSeed[];
+async function ensureBuiltInPromptLibrary(db: PromptDatabase) {
+    const hasCurrentSeed = db.seedSources.includes(AWESOME_PROMPT_SEED_SOURCE);
+    const hasLegacySeed = [...db.seedSources, ...db.prompts.map((item) => item.source || "")].some(isManagedPromptSeedSourceExceptCurrent);
+    if (hasCurrentSeed && !hasLegacySeed) return db;
+    const seeds = (await import("@/lib/prompts/original-author-seeds.json")).default as BuiltInPromptSeed[];
     if (!seeds.length) return db;
     const now = new Date().toISOString();
-    db.prompts = db.prompts.filter((item) => !isOriginalAuthorSeedSource(item.source));
-    db.seedSources = db.seedSources.filter((source) => !isOriginalAuthorSeedSource(source));
+    db.prompts = db.prompts.filter((item) => !isManagedPromptSeedSource(item.source));
+    db.seedSources = db.seedSources.filter((source) => !isManagedPromptSeedSource(source));
     const existingIds = new Set(db.prompts.map((item) => item.id));
-    const seededPrompts = buildOriginalAuthorSeedPrompts(seeds, now).filter((item) => !existingIds.has(item.id));
+    const seededPrompts = buildBuiltInPromptLibrary(seeds, now).filter((item) => !existingIds.has(item.id));
     db.prompts.push(...seededPrompts);
-    db.seedSources = Array.from(new Set([...db.seedSources, ORIGINAL_AUTHOR_SEED_SOURCE]));
+    db.seedSources = Array.from(new Set([...db.seedSources, AWESOME_PROMPT_SEED_SOURCE]));
     await writePromptDb(db);
     return db;
 }
@@ -260,19 +264,19 @@ async function ensureOriginalAuthorPrompts(db: PromptDatabase) {
 async function ensurePostgresPromptSeeds() {
     await ensurePostgresSchema();
     const repository = createPostgresRepositories().prompts;
-    if (await repository.hasSeedSource(ORIGINAL_AUTHOR_SEED_SOURCE)) return;
-    const seeds = (await import("@/lib/prompts/original-author-seeds.json")).default as OriginalAuthorSeed[];
+    if (await repository.hasSeedSource(AWESOME_PROMPT_SEED_SOURCE)) return;
+    const seeds = (await import("@/lib/prompts/original-author-seeds.json")).default as BuiltInPromptSeed[];
     if (!seeds.length) return;
     const now = new Date().toISOString();
-    const prompts = buildOriginalAuthorSeedPrompts(seeds, now).map(toPromptRecord);
+    const prompts = buildBuiltInPromptLibrary(seeds, now).map(toPromptRecord);
     await withPostgresTransaction(async (client) => {
-        await createPostgresRepositories(client).prompts.replaceSeededPrompts(ORIGINAL_AUTHOR_SEED_SOURCE_PREFIX, ORIGINAL_AUTHOR_SEED_SOURCE, prompts);
+        await createPostgresRepositories(client).prompts.replaceSeededPrompts(MANAGED_PROMPT_SEED_SOURCE_PREFIXES, AWESOME_PROMPT_SEED_SOURCE, prompts);
     });
 }
 
-function buildOriginalAuthorSeedPrompts(seeds: OriginalAuthorSeed[], now: string): StoredPrompt[] {
+function buildBuiltInPromptLibrary(seeds: BuiltInPromptSeed[], now: string): StoredPrompt[] {
     return seeds.map((seed) => ({
-        id: `original-${seed.id}`,
+        id: seed.id,
         scope: "library",
         title: seed.title,
         coverUrl: seed.coverUrl,
@@ -281,7 +285,7 @@ function buildOriginalAuthorSeedPrompts(seeds: OriginalAuthorSeed[], now: string
         category: seed.category,
         preview: seed.preview,
         githubUrl: seed.githubUrl,
-        source: ORIGINAL_AUTHOR_SEED_SOURCE,
+        source: AWESOME_PROMPT_SEED_SOURCE,
         createdAt: now,
         updatedAt: now,
     }));
@@ -542,8 +546,12 @@ function isActiveOption(value: string) {
     return value && value !== "全部" && value !== "all";
 }
 
-function isOriginalAuthorSeedSource(source?: string) {
-    return Boolean(source?.startsWith(ORIGINAL_AUTHOR_SEED_SOURCE_PREFIX));
+function isManagedPromptSeedSource(source?: string) {
+    return Boolean(source && MANAGED_PROMPT_SEED_SOURCE_PREFIXES.some((prefix) => source.startsWith(prefix)));
+}
+
+function isManagedPromptSeedSourceExceptCurrent(source?: string) {
+    return Boolean(source && source !== AWESOME_PROMPT_SEED_SOURCE && isManagedPromptSeedSource(source));
 }
 
 function isUsefulPromptTag(tag?: string) {

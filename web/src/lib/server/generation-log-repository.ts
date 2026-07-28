@@ -3,6 +3,8 @@ import { lookup } from "node:dns/promises";
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
+import { ensureMediaFileExtension, mediaFileExtension } from "@/lib/media-file";
+import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, GenerationLogSlotSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
@@ -14,6 +16,7 @@ import type { GenerationLogAsset, GenerationLogDatabase, GenerationLogKind, Gene
 const LOG_DATA_FILE = "generation-logs.json";
 const ASSET_ROOT = GENERATION_MEDIA_ROOT;
 export const MAX_LOGS = 20000;
+export const MAX_GENERATION_LOG_ASSETS = 200;
 const MAX_SERVER_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_SERVER_VIDEO_BYTES = 300 * 1024 * 1024;
 const SERVER_ASSET_DOWNLOAD_TIMEOUT_MS = 15000;
@@ -45,11 +48,13 @@ export function isGenerationStatus(value?: string): value is GenerationLogStatus
     return value === "pending" || value === "success" || value === "failed";
 }
 
-type GenerationAssetContext = { ownerUserId: string; source: string; conversationId?: string; taskId?: string; originalName?: string };
+type GenerationAssetContext = { ownerUserId: string; source: string; conversationId?: string; taskId?: string; originalName?: string; assetIndex?: number; assetCount?: number };
 
 export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> & { url?: string }>, context: GenerationAssetContext) {
     const normalized: GenerationLogAsset[] = [];
-    for (const asset of assets.slice(0, 6)) {
+    const limitedAssets = assets.slice(0, MAX_GENERATION_LOG_ASSETS);
+    for (const [assetIndex, asset] of limitedAssets.entries()) {
+        const assetContext = { ...context, assetIndex, assetCount: limitedAssets.length };
         const type = asset.type === "video" ? "video" : "image";
         const sourceUrl = (asset.url || "").trim();
         const remoteUrl = normalizeRemoteUrl(asset.remoteUrl || (isRemoteAssetUrl(sourceUrl) ? sourceUrl : ""));
@@ -60,9 +65,9 @@ export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> 
         if (!sourceUrl || sourceUrl.startsWith("blob:")) {
             if (!remoteUrl && !serverUrl) continue;
         } else if (sourceUrl.startsWith("data:")) {
-            stored = await writeDataUrlAsset(sourceUrl, type, context);
+            stored = await writeDataUrlAsset(sourceUrl, type, assetContext);
         } else if (isRemoteAssetUrl(sourceUrl)) {
-            stored = await writeRemoteAsset(sourceUrl, type, context);
+            stored = await writeRemoteAsset(sourceUrl, type, assetContext);
             if (!stored) throw new Error("生成媒体保存到服务器失败");
         }
 
@@ -137,7 +142,7 @@ export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: Gen
         storageClass: "permanent" as const,
         type,
         ownerUserId: context.ownerUserId,
-        originalName: context.originalName,
+        originalName: generationAssetFileName(context, mimeType),
         source: context.source,
         conversationId: context.conversationId,
         taskId: context.taskId,
@@ -323,9 +328,9 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
             `
             INSERT INTO generation_logs (
                 id, user_id, conversation_id, username, display_name, kind, source, status, title, prompt, model, summary,
-                duration_ms, count, success_count, fail_count, task_id, error, created_at, updated_at, completed_at
+                duration_ms, count, success_count, fail_count, request_snapshot, task_id, error, created_at, updated_at, completed_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22)
             `,
             [
                 log.id,
@@ -344,6 +349,7 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
                 log.count,
                 log.successCount,
                 log.failCount,
+                JSON.stringify(log.requestSnapshot || {}),
                 log.taskId || null,
                 log.error || null,
                 log.createdAt,
@@ -386,6 +392,7 @@ export function mapPostgresGenerationLog(row: Record<string, unknown>, assets: G
         successCount: dbNumber(row.success_count, 0),
         failCount: dbNumber(row.fail_count, 0),
         assets,
+        requestSnapshot: normalizeGenerationLogRequestSnapshot(row.request_snapshot),
         taskId: dbOptionalText(row.task_id),
         error: dbOptionalText(row.error),
         createdAt: dbIso(row.created_at),
@@ -468,14 +475,108 @@ export function normalizeStoredLog(log: Partial<StoredGenerationLog>): StoredGen
             ? log.assets
                   .map(normalizeStoredAsset)
                   .filter((asset): asset is GenerationLogAsset => Boolean(asset?.url))
-                  .slice(0, 6)
+                  .slice(0, MAX_GENERATION_LOG_ASSETS)
             : [],
+        requestSnapshot: normalizeGenerationLogRequestSnapshot(log.requestSnapshot),
         taskId: normalizeOptionalText(log.taskId, undefined, 160),
         error: normalizeOptionalText(log.error, undefined, 1000),
         createdAt: normalizeTime(log.createdAt, new Date().toISOString()),
         updatedAt: normalizeTime(log.updatedAt, log.createdAt || new Date().toISOString()),
         completedAt: log.completedAt ? normalizeTime(log.completedAt, log.completedAt) : undefined,
     };
+}
+
+export function normalizeGenerationLogRequestSnapshot(value: unknown): GenerationLogRequestSnapshot | undefined {
+    const source = jsonObject(value);
+    if (!source || Number(source.version) !== 1) return undefined;
+    const parameters = normalizeSnapshotParameters(source.parameters);
+    const references = Array.isArray(source.references) ? source.references.flatMap(normalizeSnapshotReference).slice(0, 32) : [];
+    const slots = Array.isArray(source.slots) ? source.slots.flatMap(normalizeSnapshotSlot).slice(0, MAX_GENERATION_LOG_ASSETS) : [];
+    if (!Object.keys(parameters).length && !references.length && !slots.length) return undefined;
+    return { version: 1, parameters, references, slots };
+}
+
+function normalizeSnapshotParameters(value: unknown): GenerationLogSnapshotParameters {
+    const source = jsonObject(value);
+    if (!source) return {};
+    const result: GenerationLogSnapshotParameters = {};
+    for (const key of ["model", "size", "quality", "count", "resolution", "seconds", "generateAudio", "watermark"] as const) {
+        const normalized = normalizeOptionalText(source[key], undefined, 160);
+        if (normalized !== undefined) result[key] = normalized;
+    }
+    return result;
+}
+
+function normalizeSnapshotReference(value: unknown): GenerationLogReferenceSnapshot[] {
+    const source = jsonObject(value);
+    if (!source) return [];
+    const kind = source.kind === "video" || source.kind === "audio" ? source.kind : "image";
+    const id = normalizeOptionalText(source.id, undefined, 160);
+    const storageKey = normalizeOptionalText(source.storageKey, undefined, 1000);
+    const url = normalizeSnapshotUrl(source.url);
+    const remoteUrl = normalizeRemoteUrl(typeof source.remoteUrl === "string" ? source.remoteUrl : "");
+    const serverUrl = normalizeSnapshotUrl(source.serverUrl);
+    if (!id || (!storageKey && !url && !remoteUrl && !serverUrl)) return [];
+    return [
+        {
+            id,
+            kind,
+            name: normalizeText(source.name, `reference-${id}`, 240),
+            mimeType: normalizeText(source.mimeType, kind === "video" ? "video/mp4" : kind === "audio" ? "audio/mpeg" : "image/png", 120),
+            url,
+            remoteUrl: remoteUrl || undefined,
+            serverUrl,
+            storageKey,
+            bytes: toOptionalNumber(source.bytes),
+            width: toOptionalNumber(source.width),
+            height: toOptionalNumber(source.height),
+            durationMs: toOptionalNumber(source.durationMs),
+        },
+    ];
+}
+
+function normalizeSnapshotSlot(value: unknown): GenerationLogSlotSnapshot[] {
+    const source = jsonObject(value);
+    if (!source) return [];
+    const id = normalizeOptionalText(source.id, undefined, 200);
+    const status = source.status === "pending" || source.status === "failed" ? source.status : source.status === "success" ? "success" : undefined;
+    if (!id || !status) return [];
+    return [
+        {
+            id,
+            index: normalizeNonNegativeInteger(source.index, 0),
+            status,
+            prompt: normalizeOptionalText(source.prompt, undefined, 5000),
+            parameters: normalizeSnapshotParameters(source.parameters),
+            referenceIds: Array.isArray(source.referenceIds) ? Array.from(new Set(source.referenceIds.map((item) => normalizeOptionalText(item, undefined, 160)).filter((item): item is string => Boolean(item)))).slice(0, 32) : undefined,
+            assetIndex: toOptionalNumber(source.assetIndex),
+            taskId: normalizeOptionalText(source.taskId, undefined, 200),
+            taskKind: source.taskKind === "edit" ? "edit" : source.taskKind === "generation" ? "generation" : undefined,
+            taskProvider: source.taskProvider === "openai" || source.taskProvider === "seedance" || source.taskProvider === "generation" ? source.taskProvider : undefined,
+            taskModel: normalizeOptionalText(source.taskModel, undefined, 200),
+            taskPollPath: normalizeOptionalText(source.taskPollPath, undefined, 1000),
+            taskResultUrl: normalizeSnapshotUrl(source.taskResultUrl),
+            serverTaskId: normalizeOptionalText(source.serverTaskId, undefined, 200),
+            startedAt: toOptionalNumber(source.startedAt),
+            error: normalizeOptionalText(source.error, undefined, 1000),
+        },
+    ];
+}
+
+function jsonObject(value: unknown): Record<string, unknown> | undefined {
+    if (typeof value === "string") {
+        try {
+            return jsonObject(JSON.parse(value));
+        } catch {
+            return undefined;
+        }
+    }
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function normalizeSnapshotUrl(value: unknown) {
+    const url = normalizeOptionalText(value, undefined, 4000);
+    return url && !/^(data|blob):/i.test(url) ? url : undefined;
 }
 
 export function normalizeStoredAsset(asset: Partial<GenerationLogAsset> | undefined): GenerationLogAsset | null {
@@ -569,8 +670,13 @@ export function parseDateEnd(value?: string) {
 }
 
 export function extensionFromMime(mimeType: string, type: GenerationLogKind) {
-    const fromMime = mimeType.includes("/") ? `.${mimeType.split("/")[1].split(";")[0].replace("jpeg", "jpg")}` : "";
-    const clean = fromMime && /^[a-z0-9.]+$/i.test(fromMime) ? fromMime : "";
-    if (clean && clean.length > 1) return clean;
-    return type === "video" ? ".mp4" : ".png";
+    return `.${mediaFileExtension(mimeType, "", type === "video" ? "mp4" : "png")}`;
+}
+
+function generationAssetFileName(context: GenerationAssetContext, mimeType: string) {
+    if (!context.originalName) return undefined;
+    const fileName = ensureMediaFileExtension(context.originalName, mimeType);
+    if (!context.assetCount || context.assetCount <= 1) return fileName;
+    const extension = mediaFileExtension(mimeType, fileName);
+    return `${fileName.slice(0, -(extension.length + 1))}-${(context.assetIndex || 0) + 1}.${extension}`;
 }

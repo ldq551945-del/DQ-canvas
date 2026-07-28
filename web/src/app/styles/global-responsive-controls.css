@@ -1,4 +1,11 @@
 @layer utilities {
+    .ant-picker-dropdown .ant-picker-time-panel-cell-selected:not(.ant-picker-time-panel-cell-disabled) .ant-picker-time-panel-cell-inner,
+    .ant-picker-dropdown .ant-picker-time-panel-cell-selected:not(.ant-picker-time-panel-cell-disabled) .ant-picker-time-panel-cell-inner:hover {
+        background: var(--ant-color-primary, #171717) !important;
+        color: var(--ant-color-text-light-solid, #ffffff) !important;
+        font-weight: 600;
+    }
+
     @media (max-width: 639px) {
         .ant-picker-dropdown {
             left: 50% !important;

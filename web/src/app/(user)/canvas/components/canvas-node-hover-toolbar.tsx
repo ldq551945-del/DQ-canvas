@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
 import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, MessageSquare, Minus, Music2, Pencil, Plus, RefreshCw, Settings2, Trash2, Upload, Video } from "lucide-react";
 
@@ -75,10 +75,9 @@ export function CanvasNodeHoverToolbar({
     onToggleFreeResize,
     onDelete,
 }: CanvasNodeHoverToolbarProps) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
-    const [showImageToolLabels, setShowImageToolLabels] = useState(true);
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
-    const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(true);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
     const toolbarRef = useRef<HTMLDivElement>(null);
     const [toolbarMetrics, setToolbarMetrics] = useState({ width: 0, viewportWidth: 0 });
@@ -92,7 +91,6 @@ export function CanvasNodeHoverToolbar({
             const parsed = JSON.parse(stored) as unknown;
             const config = readImageQuickToolsConfig(parsed);
             setQuickImageToolIds(config.ids);
-            setShowImageToolLabels(config.showLabels);
         } catch {
             window.localStorage.removeItem(IMAGE_QUICK_TOOLS_STORAGE_KEY);
         }
@@ -114,7 +112,7 @@ export function CanvasNodeHoverToolbar({
             resizeObserver?.disconnect();
             window.removeEventListener("resize", sync);
         };
-    }, [node?.id, quickImageToolIds, showImageToolLabels, imageToolSettingsOpen]);
+    }, [node?.id, quickImageToolIds, imageToolSettingsOpen]);
 
     if (!node) return null;
 
@@ -149,7 +147,6 @@ export function CanvasNodeHoverToolbar({
         if (!node) return;
         onKeep(node.id);
         setDraftImageToolIds(quickImageToolIds);
-        setDraftShowImageToolLabels(showImageToolLabels);
         setImageToolSettingsOpen(true);
     }
 
@@ -190,9 +187,8 @@ export function CanvasNodeHoverToolbar({
     };
 
     const saveImageToolSettings = () => {
-        const config = { ids: draftImageToolIds, showLabels: draftShowImageToolLabels };
+        const config = { ids: draftImageToolIds };
         setQuickImageToolIds(config.ids);
-        setShowImageToolLabels(config.showLabels);
         window.localStorage.setItem(IMAGE_QUICK_TOOLS_STORAGE_KEY, JSON.stringify(config));
         closeImageToolSettings();
     };
@@ -201,8 +197,8 @@ export function CanvasNodeHoverToolbar({
         <>
             <div
                 ref={toolbarRef}
-                className="hide-scrollbar absolute z-[70] flex h-12 max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-full items-center overflow-x-auto overflow-y-hidden rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
-                style={{ left: toolbarLeft, top }}
+                className="hide-scrollbar absolute z-[70] flex h-11 max-w-[calc(100vw-32px)] -translate-x-1/2 -translate-y-full items-center overflow-x-auto overflow-y-hidden rounded-[14px] border shadow-[0_8px_28px_rgba(15,23,42,.12)]"
+                style={{ left: toolbarLeft, top, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}
                 onMouseEnter={() => onKeep(node.id)}
                 onMouseLeave={() => {
                     if (!imageToolSettingsOpen) onLeave();
@@ -211,21 +207,12 @@ export function CanvasNodeHoverToolbar({
                 onPointerDown={(event) => event.stopPropagation()}
             >
                 {toolbarTools.map((tool) => (
-                    <ToolbarAction key={tool.id} {...tool} showLabel={showImageToolLabels} />
+                    <ToolbarAction key={tool.id} {...tool} theme={theme} />
                 ))}
-                {hasImage ? <ToolbarAction id="more" title="配置快捷工具" label="更多" icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} showLabel={showImageToolLabels} /> : null}
+                {hasImage ? <ToolbarAction id="more" title="配置快捷工具" label="更多" icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} theme={theme} /> : null}
             </div>
             {hasImage ? (
-                <ImageToolSettingsModal
-                    open={imageToolSettingsOpen}
-                    tools={selectableImageToolbarTools}
-                    selectedIds={draftImageToolIds}
-                    showLabels={draftShowImageToolLabels}
-                    onToggle={setDraftImageToolVisible}
-                    onShowLabelsChange={setDraftShowImageToolLabels}
-                    onCancel={closeImageToolSettings}
-                    onSave={saveImageToolSettings}
-                />
+                <ImageToolSettingsModal open={imageToolSettingsOpen} tools={selectableImageToolbarTools} selectedIds={draftImageToolIds} onToggle={setDraftImageToolVisible} onCancel={closeImageToolSettings} onSave={saveImageToolSettings} />
             ) : null}
         </>
     );
@@ -316,14 +303,21 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
     );
 }
 
-function ToolbarAction({ title, label, icon, onClick, showLabel, active = false, danger = false }: ToolbarTool & { showLabel: boolean }) {
-    const hasText = showLabel && Boolean(label);
+function ToolbarAction({ title, icon, onClick, active = false, danger = false, theme }: ToolbarTool & { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
     return (
-        <Tooltip title={title} placement="top" mouseEnterDelay={0.2} color="#ffffff" styles={{ root: { color: "#242529", boxShadow: "0 8px 24px rgba(15,23,42,.16)", fontSize: 13, fontWeight: 500 } }}>
-            <button type="button" className={`group relative flex h-12 items-center whitespace-nowrap px-1.5 ${danger ? "text-[#ef4444]" : ""}`} onClick={onClick} aria-label={title}>
-                <span className={`flex h-9 items-center ${hasText ? "gap-2 px-2.5" : "justify-center px-2"} rounded-lg transition group-hover:bg-[#f0f0f1] ${active ? "bg-[#eeeeef]" : ""}`}>
+        <Tooltip title={title} placement="top" mouseEnterDelay={0.2}>
+            <button
+                type="button"
+                className="group relative flex size-11 shrink-0 items-center justify-center"
+                style={{ color: danger ? "#ef4444" : theme.toolbar.item, "--canvas-tool-hover": theme.toolbar.itemHover } as CSSProperties}
+                onClick={onClick}
+                aria-label={title}
+            >
+                <span
+                    className="flex size-8 items-center justify-center rounded-lg transition group-hover:bg-[var(--canvas-tool-hover)]"
+                    style={{ background: active ? theme.toolbar.activeBg : undefined, color: active ? theme.toolbar.activeText : undefined }}
+                >
                     {icon}
-                    {hasText ? <span>{label}</span> : null}
                 </span>
             </button>
         </Tooltip>

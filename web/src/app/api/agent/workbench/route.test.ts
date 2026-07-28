@@ -96,14 +96,15 @@ describe("workbench agent model routing", () => {
             recentMessages: [{ id: "one", conversationId: "conversation-one", sequence: 3, role: "user", status: "completed", content: "保持黑金配色", metadata: {}, createdAt: 1, updatedAt: 1 }],
         });
 
-        const response = await POST(workbenchRequest({ prompt: "继续生成主图", workspace: "image", conversationId: "conversation-one" }));
+        const attachment = { kind: "image", name: "产品参考", url: "/api/reference-assets/permanent/product.png", storageKey: "permanent/product.png", mimeType: "image/png" };
+        const response = await POST(workbenchRequest({ prompt: "继续生成主图", workspace: "image", conversationId: "conversation-one", attachments: [attachment] }));
         const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
         const upstreamBody = JSON.parse(String(init.body)) as { input: Array<{ role: string; content: string }> };
         const planningInput = JSON.parse(upstreamBody.input.find((message) => message.role === "user")?.content || "{}") as { conversationContext?: { summary?: string } };
 
         expect(response.status).toBe(200);
         expect(planningInput.conversationContext?.summary).toContain("咖啡品牌视觉");
-        expect(mocks.appendWorkbenchExchangeForUser).toHaveBeenCalledWith("user", { conversationId: "conversation-one", workspace: "image", prompt: "继续生成主图", reply: "已收到生成需求。" });
+        expect(mocks.appendWorkbenchExchangeForUser).toHaveBeenCalledWith("user", { conversationId: "conversation-one", workspace: "image", prompt: "继续生成主图", reply: "已收到生成需求。", attachments: [attachment] });
     });
 
     it("does not create media for an ordinary question even when the planner requests generation", async () => {

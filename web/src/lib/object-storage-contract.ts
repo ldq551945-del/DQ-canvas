@@ -37,6 +37,9 @@ export type ExternalStorageFile = {
     scope?: "generation" | "reference";
     originalName?: string;
     ownerUserId?: string;
+    ownerAccountId?: string;
+    ownerUsername?: string;
+    ownerDisplayName?: string;
     source?: string;
     referenceCount: number;
     previewUrl: string;

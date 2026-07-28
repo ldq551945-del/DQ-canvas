@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     refundUserPoints: vi.fn(async () => undefined),
     getCreativeAssetsByIds: vi.fn(async (_ids: string[] = []): Promise<Array<Record<string, unknown>>> => []),
+    listRecentCreativeMediaAssets: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
     getCreativeConversationContext: vi.fn(async (): Promise<CreativeConversationContext> => ({ summary: "", summaryThroughSequence: 0, recentMessages: [] })),
     registerCreativeAssets: vi.fn(),
     linkStoredGenerationTask: vi.fn(async () => undefined),
@@ -20,7 +21,12 @@ vi.mock("@/lib/auth/store", () => ({
     refundUserPoints: mocks.refundUserPoints,
 }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi }));
-vi.mock("@/lib/server/creative-runtime-store", () => ({ getCreativeAssetsByIds: mocks.getCreativeAssetsByIds, getCreativeConversationContext: mocks.getCreativeConversationContext, registerCreativeAssets: mocks.registerCreativeAssets }));
+vi.mock("@/lib/server/creative-runtime-store", () => ({
+    getCreativeAssetsByIds: mocks.getCreativeAssetsByIds,
+    getCreativeConversationContext: mocks.getCreativeConversationContext,
+    listRecentCreativeMediaAssets: mocks.listRecentCreativeMediaAssets,
+    registerCreativeAssets: mocks.registerCreativeAssets,
+}));
 vi.mock("@/lib/server/generation-task-store", () => ({ linkStoredGenerationTask: mocks.linkStoredGenerationTask }));
 vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/lib/server/agent-run-store")>();
@@ -31,13 +37,15 @@ vi.mock("@/lib/server/agent-run-store", async (importOriginal) => {
     };
 });
 
-import { executeAgentRun, isCanvasConversationPrompt } from "./agent-run-executor";
+import { executeAgentRun } from "./agent-run-executor";
+import { taskResultOps } from "./agent-run-execution";
 
 describe("executeAgentRun backend settings", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.events = [];
         mocks.getCreativeAssetsByIds.mockResolvedValue([]);
+        mocks.listRecentCreativeMediaAssets.mockResolvedValue([]);
         mocks.getCreativeConversationContext.mockResolvedValue({ summary: "", summaryThroughSequence: 0, recentMessages: [] });
         mocks.registerCreativeAssets.mockImplementation(async (inputs: Array<Record<string, unknown>>) => inputs.map((input, index) => ({ ...input, id: `asset-${index}`, status: "ready", createdAt: 1, updatedAt: 1 })));
         mocks.updateAgentRunById.mockImplementation(async (_id, patch, event, allowedStatuses, expectedExecutionId) => {
@@ -53,6 +61,22 @@ describe("executeAgentRun backend settings", () => {
             if (init?.method === "POST") return Response.json({ task: { id: `child-${mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST").length}` } });
             if (url.includes("/api/image-tasks/")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/output.png" } } });
             throw new Error(`unexpected request: ${url}`);
+        });
+    });
+
+    it("preserves generated media dimensions in canvas output ops", () => {
+        const task = {
+            ...imageTask("image-one"),
+            attempts: 1,
+            result: { url: "https://cdn.example.com/output.png", width: 1024, height: 1024, mimeType: "image/png" },
+        } as AgentRunTask;
+
+        const output = taskResultOps("agent-run", 0, task);
+
+        expect(output.ops[0]).toMatchObject({
+            type: "add_node",
+            nodeType: "image",
+            metadata: { remoteUrl: "https://cdn.example.com/output.png", naturalWidth: 1024, naturalHeight: 1024, mimeType: "image/png", size: task.ratio },
         });
     });
 
@@ -135,11 +159,37 @@ describe("executeAgentRun backend settings", () => {
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(2);
+        expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST").map((call) => JSON.parse(String(call[1]?.body)).context.clientRequestId)).toEqual(["request:image-one:1:1", "request:image-one:1:2"]);
         expect(mocks.run?.tasks[0].childTasks).toEqual([
             expect.objectContaining({ id: "child-1", status: "completed", result: expect.objectContaining({ url: "https://cdn.example.com/output.png" }) }),
             expect.objectContaining({ id: "child-2", status: "completed", result: expect.objectContaining({ url: "https://cdn.example.com/output.png" }) }),
         ]);
         expect(mocks.run?.tasks[0].result).toMatchObject({ results: [{ url: "https://cdn.example.com/output.png" }, { url: "https://cdn.example.com/output.png" }] });
+    });
+
+    it("keeps successful assets and reports counts when a later image copy fails", async () => {
+        mocks.run = runWithTasks([{ ...imageTask("image-one"), count: 2 }]);
+        mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+        mocks.registerCreativeAssets.mockImplementation(async (inputs: Array<Record<string, unknown>>) => inputs.map((input) => ({ ...input, id: `asset-${input.sourceTaskId}`, status: "ready", createdAt: 1, updatedAt: 1 })));
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (init?.method === "POST") {
+                const count = mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST").length;
+                return Response.json({ task: { id: `child-${count}` } });
+            }
+            if (url.endsWith("/api/image-tasks/child-1")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/one.png" } } });
+            if (url.endsWith("/api/image-tasks/child-2")) return Response.json({ task: { status: "error", error: "第二张生成失败" } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run?.tasks[0]).toMatchObject({
+            status: "failed",
+            assetIds: ["asset-child-1"],
+            childTasks: [expect.objectContaining({ id: "child-1", status: "completed" }), expect.objectContaining({ id: "child-2", status: "failed", error: "第二张生成失败" })],
+        });
+        expect(mocks.run?.assetIds).toEqual(["asset-child-1"]);
+        expect(mocks.events.find((event) => event.type === "run.failed")?.data).toMatchObject({ message: expect.stringContaining("成功 1 张，失败 1 张") });
     });
 
     it("resumes only unfinished children after a multi-copy run restarts", async () => {
@@ -199,7 +249,7 @@ describe("executeAgentRun backend settings", () => {
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
         expect(mocks.fetchInternalApi.mock.calls.filter((call) => call[1]?.method === "POST")).toHaveLength(1);
-        expect(mocks.run?.tasks[0]).toMatchObject({ status: "failed", attempts: 1, taskId: "child-error", childTasks: [{ id: "child-error", status: "pending", attempt: 1 }], error: "上游生成失败" });
+        expect(mocks.run?.tasks[0]).toMatchObject({ status: "failed", attempts: 1, taskId: "child-error", childTasks: [{ id: "child-error", status: "failed", attempt: 1, error: "上游生成失败" }], error: "上游生成失败" });
         expect(mocks.run?.status).toBe("failed");
     });
 
@@ -305,6 +355,70 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.getCreativeConversationContext).toHaveBeenCalledWith("conversation", "user", "agent-run");
     });
 
+    it("lets the text model select a same-conversation media candidate for continuous creation", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "继续上一张，把衣服换成红色" });
+        const memoryAsset = creativeImageAsset("asset-memory", "上一张角色图", "https://cdn.example.com/memory.png");
+        mocks.listRecentCreativeMediaAssets.mockResolvedValue([memoryAsset]);
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = {
+            ...canvasPlan("image-default"),
+            deliverables: [{ ...canvasPlan("image-default").deliverables[0], assetIds: [memoryAsset.id] }],
+        };
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/responses")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-memory" } });
+            if (url.endsWith("/api/image-tasks/child-memory")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/continued.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.listRecentCreativeMediaAssets).toHaveBeenCalledWith("conversation", "user", 20);
+        const planningBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/responses"))?.[1]?.body)) as { input: Array<{ content: string }> };
+        expect(JSON.parse(planningBody.input[1].content)).toMatchObject({
+            referenceContext: { source: "conversation-memory-candidates" },
+            referencedAssets: [{ id: "asset-memory", title: "上一张角色图" }],
+        });
+        const createBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))?.[1]?.body));
+        expect(createBody.references).toEqual([{ dataUrl: "", url: "https://cdn.example.com/memory.png" }]);
+    });
+
+    it("keeps current-turn attachments exclusive and does not mix conversation memory", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "按这张图继续", referencedAssetIds: ["asset-current"] });
+        mocks.getCreativeAssetsByIds.mockResolvedValue([creativeImageAsset("asset-current", "本轮附件", "https://cdn.example.com/current.png")]);
+        mocks.listRecentCreativeMediaAssets.mockResolvedValue([creativeImageAsset("asset-memory", "历史图片", "https://cdn.example.com/memory.png")]);
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify({ ...canvasPlan("image-default"), intent: "conversation", decisions: [], deliverables: [] }) }] }));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.listRecentCreativeMediaAssets).not.toHaveBeenCalled();
+        const planningBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls[0][1]?.body)) as { input: Array<{ content: string }> };
+        expect(JSON.parse(planningBody.input[1].content)).toMatchObject({
+            referenceContext: { source: "current-turn-explicit" },
+            referencedAssets: [{ id: "asset-current", title: "本轮附件" }],
+        });
+    });
+
+    it("does not attach an old candidate when the text model plans a new subject", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "新建一个完全独立的海边产品主视觉" });
+        mocks.listRecentCreativeMediaAssets.mockResolvedValue([creativeImageAsset("asset-old", "旧角色", "https://cdn.example.com/old.png")]);
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = { ...canvasPlan("image-default"), deliverables: [{ ...canvasPlan("image-default").deliverables[0], assetIds: [] }] };
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/responses")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-new-subject" } });
+            if (url.endsWith("/api/image-tasks/child-new-subject")) return Response.json({ task: { status: "success", result: { remoteUrl: "https://cdn.example.com/new.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const createBody = JSON.parse(String(mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))?.[1]?.body));
+        expect(createBody.references).toEqual([]);
+        expect(mocks.run?.tasks[0].referenceAssetId).toBeUndefined();
+    });
+
     it("answers ordinary conversation without creating canvas ops or media tasks", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
@@ -314,7 +428,7 @@ describe("executeAgentRun backend settings", () => {
                     {
                         type: "function_call",
                         name: "create_agent_plan",
-                        arguments: JSON.stringify({ ...canvasPlan("image-default"), reply: "在的，你可以直接和我聊天，也可以让我操作当前画布。" }),
+                        arguments: JSON.stringify({ ...canvasPlan("image-default"), intent: "conversation", reply: "在的，你可以直接和我聊天，也可以让我操作当前画布。", decisions: [], deliverables: [] }),
                     },
                 ],
             }),
@@ -329,10 +443,14 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => /\/api\/(?:image|video|audio|text)-tasks/.test(String(url)))).toBe(false);
     });
 
-    it("accepts a natural-language Responses reply for ordinary conversation", async () => {
+    it("falls back to structured Chat Completions when Responses returns prose", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
-        mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "在的，你可以直接告诉我想创作什么。" }] }] }));
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.endsWith("/responses")) return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "在的，你可以直接告诉我想创作什么。" }] }] });
+            if (url.endsWith("/chat/completions")) return Response.json({ choices: [{ message: { content: JSON.stringify(conversationPlan("image-default", "在的，你可以直接告诉我想创作什么。")) } }] });
+            throw new Error(`unexpected request: ${url}`);
+        });
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
@@ -341,7 +459,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.refundUserPoints).not.toHaveBeenCalled();
     });
 
-    it("accepts a natural-language chat-completions fallback for ordinary conversation", async () => {
+    it("rejects an unstructured prose planner response instead of pretending generation completed", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockImplementation(async (url: string) => {
@@ -352,8 +470,8 @@ describe("executeAgentRun backend settings", () => {
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.run?.status).toBe("completed");
-        expect(mocks.events.find((event) => event.type === "run.completed")?.data).toMatchObject({ completed: 0, reply: "在的，需要我帮你做什么？" });
+        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);
     });
 
     it("falls back to chat-completions when Responses exceeds its short protocol timeout", async () => {
@@ -371,7 +489,7 @@ describe("executeAgentRun backend settings", () => {
                 expect(init?.signal?.aborted).toBe(true);
                 throw new DOMException("timed out", "TimeoutError");
             }
-            if (url.endsWith("/chat/completions")) return Response.json({ choices: [{ message: { content: "Chat 协议已接管。" } }] });
+            if (url.endsWith("/chat/completions")) return Response.json({ choices: [{ message: { content: JSON.stringify(conversationPlan("image-default", "Chat 协议已接管。")) } }] });
             throw new Error(`unexpected request: ${url}`);
         });
 
@@ -392,7 +510,7 @@ describe("executeAgentRun backend settings", () => {
         mocks.getAuthSettings.mockResolvedValue(plannerFailoverSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockImplementation(async (url: string) => {
             if (url.includes("/planner-primary/") && (url.endsWith("/responses") || url.endsWith("/chat/completions"))) return new Response("unavailable", { status: 502 });
-            if (url.includes("/planner-backup/") && url.endsWith("/responses")) return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "备用规划渠道已接管。" }] }] });
+            if (url.includes("/planner-backup/") && url.endsWith("/responses")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "备用规划渠道已接管。")) }] });
             throw new Error(`unexpected request: ${url}`);
         });
 
@@ -405,7 +523,7 @@ describe("executeAgentRun backend settings", () => {
     });
 
     it("plans chat media without canvas ops, links the child task and registers a stable asset", async () => {
-        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "把这张图改成红色服装", referencedAssetIds: ["asset-source"] });
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "把这张图改成红色服装", referencedAssetIds: ["asset-source"], requestedImageSize: "1080x1213" });
         mocks.getCreativeAssetsByIds.mockResolvedValue([
             {
                 id: "asset-source",
@@ -460,7 +578,7 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.registerCreativeAssets.mock.calls[0][0][0]).not.toHaveProperty("dataUrl");
         expect(mocks.run?.assetIds).toEqual(["asset-0"]);
         const createCall = mocks.fetchInternalApi.mock.calls.find(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"));
-        expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ source: "agent", references: [{ url: "https://cdn.example.com/source.png" }, { url: "https://cdn.example.com/style.png" }] });
+        expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ source: "agent", config: { size: "1080x1213" }, references: [{ url: "https://cdn.example.com/source.png" }, { url: "https://cdn.example.com/style.png" }] });
     });
 
     it("uses completed dependency assets as real references for downstream video", async () => {
@@ -565,6 +683,27 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run).toMatchObject({ status: "completed", projectHandoffEmitted: true });
     });
 
+    it("ignores an invalid project handoff attached to an ordinary image plan", async () => {
+        mocks.run = planningRun("生成森林女子角色设定图");
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+        const plan = {
+            ...canvasPlan("image-default"),
+            projectHandoff: { surface: "canvas", title: "", ratio: "1:1", assetIds: [""] },
+        };
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.endsWith("/responses")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(plan) }] });
+            if (init?.method === "POST" && url.endsWith("/api/image-tasks")) return Response.json({ task: { id: "child-image" } });
+            if (url.endsWith("/api/image-tasks/child-image")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/forest.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.run).toMatchObject({ status: "completed", projectHandoff: undefined });
+        expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toBe(true);
+        expect(mocks.events.some((event) => event.type === "project.handoff")).toBe(false);
+    });
+
     it("falls back to the backend default when the planned model is invalid", async () => {
         mocks.run = planningRun();
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
@@ -602,7 +741,12 @@ describe("executeAgentRun backend settings", () => {
     it("refunds a zero-cost planning record when persisting the conversation reply fails", async () => {
         mocks.run = planningRun("你在吗？");
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
-        mocks.fetchInternalApi.mockResolvedValue(Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "在的。" }] }] }, { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-agent-free" } }));
+        mocks.fetchInternalApi.mockResolvedValue(
+            Response.json(
+                { output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "在的。")) }] },
+                { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-agent-free" } },
+            ),
+        );
         mocks.updateAgentRunById.mockImplementation(async (_id, patch, event, allowedStatuses, expectedExecutionId) => {
             if (!mocks.run || (allowedStatuses && !allowedStatuses.includes(mocks.run.status)) || (expectedExecutionId && mocks.run.executionId !== expectedExecutionId)) return null;
             if (event?.type === "run.completed") throw new Error("conversation persistence failed");
@@ -622,7 +766,10 @@ describe("executeAgentRun backend settings", () => {
         mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
         mocks.fetchInternalApi.mockImplementation(async () => {
             mocks.run = mocks.run ? { ...mocks.run, status: "cancelled" } : null;
-            return Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "在的。" }] }] }, { headers: { "x-vozeb-pro-points-cost": "3", "x-vozeb-pro-points-record-id": "points-agent-cancelled" } });
+            return Response.json(
+                { output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "在的。")) }] },
+                { headers: { "x-vozeb-pro-points-cost": "3", "x-vozeb-pro-points-record-id": "points-agent-cancelled" } },
+            );
         });
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
@@ -683,14 +830,25 @@ function canvasPlan(model: string) {
     };
 }
 
-describe("isCanvasConversationPrompt", () => {
-    it("separates ordinary questions from canvas actions", () => {
-        expect(isCanvasConversationPrompt("你在吗？")).toBe(true);
-        expect(isCanvasConversationPrompt("这个功能怎么使用？")).toBe(true);
-        expect(isCanvasConversationPrompt("在画布上创建一个文字节点")).toBe(false);
-        expect(isCanvasConversationPrompt("生成一张发布会主视觉")).toBe(false);
-    });
-});
+function conversationPlan(model: string, reply: string) {
+    return { ...canvasPlan(model), intent: "conversation", reply, decisions: [], deliverables: [] };
+}
+
+function creativeImageAsset(id: string, title: string, remoteUrl: string) {
+    return {
+        id,
+        userId: "user",
+        conversationId: "conversation",
+        ordinal: 0,
+        type: "image",
+        status: "ready",
+        title,
+        remoteUrl,
+        metadata: {},
+        createdAt: 1,
+        updatedAt: 1,
+    };
+}
 
 function settings(imageModel: string, channelId: string) {
     return {

@@ -1,5 +1,6 @@
 import type { CreativeMessage } from "@/lib/creative-runtime-contract";
 import type { WorkbenchWorkspace } from "@/lib/workbench-session-contract";
+import { normalizeWorkbenchAgentAttachments, workbenchAgentAttachmentSignature } from "@/lib/workbench-agent-attachment";
 import { getCreativeWorkbenchSession, listCreativeWorkbenchSessions } from "@/services/api/creative";
 
 import type { WorkbenchAgentMessage, WorkbenchAgentSession } from "./workbench-agent-panel";
@@ -55,13 +56,14 @@ export async function loadOlderWorkbenchAgentSession(workspace: WorkbenchWorkspa
 
 export function normalizeWorkbenchAgentSessions(sessions: WorkbenchAgentSession[]) {
     return sessions.map((session) => {
-        let lastUserText = "";
+        let lastUserKey = "";
         const messages = session.messages.filter((message) => {
             if (message.role === "assistant" && !message.progress && message.text.trim() === "正在按当前参数创建生成任务。") return false;
             if (message.role !== "user") return true;
             const text = message.text.trim();
-            if (text && text === lastUserText) return false;
-            lastUserText = text;
+            const key = `${text}\n${workbenchAgentAttachmentSignature(message.attachments)}`;
+            if (text && key === lastUserKey) return false;
+            lastUserKey = key;
             return true;
         });
         const latestUserText = messages.findLast((message) => message.role === "user")?.text.trim() || "";
@@ -93,10 +95,12 @@ export function removeWorkbenchAgentSessionsForRecords(sessions: WorkbenchAgentS
 }
 
 function toWorkbenchMessage(message: CreativeMessage): WorkbenchAgentMessage {
+    const attachments = normalizeWorkbenchAgentAttachments(message.metadata.attachments);
     return {
         id: message.id,
         sequence: message.sequence,
         role: message.role === "user" ? "user" : message.status === "failed" ? "error" : "assistant",
         text: message.content,
+        ...(attachments.length ? { attachments } : {}),
     };
 }

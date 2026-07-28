@@ -3,10 +3,15 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { createDramaProjectForUser, DramaProjectServiceError, listDramaProjectSummariesForUser } from "@/lib/server/drama-project-service";
 
-export async function GET() {
+export async function GET(request: Request) {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
-    return NextResponse.json({ code: 0, data: { projects: await listDramaProjectSummariesForUser(user.id) }, msg: "OK" });
+    const params = new URL(request.url).searchParams;
+    const result = await listDramaProjectSummariesForUser(user.id, {
+        page: Math.max(1, Number(params.get("page")) || 1),
+        pageSize: Math.max(1, Math.min(100, Number(params.get("pageSize")) || 20)),
+    });
+    return NextResponse.json({ code: 0, data: { projects: result.items, total: result.total, page: result.page, pageSize: result.pageSize }, msg: "OK" });
 }
 
 export async function POST(request: Request) {

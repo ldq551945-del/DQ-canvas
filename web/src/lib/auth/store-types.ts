@@ -1,9 +1,27 @@
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
+import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "qingyan" | "globalaiopc" | "seedance" | "compatible";
+
+export type SystemChannelModelConfig = {
+    capability: LogicalModelCapability;
+    source?: "manual" | "provider" | "official" | "health";
+    apiFormat?: ApiCallFormat;
+    protocol?: SystemChannelProtocol;
+    createPath?: string;
+    queryPath?: string;
+    requestTemplate?: string;
+    resultField?: string;
+    statusField?: string;
+    durationRange?: string;
+    referenceRule?: string;
+    supportsReferenceImage?: boolean;
+    supportsReferenceVideo?: boolean;
+    supportsReferenceAudio?: boolean;
+};
 
 export type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
@@ -22,6 +40,9 @@ export type SystemChannelAdvancedConfig = {
     supportsReferenceImage: boolean;
     supportsReferenceVideo: boolean;
     supportsReferenceAudio: boolean;
+    modelCatalogPaths?: string[];
+    modelCapabilities?: Record<string, LogicalModelCapability>;
+    modelConfigs?: Record<string, SystemChannelModelConfig>;
 };
 
 export type LegacyUserQuota = {
@@ -168,6 +189,7 @@ export type CdkStatus = "active" | "disabled";
 
 export type PublicCdkRedemption = {
     userId: string;
+    accountId?: string;
     username: string;
     displayName: string;
     redeemedAt: string;
@@ -213,6 +235,18 @@ export type PublicAnnouncement = {
     endsAt?: string;
     createdAt: string;
     updatedAt: string;
+};
+
+export type AnnouncementPageInput = {
+    page?: number;
+    pageSize?: number;
+};
+
+export type AnnouncementPage = {
+    items: PublicAnnouncement[];
+    total: number;
+    page: number;
+    pageSize: number;
 };
 
 export type SiteSettings = {
@@ -269,7 +303,7 @@ export const DEFAULT_SITE_SOCIALS: SiteSocialSettings = {
 
 export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [
     { id: "vozeb-pro-home", label: "VOZEB PRO", url: "https://www.vozeb.com/", enabled: true },
-    { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: "https://qm.qq.com/q/9MVLTxuRd6", enabled: true },
+    { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: VOZEB_QQ_GROUP_URL, enabled: true },
     { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
 ];
 
@@ -286,9 +320,12 @@ export type MailSettings = {
 
 export type PublicUser = {
     id: string;
+    accountId: string;
     username: string;
     email?: string;
     displayName: string;
+    bio: string;
+    avatarUrl?: string;
     role: UserRole;
     status: UserStatus;
     planId: string;
@@ -312,7 +349,8 @@ export type PublicUserSummary = {
     totalPointsBalance: number;
 };
 
-export type StoredUser = Omit<PublicUser, "planName" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
+export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
+    avatarStorageKey?: string;
     passwordHash: string;
 };
 
@@ -399,6 +437,7 @@ export type AuthSettings = {
 
 export type AuthDatabase = {
     version: 1;
+    nextUserAccountId: number;
     users: StoredUser[];
     sessions: StoredSession[];
     quotaUsage: StoredQuotaUsage[];

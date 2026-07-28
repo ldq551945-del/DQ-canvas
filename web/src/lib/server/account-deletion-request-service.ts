@@ -26,7 +26,7 @@ export async function getOwnAccountDeletionRequest(userId: string): Promise<Acco
     return request ? toUserView(request) : null;
 }
 
-export async function submitAccountDeletionRequest(user: Pick<PublicUser, "id" | "username" | "displayName" | "email">, input: { currentPassword: string; note?: string }) {
+export async function submitAccountDeletionRequest(user: Pick<PublicUser, "id" | "accountId" | "username" | "displayName" | "email">, input: { currentPassword: string; note?: string }) {
     if (!input.currentPassword) throw new AccountDeletionRequestError("请输入当前密码");
     await verifyUserPasswordForSensitiveAction(user.id, input.currentPassword);
     const latest = await readLatestAccountDeletionRequestForUser(user.id);
@@ -37,6 +37,7 @@ export async function submitAccountDeletionRequest(user: Pick<PublicUser, "id" |
     const created = await createAccountDeletionRequest({
         id: randomUUID(),
         userId: user.id,
+        accountId: user.accountId,
         username: user.username,
         displayName: user.displayName,
         email: user.email,
@@ -92,6 +93,7 @@ function toAdminView(request: StoredAccountDeletionRequest): AdminAccountDeletio
     return {
         ...toUserView(request),
         userId: request.userId,
+        accountId: request.accountId,
         username: request.username,
         displayName: request.displayName,
         email: request.email,

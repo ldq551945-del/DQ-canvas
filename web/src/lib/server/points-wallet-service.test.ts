@@ -273,8 +273,10 @@ async function seedWallet({
 function user(pointsBalance: number, planId: "free" | "pro"): StoredUser {
     return {
         id: "user-one",
+        accountId: "0001",
         username: "wallet-user",
         displayName: "钱包用户",
+        bio: "",
         role: "user",
         status: "active",
         planId,

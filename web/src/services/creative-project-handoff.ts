@@ -29,7 +29,7 @@ export function materializeCreativeProjectHandoff(handoff: CreativeProjectHandof
 export async function getMaterializedCreativeProject(handoff: CreativeProjectHandoff): Promise<MaterializedCreativeProject | undefined> {
     if (handoff.surface === "canvas") {
         const useCanvasStore = await hydratedCanvasStore();
-        const project = useCanvasStore.getState().projects.find((item) => item.sourceHandoffId === handoff.id);
+        const project = useCanvasStore.getState().summaries.find((item) => item.sourceHandoffId === handoff.id);
         return project ? materializedProject(handoff, project.id) : undefined;
     }
     const useDramaStore = await hydratedDramaStore();
@@ -40,7 +40,7 @@ export async function getMaterializedCreativeProject(handoff: CreativeProjectHan
 async function materializeProject(handoff: CreativeProjectHandoff): Promise<MaterializedCreativeProject> {
     if (handoff.surface === "canvas") {
         const useCanvasStore = await hydratedCanvasStore();
-        const existing = useCanvasStore.getState().projects.find((project) => project.sourceHandoffId === handoff.id);
+        const existing = useCanvasStore.getState().summaries.find((project) => project.sourceHandoffId === handoff.id);
         if (existing) return materializedProject(handoff, existing.id);
         const projectId = await useCanvasStore.getState().importProject({ title: handoff.title, nodes: buildCanvasHandoffNodes(handoff), connections: [] }, handoff.id);
         return materializedProject(handoff, projectId);

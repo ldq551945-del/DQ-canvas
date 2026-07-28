@@ -16,13 +16,14 @@ export async function testObjectStorageSettings() {
     return request<{ available: boolean }>("/api/admin/object-storage", { method: "POST" });
 }
 
-export async function getExternalStorageFiles(input: { prefix?: string; cursor?: string; limit?: number; type?: string; source?: string }) {
+export async function getExternalStorageFiles(input: { prefix?: string; cursor?: string; limit?: number; type?: string; source?: string; ownerUserId?: string }) {
     const query = new URLSearchParams();
     if (input.prefix) query.set("prefix", input.prefix);
     if (input.cursor) query.set("cursor", input.cursor);
     if (input.limit) query.set("limit", String(input.limit));
     if (input.type) query.set("type", input.type);
     if (input.source) query.set("source", input.source);
+    if (input.ownerUserId) query.set("ownerUserId", input.ownerUserId);
     return request<ExternalStorageFilesPayload>(`/api/admin/object-storage/files?${query}`);
 }
 

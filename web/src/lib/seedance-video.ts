@@ -1,4 +1,5 @@
-import { modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { isSeedanceVideoModelName, normalizeModelId } from "@/lib/model-capability";
+import { modelOptionName, resolveModelChannel, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
@@ -55,18 +56,22 @@ const seedancePixels = {
 } as const;
 
 export function isSeedanceVideoConfig(config: AiConfig | Pick<AiConfig, "model" | "videoModel" | "baseUrl">) {
-    const requestConfig = "channels" in config ? resolveModelRequestConfig(config, config.model || config.videoModel) : config;
-    return isSeedanceVideoModel(modelOptionName(requestConfig.model || requestConfig.videoModel)) || isArkPlanBaseUrl(requestConfig.baseUrl);
-}
-
-function isSeedanceVideoModel(model: string) {
-    const value = model.toLowerCase();
-    return value.includes("seedance") || value.includes("doubao-seedance");
+    const selectedModel = config.model || config.videoModel;
+    const requestConfig = "channels" in config ? resolveModelRequestConfig(config, selectedModel) : config;
+    if ("channels" in config) {
+        const channel = resolveModelChannel(config, selectedModel);
+        const logical = config.logicalModels.find((model) => normalizeModelId(model.id) === normalizeModelId(modelOptionName(selectedModel)));
+        const binding = logical?.bindings.filter((item) => item.enabled && item.channelId === channel.id).sort((left, right) => left.priority - right.priority)[0];
+        const modelProtocol = channel.advancedConfig?.modelConfigs?.[normalizeModelId(binding?.upstreamModel || selectedModel)]?.protocol;
+        if (modelProtocol && modelProtocol !== "auto") return modelProtocol === "seedance";
+        if (channel.advancedConfig?.protocol === "seedance") return true;
+    }
+    return isSeedanceVideoModelName(modelOptionName(requestConfig.model || requestConfig.videoModel)) || isArkPlanBaseUrl(requestConfig.baseUrl);
 }
 
 export function isSeedanceFastModel(model: string) {
     const value = model.toLowerCase();
-    return isSeedanceVideoModel(value) && value.includes("fast");
+    return isSeedanceVideoModelName(value) && value.includes("fast");
 }
 
 function isArkPlanBaseUrl(baseUrl: string) {

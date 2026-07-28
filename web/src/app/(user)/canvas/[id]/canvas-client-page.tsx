@@ -78,7 +78,6 @@ function VozebProCanvasPage() {
         hydratedUserId,
         hydrate,
         createProject,
-        openProject,
         updateProject,
         renameProject,
         deleteProjects,
@@ -256,6 +255,7 @@ function VozebProCanvasPage() {
         pasteSystemClipboard,
         handleConnectStart,
         handleNodeResize,
+        handleImageDimensions,
         toggleNodeFreeResize,
         handleNodeContentChange,
         toggleBatchExpanded,
@@ -443,6 +443,7 @@ function VozebProCanvasPage() {
                             }}
                             onConnectStart={handleConnectStart}
                             onResize={handleNodeResize}
+                            onImageDimensions={handleImageDimensions}
                             onContentChange={handleNodeContentChange}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}

@@ -1,5 +1,6 @@
 import type { ResolvedLogicalModel } from "./logical-model-router";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
+import { normalizeModelId } from "@/lib/model-capability";
 
 type GenerationApiFormat = "openai" | "gemini";
 export type SystemGenerationChannelConfig = {
@@ -43,11 +44,12 @@ export function resolveSystemGenerationChannel(config: { apiSource?: string; bas
 }
 
 export function toSystemGenerationChannel(resolved: ResolvedLogicalModel): SystemGenerationChannelConfig {
+    const modelConfig = resolved.channel.advancedConfig?.modelConfigs?.[normalizeModelId(resolved.upstreamModel)];
     return {
         apiSource: "system",
         baseUrl: `/api/ai/system/${encodeURIComponent(resolved.channelId)}`,
         apiKey: "system",
-        apiFormat: resolved.channel.apiFormat,
+        apiFormat: modelConfig?.apiFormat || resolved.channel.apiFormat,
         model: resolved.upstreamModel,
         channelId: resolved.channelId,
         logicalModel: resolved.logicalModelId,
@@ -56,11 +58,15 @@ export function toSystemGenerationChannel(resolved: ResolvedLogicalModel): Syste
     };
 }
 
-function resolveModelAdvancedConfig(config: import("@/lib/auth/store").SystemChannelAdvancedConfig | undefined, model: string) {
-    const preset = resolveGlobalAiOpcPreset(config, model);
-    if (!config || !preset) return config;
+export function resolveModelAdvancedConfig(config: import("@/lib/auth/store").SystemChannelAdvancedConfig | undefined, model: string) {
+    if (!config) return undefined;
+    const modelConfig = config.modelConfigs?.[normalizeModelId(model)];
+    const { capability: _capability, apiFormat: _apiFormat, ...modelAdvanced } = modelConfig || { capability: undefined, apiFormat: undefined };
+    const resolved = modelConfig ? { ...config, ...modelAdvanced } : config;
+    const preset = resolveGlobalAiOpcPreset(resolved, model);
+    if (!preset) return resolved;
     return {
-        ...config,
+        ...resolved,
         globalAiOpcPreset: preset.id as import("@/lib/auth/store").SystemChannelAdvancedConfig["globalAiOpcPreset"],
         createPath: preset.createPath,
         queryPath: preset.queryPath || "",

@@ -87,10 +87,16 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     return { ...finalized, ...(conversationId ? { conversationId } : {}) };
 }
 
-async function saveWorkbenchExchange(input: { userId: string; prompt: string }, conversationId: string, workspace: "image" | "video", plan: ReturnType<typeof finalizeWorkbenchPlan>) {
+async function saveWorkbenchExchange(input: { userId: string; prompt: string; body: WorkbenchRequestBody }, conversationId: string, workspace: "image" | "video", plan: ReturnType<typeof finalizeWorkbenchPlan>) {
     if (!conversationId) return;
     try {
-        await appendWorkbenchExchangeForUser(input.userId, { conversationId, workspace, prompt: input.prompt, reply: plan.shouldGenerate ? "已收到生成需求。" : plan.reply });
+        await appendWorkbenchExchangeForUser(input.userId, {
+            conversationId,
+            workspace,
+            prompt: input.prompt,
+            reply: plan.shouldGenerate ? "已收到生成需求。" : plan.reply,
+            ...(input.body.attachments?.length ? { attachments: input.body.attachments } : {}),
+        });
     } catch (error) {
         throw new WorkbenchPlanningError(error instanceof Error ? error.message : "工作台会话保存失败", errorStatus(error, 500));
     }

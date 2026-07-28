@@ -1,5 +1,5 @@
 import type { AuthSettings, LogicalModelCapability, SystemModelChannel } from "@/lib/auth/store";
-import { resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
+import { channelModelCapability, resolveLogicalModelCapabilityProfile } from "@/lib/model-routing-config";
 import { channelSupportsModel, rawModelName } from "./generation-channel";
 import { filterHealthyRuntimeCandidates } from "./channel-runtime-health";
 
@@ -18,7 +18,6 @@ export function resolveLogicalModel(settings: Pick<AuthSettings, "logicalModels"
 export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logicalModels" | "systemChannels">, capability: LogicalModelCapability, requestedModelId: string, preferredChannelId = ""): ResolvedLogicalModel[] {
     const requested = rawModelName(requestedModelId);
     if (!requested) return [];
-    if (capability !== "image" && isStableDiffusionImageModelName(requested.toLowerCase())) return [];
     const logical = settings.logicalModels.find((model) => model.enabled && model.capability === capability && model.id.toLowerCase() === requested.toLowerCase());
     if (logical) {
         const bindings = logical.bindings.filter((binding) => binding.enabled).sort((a, b) => a.priority - b.priority || (b.weight || 100) - (a.weight || 100) || a.id.localeCompare(b.id));
@@ -34,14 +33,10 @@ export function resolveLogicalModelCandidates(settings: Pick<AuthSettings, "logi
     const ordered = preferredChannelId ? [...settings.systemChannels.filter((channel) => channel.id === preferredChannelId), ...settings.systemChannels.filter((channel) => channel.id !== preferredChannelId)] : settings.systemChannels;
     return filterHealthyRuntimeCandidates(
         ordered
-            .filter((item) => item.enabled && item.baseUrl.trim() && item.apiKey.trim() && channelSupportsModel(item.models, requested))
+            .filter((item) => item.enabled && item.baseUrl.trim() && item.apiKey.trim() && channelSupportsModel(item.models, requested) && channelModelCapability(item, requested) === capability)
             .map((channel) => ({ logicalModelId: requested, upstreamModel: requested, channelId: channel.id, channel, capabilityProfile: resolveLogicalModelCapabilityProfile({}, capability, channel, requested) })),
         capability,
     );
-}
-
-function isStableDiffusionImageModelName(value: string) {
-    return value === "sd" || value.includes("stable diffusion") || value.includes("stable_diffusion") || /^sd(?:xl|[-_.\s]?\d)/.test(value);
 }
 
 export function resolveLogicalBillingModel(logicalModels: AuthSettings["logicalModels"], capability: LogicalModelCapability, channelId: string, upstreamModel: string, preferredLogicalModelId = "") {

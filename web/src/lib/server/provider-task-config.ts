@@ -1,4 +1,5 @@
 import type { SystemChannelAdvancedConfig } from "@/lib/auth/store";
+import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
 
 type TemplateValues = Record<string, unknown>;
 
@@ -35,12 +36,7 @@ export function assertReferenceUrls(config: SystemChannelAdvancedConfig | undefi
 }
 
 function isUnsignedReferenceAssetUrl(value: string) {
-    try {
-        const url = new URL(value);
-        return url.pathname.startsWith("/api/reference-assets/") && !url.searchParams.has("signature");
-    } catch {
-        return false;
-    }
+    return isReferenceAssetUrl(value) && !hasProviderReadSignatureShape(value);
 }
 
 function renderProviderRequest(template: string, values: TemplateValues, align?: (payload: Record<string, unknown>, values: TemplateValues) => Record<string, unknown>) {

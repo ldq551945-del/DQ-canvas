@@ -15,6 +15,7 @@ import type { AiTextMessage } from "@/types/ai";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,6 @@ export const dynamic = "force-dynamic";
 configureServerProxyDispatcher();
 
 const TASK_HEARTBEAT_MS = 30 * 1000;
-const MODEL_REQUEST_TIMEOUT_MS = 2 * 60 * 1000;
 
 type CreateTextTaskBody = {
     config?: TextTaskConfig;
@@ -413,7 +413,7 @@ function taskHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKe
 function taskFetch(config: TextTaskConfig, url: string, init: RequestInit) {
     const nextInit = {
         ...init,
-        signal: init.signal || AbortSignal.timeout(MODEL_REQUEST_TIMEOUT_MS),
+        signal: init.signal || AbortSignal.timeout(resolveModelRequestTimeoutMs(config, "text")),
     };
     return isInternalApiBaseUrl(config.baseUrl) ? fetchInternalApi(url, nextInit) : fetch(url, nextInit);
 }

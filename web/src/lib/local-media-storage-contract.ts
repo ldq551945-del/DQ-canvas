@@ -15,6 +15,7 @@ export type LocalMediaAsset = {
     expiresAt?: string;
     url: string;
     ownerUserId?: string;
+    ownerAccountId?: string;
     ownerUsername?: string;
     ownerDisplayName?: string;
     originalName?: string;

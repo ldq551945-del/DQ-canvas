@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import type { CreativeFoundation, CreativeReview } from "@/lib/creative-agent-contract";
 import type { CreativeProjectHandoffPlan, CreativeRunRequest, CreativeSurface } from "@/lib/creative-runtime-contract";
+import { extractImageSizeFromPrompt } from "@/lib/image-size";
 import { createCreativeRunBundle, getCreativeRunByClientRequestId, mutateCreativeRun } from "./creative-runtime-store";
 import { getStoredGenerationTask, listStoredGenerationTasks } from "./generation-task-store";
 
@@ -13,9 +14,10 @@ export type AgentRunReference = {
 };
 export type AgentRunChildTask = {
     id: string;
-    status: "pending" | "completed";
+    status: "pending" | "completed" | "failed";
     attempt: number;
     result?: unknown;
+    error?: string;
 };
 export type AgentRunTask = {
     id: string;
@@ -58,6 +60,7 @@ export type AgentRun = {
     referencedAssetIds: string[];
     selectedSkillIds?: string[];
     requestedModelIds?: string[];
+    requestedImageSize?: string;
     assetIds: string[];
     status: AgentRunStatus;
     executionId?: string;
@@ -89,6 +92,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         referencedAssetIds: input.assetIds,
         selectedSkillIds: input.skillIds,
         ...(input.modelIds.length ? { requestedModelIds: input.modelIds } : {}),
+        requestedImageSize: extractImageSizeFromPrompt(input.prompt) || undefined,
         assetIds: [],
         status: "planning",
         tasks: [],

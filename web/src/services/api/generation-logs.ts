@@ -1,3 +1,5 @@
+import type { GenerationLogRequestSnapshot } from "@/lib/generation-log-snapshot";
+
 type GenerationLogKind = "image" | "video";
 type GenerationLogSource = "image-workbench" | "video-workbench" | "canvas" | "unknown";
 type GenerationLogStatus = "pending" | "success" | "failed";
@@ -29,6 +31,7 @@ type GenerationLogRecordInput = {
     successCount?: number;
     failCount?: number;
     assets?: GenerationLogAssetInput[];
+    requestSnapshot?: GenerationLogRequestSnapshot;
     error?: string;
     createdAt?: string | number;
     completedAt?: string | number;
@@ -37,6 +40,7 @@ type GenerationLogRecordInput = {
 type GenerationLogRecordResponse = {
     id: string;
     assets: Array<GenerationLogAssetInput & { url: string }>;
+    requestSnapshot?: GenerationLogRequestSnapshot;
 };
 
 export type StoredGenerationLogRecord = {
@@ -54,6 +58,7 @@ export type StoredGenerationLogRecord = {
     successCount: number;
     failCount: number;
     assets: Array<GenerationLogAssetInput & { url: string }>;
+    requestSnapshot?: GenerationLogRequestSnapshot;
     taskId?: string;
     error?: string;
     createdAt: string;

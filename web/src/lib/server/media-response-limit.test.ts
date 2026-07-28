@@ -1,32 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { limitMediaResponseBody, mediaResponseExceedsLimit } from "./media-response-limit";
+import { MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "./media-response-limit";
 
-describe("media response limits", () => {
-    it("rejects a declared response above the limit", () => {
-        expect(mediaResponseExceedsLimit(new Headers({ "content-length": "11" }), 10)).toBe(true);
-        expect(mediaResponseExceedsLimit(new Headers({ "content-length": "10" }), 10)).toBe(false);
+describe("normalizeMediaProxyRange", () => {
+    it("keeps normal single ranges and bounds open or oversized ranges", () => {
+        expect(normalizeMediaProxyRange("bytes=2-5")).toBe("bytes=2-5");
+        expect(normalizeMediaProxyRange("bytes=100-")).toBe(`bytes=100-${100 + MAX_MEDIA_PROXY_RANGE_BYTES - 1}`);
+        expect(normalizeMediaProxyRange("bytes=0-999999999")).toBe(`bytes=0-${MAX_MEDIA_PROXY_RANGE_BYTES - 1}`);
+        expect(normalizeMediaProxyRange("bytes=-999999999")).toBe(`bytes=-${MAX_MEDIA_PROXY_RANGE_BYTES}`);
     });
 
-    it("streams a response within the limit", async () => {
-        const body = new ReadableStream<Uint8Array>({
-            start(controller) {
-                controller.enqueue(new Uint8Array([1, 2, 3]));
-                controller.close();
-            },
-        });
-        const result = await new Response(limitMediaResponseBody(body, 3)).arrayBuffer();
-        expect(result.byteLength).toBe(3);
-    });
-
-    it("terminates a chunked response after crossing the limit", async () => {
-        const body = new ReadableStream<Uint8Array>({
-            start(controller) {
-                controller.enqueue(new Uint8Array(6));
-                controller.enqueue(new Uint8Array(6));
-                controller.close();
-            },
-        });
-        await expect(new Response(limitMediaResponseBody(body, 10)).arrayBuffer()).rejects.toThrow("Media is too large");
+    it("rejects multiple, empty, reversed and unsafe ranges", () => {
+        expect(normalizeMediaProxyRange("bytes=0-1,4-5")).toBe("invalid");
+        expect(normalizeMediaProxyRange("bytes=-")).toBe("invalid");
+        expect(normalizeMediaProxyRange("bytes=5-2")).toBe("invalid");
+        expect(normalizeMediaProxyRange("bytes=999999999999999999999-")).toBe("invalid");
     });
 });

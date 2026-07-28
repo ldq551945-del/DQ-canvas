@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
-import type { SystemChannelAdvancedConfig } from "@/lib/auth/store";
+import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 
 export type AudioTaskConfig = {
@@ -11,6 +11,7 @@ export type AudioTaskConfig = {
     model: string;
     channelId?: string;
     logicalModel?: string;
+    capabilityProfile?: LogicalModelCapabilityProfile;
     advancedConfig?: SystemChannelAdvancedConfig;
     voice?: string;
     format?: string;

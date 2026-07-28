@@ -48,6 +48,7 @@ export const PROMPT_SEARCH_DEBOUNCE_MS = 300;
 export const USER_PAGE_SIZE = 20;
 export const CDK_PAGE_SIZE = 20;
 export const GENERATION_LOG_PAGE_SIZE = 20;
+export const ANNOUNCEMENT_PAGE_SIZE = 12;
 
 import type { AdminDashboardState } from "./use-admin-dashboard-state";
 
@@ -60,6 +61,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         userRequestIdRef,
         generationLogRequestIdRef,
         operationsSummaryRequestIdRef,
+        announcementRequestIdRef,
         setUsers,
         setUserSummary,
         setUsersLoading,
@@ -139,6 +141,10 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         setBulkDeletingCdk,
         announcements,
         setAnnouncements,
+        announcementPage,
+        setAnnouncementPage,
+        announcementTotal,
+        setAnnouncementTotal,
         setAnnouncementsLoading,
         announcementSaving,
         setAnnouncementSaving,
@@ -671,17 +677,22 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         message.success(`已导出 ${codes.length} 个 CDK`);
     };
 
-    const loadAnnouncements = async () => {
+    const loadAnnouncements = async (nextPage = announcementPage) => {
+        const requestId = ++announcementRequestIdRef.current;
         setAnnouncementsLoading(true);
         try {
-            const response = await fetch("/api/admin/announcements", { cache: "no-store" });
-            const payload = (await response.json()) as { announcements?: PublicAnnouncement[]; error?: string };
+            const params = new URLSearchParams({ page: String(nextPage), pageSize: String(ANNOUNCEMENT_PAGE_SIZE) });
+            const response = await fetch(`/api/admin/announcements?${params}`, { cache: "no-store" });
+            const payload = (await response.json()) as { announcements?: PublicAnnouncement[]; total?: number; page?: number; error?: string };
             if (!response.ok || !payload.announcements) throw new Error(payload.error || "加载公告失败");
+            if (requestId !== announcementRequestIdRef.current) return;
             setAnnouncements(payload.announcements);
+            setAnnouncementPage(payload.page || nextPage);
+            setAnnouncementTotal(Math.max(0, Number(payload.total) || 0));
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "加载公告失败");
+            if (requestId === announcementRequestIdRef.current) message.error(error instanceof Error ? error.message : "加载公告失败");
         } finally {
-            setAnnouncementsLoading(false);
+            if (requestId === announcementRequestIdRef.current) setAnnouncementsLoading(false);
         }
     };
 
@@ -697,7 +708,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             if (!response.ok || !payload.announcement) throw new Error(payload.error || "保存公告失败");
             setAnnouncementModalOpen(false);
             setAnnouncementDraft({ title: "", content: "", enabled: true, popupHome: false, popupAfterLogin: false });
-            await loadAnnouncements();
+            await loadAnnouncements(1);
             message.success("公告已发布");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存公告失败");
@@ -747,7 +758,9 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             const response = await fetch(`/api/admin/announcements/${id}`, { method: "DELETE" });
             const payload = (await response.json().catch(() => ({}))) as { error?: string };
             if (!response.ok) throw new Error(payload.error || "删除公告失败");
-            setAnnouncements((current) => current.filter((item) => item.id !== id));
+            const remaining = Math.max(0, announcementTotal - 1);
+            const nextPage = Math.min(announcementPage, Math.max(1, Math.ceil(remaining / ANNOUNCEMENT_PAGE_SIZE)));
+            await loadAnnouncements(nextPage);
             message.success("公告已删除");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "删除公告失败");

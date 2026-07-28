@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Button, Drawer, Input, Modal, Segmented, Select } from "antd";
-import { ImagePlus, Link2, LoaderCircle, MessageSquareText, Send, Square, X } from "lucide-react";
+import { ImagePlus, Link2, LoaderCircle, MessageSquareText, RotateCcw, Send, Square, X } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -17,10 +17,23 @@ import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { DramaAssetReference, DramaEpisode, DramaProject } from "@/lib/drama-project-contract";
+import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
 import { controlCreativeAgentRun, createCreativeAgentRun, createCreativeConversation, listCreativeAssets, listCreativeMessages, uploadCreativeAsset, watchCreativeAgentRun } from "@/services/api/creative";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useDramaStore } from "../stores/use-drama-store";
+
+type PendingDramaSubmission = {
+    clientRequestId: string;
+    conversationId?: string;
+    content: string;
+    assetIds: string[];
+    skillIds: string[];
+    modelIds: string[];
+    temporaryUserId: string;
+    temporaryAssistantId: string;
+    snapshot: ReturnType<typeof dramaSnapshot>;
+};
 
 export function DramaAgentPanel({ project, episode, onConversationChange }: { project: DramaProject; episode: DramaEpisode; onConversationChange: (conversationId: string) => void }) {
     const [mobileOpen, setMobileOpen] = useState(false);
@@ -55,6 +68,8 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
     const [uploading, setUploading] = useState(false);
     const [runId, setRunId] = useState<string>();
     const streamRef = useRef<(() => void) | null>(null);
+    const submittingRef = useRef(false);
+    const failedSubmissionsRef = useRef(new Map<string, PendingDramaSubmission>());
     const endRef = useRef<HTMLDivElement>(null);
     const inputRef = useRef<TextAreaRef>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +107,7 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
         }
         return map;
     }, [assets]);
+    const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets]);
 
     const ensureConversation = async () => {
         if (activeConversationIdRef.current) return activeConversationIdRef.current;
@@ -122,28 +138,30 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
         }
     };
 
-    const submit = async () => {
-        const content = prompt.trim();
-        if (!content || sending) return;
-        setPrompt("");
-        setSending(true);
+    const executeSubmission = async (submission: PendingDramaSubmission) => {
         try {
             const result = await createCreativeAgentRun({
-                clientRequestId: `drama-agent-${nanoid()}`,
+                clientRequestId: submission.clientRequestId,
                 surface: "drama",
-                conversationId: activeConversationIdRef.current,
+                conversationId: submission.conversationId,
                 projectId: project.id,
-                prompt: content,
-                assetIds: selectedAssetIds,
-                skillIds: selectedSkillId ? [selectedSkillId] : [],
-                modelIds: smartPlanning ? [] : selectedModelIds,
-                snapshot: dramaSnapshot(project, episode),
+                prompt: submission.content,
+                assetIds: submission.assetIds,
+                skillIds: submission.skillIds,
+                modelIds: submission.modelIds,
+                snapshot: submission.snapshot,
             });
+            failedSubmissionsRef.current.delete(submission.temporaryAssistantId);
             activeConversationIdRef.current = result.run.conversationId;
             if (result.run.conversationId !== project.creativeConversationId) onConversationChange(result.run.conversationId);
-            setSelectedSkillId(undefined);
-            setSelectedAssetIds([]);
             setRunId(result.run.id);
+            setMessages((current) =>
+                current.map((item) => {
+                    if (item.id === submission.temporaryUserId) return { ...item, id: result.run.inputMessageId, conversationId: result.run.conversationId, runId: result.run.id };
+                    if (item.id === submission.temporaryAssistantId) return { ...item, id: result.run.assistantMessageId, conversationId: result.run.conversationId, runId: result.run.id };
+                    return item;
+                }),
+            );
             await refresh(result.run.conversationId);
             streamRef.current?.();
             streamRef.current = watchCreativeAgentRun(result.run.id, {
@@ -153,20 +171,79 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                 onProjectHandoff: () => undefined,
                 onConnectionError: () => {
                     setSending(false);
+                    submittingRef.current = false;
                     setRunId(undefined);
                     void refresh();
                 },
                 onTerminal: () => {
                     setSending(false);
+                    submittingRef.current = false;
                     setRunId(undefined);
                     streamRef.current = null;
                     void refresh();
                 },
             });
+            return true;
         } catch (error) {
-            setMessages((current) => [...current, localErrorMessage(project.creativeConversationId, error)]);
+            failedSubmissionsRef.current.set(submission.temporaryAssistantId, submission);
+            const content = friendlyAgentError(error, "项目 Agent 请求失败，请稍后重试。");
+            setMessages((current) => current.map((item) => (item.id === submission.temporaryAssistantId ? { ...item, content, status: "failed", updatedAt: Date.now() } : item)));
             setSending(false);
+            submittingRef.current = false;
+            setRunId(undefined);
+            return false;
         }
+    };
+
+    const submit = async () => {
+        const content = prompt.trim();
+        if (!content || sending || submittingRef.current || uploading) return;
+        submittingRef.current = true;
+        setPrompt("");
+        setSending(true);
+        const now = Date.now();
+        const sequence = messages.reduce((highest, item) => Math.max(highest, item.sequence), 0) + 1;
+        const temporaryUserId = `message-${nanoid()}`;
+        const temporaryAssistantId = `message-${nanoid()}`;
+        const assetIds = selectedAssetIds.slice(-20);
+        const submission: PendingDramaSubmission = {
+            clientRequestId: `drama-agent-${nanoid()}`,
+            conversationId: activeConversationIdRef.current,
+            content,
+            assetIds,
+            skillIds: selectedSkillId ? [selectedSkillId] : [],
+            modelIds: smartPlanning ? [] : selectedModelIds,
+            temporaryUserId,
+            temporaryAssistantId,
+            snapshot: dramaSnapshot(project, episode),
+        };
+        setMessages((current) => [
+            ...current,
+            { id: temporaryUserId, conversationId: submission.conversationId || "pending", sequence, role: "user", status: "completed", content, metadata: { assetIds }, createdAt: now, updatedAt: now },
+            {
+                id: temporaryAssistantId,
+                conversationId: submission.conversationId || "pending",
+                sequence: sequence + 1,
+                role: "assistant",
+                status: "running",
+                content: "正在理解你的需求",
+                metadata: {},
+                createdAt: now,
+                updatedAt: now,
+            },
+        ]);
+        setSelectedSkillId(undefined);
+        setSelectedAssetIds((current) => current.filter((id) => !assetIds.includes(id)));
+        return executeSubmission(submission);
+    };
+
+    const retrySubmission = async (assistantMessageId: string) => {
+        const submission = failedSubmissionsRef.current.get(assistantMessageId);
+        if (!submission || sending || submittingRef.current) return false;
+        submittingRef.current = true;
+        setSending(true);
+        setMessages((current) => current.map((item) => (item.id === assistantMessageId ? { ...item, content: "正在重新提交创作请求", status: "running", updatedAt: Date.now() } : item)));
+        return executeSubmission(submission);
     };
 
     const toggleModel = (model: CreativeAgentModelOption) => {
@@ -202,15 +279,29 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                     </div>
                 ) : null}
                 {messages.map((message) => {
+                    const referencedAssets = message.role === "user" ? messageAssetIds(message).flatMap((id) => assetById.get(id) || []) : [];
                     const messageAssets = [...(assetsByRun.get(message.id) || []), ...(message.runId ? assetsByRun.get(message.runId) || [] : [])].filter((asset, index, list) => list.findIndex((item) => item.id === asset.id) === index);
                     const displayContent = formatAgentMessageText(message.content);
                     return (
                         <div key={message.id} className={`group/message min-w-0 ${message.role === "user" ? "pl-8 text-right" : "pr-2"}`}>
+                            {referencedAssets.length ? <DramaMessageReferences assets={referencedAssets} /> : null}
                             <div className={`min-w-0 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere] ${message.status === "failed" ? "text-red-500" : "text-foreground"}`}>
                                 {message.status === "running" ? <LoaderCircle className="mr-1 inline size-3.5 animate-spin" /> : null}
                                 {displayContent}
                             </div>
                             {messageAssets.length ? <DramaAgentAssets assets={messageAssets} project={project} episode={episode} /> : null}
+                            {message.role === "assistant" && message.status === "failed" && !message.runId ? (
+                                <Button
+                                    type="text"
+                                    size="small"
+                                    className="!mt-1 !h-7 !px-1.5 !text-xs !text-red-600 hover:!bg-red-50 hover:!text-red-700 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
+                                    icon={<RotateCcw className="size-3.5" />}
+                                    onClick={() => void retrySubmission(message.id)}
+                                    aria-label="重试本次项目 Agent 请求"
+                                >
+                                    重试
+                                </Button>
+                            ) : null}
                             {message.status !== "running" ? (
                                 <AgentMessageActions
                                     text={displayContent}
@@ -219,6 +310,11 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                                         message.role === "user" && !sending
                                             ? (text) => {
                                                   setPrompt(text);
+                                                  setSelectedAssetIds(
+                                                      messageAssetIds(message)
+                                                          .filter((id) => assets.some((asset) => asset.id === id))
+                                                          .slice(-20),
+                                                  );
                                                   window.requestAnimationFrame(() => inputRef.current?.focus());
                                               }
                                             : undefined
@@ -306,12 +402,35 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                     {sending && runId ? (
                         <Button danger shape="circle" icon={<Square className="size-3.5" />} onClick={() => void controlCreativeAgentRun(runId, "cancel")} aria-label="停止项目 Agent" />
                     ) : (
-                        <Button type="primary" shape="circle" icon={<Send className="size-3.5" />} disabled={!prompt.trim()} onClick={() => void submit()} aria-label="发送给项目 Agent" />
+                        <Button type="primary" shape="circle" icon={<Send className="size-3.5" />} disabled={!prompt.trim() || uploading} onClick={() => void submit()} aria-label="发送给项目 Agent" />
                     )}
                 </div>
             </div>
         </div>
     );
+}
+
+function DramaMessageReferences({ assets }: { assets: CreativeAsset[] }) {
+    let imageIndex = 0;
+    return (
+        <div className="mb-1.5 flex max-w-full flex-wrap justify-end gap-1.5" aria-label="本轮参考素材">
+            {assets.flatMap((asset) => {
+                const url = asset.serverUrl || asset.remoteUrl || "";
+                if (asset.type !== "image" || !url) return [];
+                return (
+                    <div key={asset.id} className="relative size-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted" title={asset.title || "参考图"}>
+                        <AgentMediaPreview type="image" url={url} title={asset.title || "参考图"} className="size-full" />
+                        <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{imageReferenceLabel(imageIndex++)}</span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function messageAssetIds(message: CreativeMessage) {
+    const value = message.metadata.assetIds;
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
 }
 
 function DramaAgentAssets({ assets, project, episode }: { assets: CreativeAsset[]; project: DramaProject; episode: DramaEpisode }) {
@@ -555,14 +674,9 @@ function dramaSnapshot(project: DramaProject, episode: DramaEpisode) {
     };
 }
 
-function localErrorMessage(conversationId: string | undefined, error: unknown): CreativeMessage {
-    const now = Date.now();
-    return { id: `local-error-${nanoid()}`, conversationId: conversationId || "", sequence: now, role: "assistant", status: "failed", content: friendlyAgentError(error, "项目 Agent 请求失败，请稍后重试。"), metadata: {}, createdAt: now, updatedAt: now };
-}
-
 function agentAssetDownloads(assets: CreativeAsset[]): AgentMediaDownload[] {
     return assets.flatMap((asset) => {
         const url = asset.serverUrl || asset.remoteUrl || "";
-        return url && (asset.type === "image" || asset.type === "video") ? [{ type: asset.type, url, title: asset.title || (asset.type === "video" ? "生成视频" : "生成图片") }] : [];
+        return url && (asset.type === "image" || asset.type === "video") ? [{ type: asset.type, url, title: asset.title || (asset.type === "video" ? "生成视频" : "生成图片"), mimeType: asset.mimeType }] : [];
     });
 }

@@ -1,12 +1,14 @@
 import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
-import { getAuthSettings, getPublicUsersByIds } from "@/lib/auth/store";
+import { findPublicUserIdsByKeyword, getAuthSettings, getPublicUsersByIds } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { getChannelRuntimeHealth, isChannelRuntimeCooling } from "@/lib/server/channel-runtime-health";
 import { generationTaskPointsCost, listStoredGenerationTaskRecords, type GenerationTaskRecordListOptions, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 
 export async function listAdminGenerationOperations(options: GenerationTaskRecordListOptions): Promise<AdminGenerationOperationsPayload> {
-    const [result, settings] = await Promise.all([listStoredGenerationTaskRecords({ ...options, includeAll: false }), getAuthSettings()]);
-    const users = await getPublicUsersByIds(result.items.map((record) => record.userId));
+    const settingsPromise = getAuthSettings();
+    const searchUserIds = options.search?.trim() ? await findPublicUserIdsByKeyword(options.search) : [];
+    const result = await listStoredGenerationTaskRecords({ ...options, searchUserIds, includeAll: false });
+    const [settings, users] = await Promise.all([settingsPromise, getPublicUsersByIds(result.items.map((record) => record.userId))]);
     const usersById = new Map(users.map((user) => [user.id, user]));
     const items = result.items.map((record) => taskSummary(record, usersById.get(record.userId)));
     return {
@@ -19,7 +21,7 @@ export async function listAdminGenerationOperations(options: GenerationTaskRecor
     };
 }
 
-function taskSummary(record: StoredGenerationTaskRecord, user?: { username: string; displayName: string }): AdminGenerationTask {
+function taskSummary(record: StoredGenerationTaskRecord, user?: { accountId: string; username: string; displayName: string }): AdminGenerationTask {
     const payload = record.payload;
     const config = object(payload.config);
     const upstream = object(payload.upstream);
@@ -30,8 +32,9 @@ function taskSummary(record: StoredGenerationTaskRecord, user?: { username: stri
     return {
         id: record.id,
         userId: record.userId,
+        accountId: user?.accountId,
         username: user?.username || "",
-        displayName: user?.displayName || user?.username || record.userId,
+        displayName: user?.displayName || user?.username || "用户信息不可用",
         type: record.type,
         status: record.status,
         surface: record.surface,

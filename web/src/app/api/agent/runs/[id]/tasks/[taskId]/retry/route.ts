@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         return {
             ...item,
             status: "ready" as const,
-            attempts: 0,
+            attempts: Math.max(1, item.attempts || 0),
             taskId: completedChildren.at(-1)?.id,
             taskIds: completedChildren.length ? completedChildren.map((child) => child.id) : undefined,
             childTasks: completedChildren.length ? completedChildren : undefined,

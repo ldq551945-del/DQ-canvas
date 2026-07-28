@@ -9,21 +9,25 @@ description: VOZEB PRO 环境变量、模型渠道、服务器媒体与支付配
 
 ## 核心环境变量
 
-| 变量                           | 必填            | 说明                                                                          |
-| ------------------------------ | --------------- | ----------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SITE_URL`         | 生产必填        | 外部可访问的站点地址，生产使用 HTTPS，不带尾部 `/`                            |
-| `VOZEB_PRO_DATABASE_PROVIDER`  | 是              | 生产使用 `postgres`；`file` 仅用于单机文件模式体验                            |
-| `DATABASE_URL`                 | PostgreSQL 必填 | PostgreSQL 连接串；Docker 内数据库 Host 使用 `postgres`                       |
-| `VOZEB_PRO_DATABASE_POOL_MAX`  | 否              | 连接池上限，默认 10，低内存或托管数据库可设置 5                               |
-| `VOZEB_PRO_DATABASE_SSL`       | 否              | 本机/Docker 通常为 0，云 PostgreSQL 按要求使用 1                              |
-| `VOZEB_PRO_ENCRYPTION_KEY`     | 生产必填        | 64 位十六进制或精确 32 字节 Base64 密钥，部署后必须保持稳定                   |
-| `VOZEB_PRO_INTERNAL_ORIGIN`    | 推荐            | 服务端回调自身 API，Docker 默认 `http://127.0.0.1:3000`                       |
-| `VOZEB_PRO_DATA_DIR`           | 否              | 服务器媒体和文件模式数据目录                                                  |
-| `VOZEB_PRO_COOKIE_SECURE`      | 否              | 留空自动判断；特殊代理可强制 `true/false`                                     |
-| `VOZEB_PRO_TRUSTED_PROXY_HOPS` | 否              | 速率限制读取代理 IP 时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1` |
-| `VOZEB_PRO_MAINTENANCE_TOKEN`  | 推荐            | 外部计划任务调用维护接口的 Bearer Token，至少 32 个字符                       |
-| `VOZEB_PRO_APP_URL`            | 文档站可选      | 独立文档站使用的主应用地址，使文档 favicon 跟随后台站点图标                   |
-| `FFMPEG_PATH`                  | 否              | 本机 FFmpeg 不在 PATH 时填写；Docker 已内置 FFmpeg                            |
+| 变量                                    | 必填            | 说明                                                                          |
+| --------------------------------------- | --------------- | ----------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SITE_URL`                  | 生产必填        | 外部可访问的站点地址，生产使用 HTTPS，不带尾部 `/`                            |
+| `VOZEB_PRO_DATABASE_PROVIDER`           | 是              | 生产使用 `postgres`；`file` 仅用于单机文件模式体验                            |
+| `DATABASE_URL`                          | PostgreSQL 必填 | PostgreSQL 连接串；Docker 内数据库 Host 使用 `postgres`                       |
+| `VOZEB_PRO_DATABASE_POOL_MAX`           | 否              | 连接池上限，默认 10，低内存或托管数据库可设置 5                               |
+| `VOZEB_PRO_DATABASE_SSL`                | 否              | 本机/Docker 通常为 0，云 PostgreSQL 按要求使用 1                              |
+| `VOZEB_PRO_ENCRYPTION_KEY`              | 生产必填        | 64 位十六进制或精确 32 字节 Base64 密钥，部署后必须保持稳定                   |
+| `VOZEB_PRO_INTERNAL_ORIGIN`             | 推荐            | 服务端回调自身 API，Docker 默认 `http://127.0.0.1:3000`                       |
+| `VOZEB_PRO_DATA_DIR`                    | 否              | 服务器媒体和文件模式数据目录                                                  |
+| `VOZEB_PRO_COOKIE_SECURE`               | 否              | 留空自动判断；特殊代理可强制 `true/false`                                     |
+| `VOZEB_PRO_TRUSTED_PROXY_HOPS`          | 否              | 速率限制读取代理 IP 时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1` |
+| `VOZEB_PRO_MAINTENANCE_TOKEN`           | 推荐            | 外部计划任务调用维护接口的 Bearer Token，至少 32 个字符                       |
+| `VOZEB_PRO_APP_URL`                     | 文档站可选      | 独立文档站使用的主应用地址，使文档 favicon 跟随后台站点图标                   |
+| `FFMPEG_PATH`                           | 否              | 本机 FFmpeg 不在 PATH 时填写；Docker 已内置 FFmpeg                            |
+| `VOZEB_PRO_CONTENT_MODERATION_PROVIDER` | 否              | 作品审核信号 Provider：`manual`、`keywords` 或 `http`，默认人工审核           |
+| `VOZEB_PRO_CONTENT_MODERATION_KEYWORDS` | keywords 可选   | 逗号或换行分隔的风险关键词，只生成后台复核信号                                |
+| `VOZEB_PRO_CONTENT_MODERATION_URL`      | http 必填       | 外部内容审核 HTTP 地址；服务端以 3 秒超时发送公开草稿字段                     |
+| `VOZEB_PRO_CONTENT_MODERATION_API_KEY`  | http 可选       | 外部审核 Bearer Token，仅保存在服务器环境变量                                 |
 
 ## PostgreSQL
 
@@ -48,6 +52,17 @@ POSTGRES_PASSWORD=replace-with-a-strong-database-password
 
 使用宝塔宿主机 PostgreSQL 时，应用通过 `docker-compose.baota.yml` 的 host 网络连接 `127.0.0.1:5432`；不要同时启动默认 Compose 中的 PostgreSQL 服务。
 
+## 作品内容审核信号
+
+作品提交审核后仍必须由管理员在“内容运营 -> 作品管理”中作出通过或驳回决定。默认 `manual` 只记录“等待人工审核”；`keywords` 根据部署方自定义词表生成风险标签；`http` 将标题、说明、分类和标签发送到部署方配置的中立 HTTP Provider。三种模式都不会自动公开作品，外部 Provider 失败时回退为人工复核信号。
+
+```dotenv
+VOZEB_PRO_CONTENT_MODERATION_PROVIDER=keywords
+VOZEB_PRO_CONTENT_MODERATION_KEYWORDS=风险词一,风险词二
+```
+
+使用 `http` 时必须根据运营地区、隐私政策和供应商协议确认数据处理范围；API Key 不得放入普通用户设置或浏览器请求。
+
 ## 站点地址与代理
 
 需要支付回调、上游读取站内参考素材或 HTTPS Cookie 时，配置真实域名：
@@ -63,6 +78,8 @@ VOZEB_PRO_APP_URL=https://vozeb-pro.example.com
 ```
 
 文档站的 `/favicon.ico` 会通过主应用同名入口读取后台配置的站点图标；未配置时继续使用文档镜像内置 Logo，不会连接主应用数据库。
+
+管理员后台的“使用文档”是主应用 `3000` 内的管理员操作说明，普通用户 `/help` 是独立的创作教程；开发、部署和数据库等技术文档继续由独立文档站 `3001` 提供，三者互不混用。
 
 上游模型需要网络代理时：
 
@@ -100,7 +117,7 @@ SMTP 在后台 `账号与邮箱` 配置。建议先测试邮箱，再开启邮�
 
 ## 支付
 
-后台支持 Stripe、支付宝、微信支付、PayPly 和人工确认。密钥可以保存在后台加密配置中，也可以由环境变量提供兜底。回调入口：
+后台支持 Stripe、支付宝、微信支付、PayPly 和人工确认。支付宝始终是一个用户支付渠道，管理员在“支付渠道”中使用“接入方式”二选一配置“官方支付”或“当面付”：官方支付跳转电脑网站收银台，当面付返回扫码二维码，两种方式共用 App ID、RSA2 回调验签和退款配置，不能同时启用。支付宝大陆支付商品使用人民币 `CNY`，非 CNY 订单会在请求上游前拒绝。密钥可以保存在后台加密配置中，也可以由环境变量提供兜底；环境变量 `VOZEB_PRO_ALIPAY_MODE` 可填写 `official`（默认）或 `face_to_face`。后台的回调、支付成功返回和取消返回地址均可留空，系统会自动使用当前网站地址；只有需要改用其他域名或自定义页面时才覆盖。当面付不使用同步返回地址。回调入口：
 
 ```text
 /api/billing/webhooks/stripe

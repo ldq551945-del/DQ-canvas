@@ -182,6 +182,13 @@ export type DramaProjectSummary = Pick<DramaProject, "id" | "title" | "summary" 
     failedTaskCount: number;
 };
 
+export type DramaProjectSummaryPage = {
+    items: DramaProjectSummary[];
+    total: number;
+    page: number;
+    pageSize: number;
+};
+
 export type CreateDramaProjectInput = Pick<DramaProject, "title" | "summary" | "style" | "ratio"> & {
     sourceHandoffId?: string;
     initialScript?: string;

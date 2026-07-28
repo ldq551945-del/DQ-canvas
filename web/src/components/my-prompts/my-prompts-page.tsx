@@ -1,13 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { App, Button, Empty, Form, Input, Modal, Popconfirm, Space, Table, Tag } from "antd";
 import type { TableColumnsType } from "antd";
 import { Copy, FolderPlus, Plus, Trash2 } from "lucide-react";
 
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCopyText } from "@/hooks/use-copy-text";
-import type { Prompt, PromptListResponse } from "@/services/api/prompts";
+import { createMyPrompt, deleteMyPrompt, listMyPrompts } from "@/services/api/my-prompts";
+import type { Prompt } from "@/services/api/prompts";
+
+const PAGE_SIZE = 8;
 
 type PromptFormValue = {
     title: string;
@@ -22,6 +25,8 @@ export function MyPromptsPage() {
     const { message } = App.useApp();
     const [form] = Form.useForm<PromptFormValue>();
     const [items, setItems] = useState<Prompt[]>([]);
+    const [total, setTotal] = useState(0);
+    const [page, setPage] = useState(1);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [deletingId, setDeletingId] = useState("");
@@ -29,38 +34,35 @@ export function MyPromptsPage() {
     const copyText = useCopyText();
     const addAsset = useAssetStore((state) => state.addAsset);
 
-    const loadPrompts = async () => {
-        setLoading(true);
-        try {
-            const response = await fetch("/api/my-prompts?pageSize=100");
-            const payload = (await response.json()) as PromptListResponse & { error?: string };
-            if (!response.ok) throw new Error(payload.error || "获取我的提示词失败");
-            setItems(payload.items);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "获取我的提示词失败");
-        } finally {
-            setLoading(false);
-        }
-    };
+    const loadPrompts = useCallback(
+        async (targetPage: number) => {
+            setLoading(true);
+            try {
+                const payload = await listMyPrompts({ page: targetPage, pageSize: PAGE_SIZE });
+                setItems(payload.items);
+                setTotal(payload.total);
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "获取我的提示词失败");
+            } finally {
+                setLoading(false);
+            }
+        },
+        [message],
+    );
 
     useEffect(() => {
-        void loadPrompts();
-    }, []);
+        void loadPrompts(page);
+    }, [loadPrompts, page]);
 
     const createPrompt = async (value: PromptFormValue) => {
         setSubmitting(true);
         try {
-            const response = await fetch("/api/my-prompts", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ ...value, tags: splitTags(value.tags) }),
-            });
-            const payload = (await response.json()) as { prompt?: Prompt; error?: string };
-            if (!response.ok || !payload.prompt) throw new Error(payload.error || "新增提示词失败");
-            setItems((current) => [payload.prompt!, ...current]);
+            await createMyPrompt({ ...value, tags: splitTags(value.tags) });
             form.resetFields();
             setCreateOpen(false);
             message.success("提示词已保存");
+            if (page === 1) await loadPrompts(1);
+            else setPage(1);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "新增提示词失败");
         } finally {
@@ -71,11 +73,11 @@ export function MyPromptsPage() {
     const deletePrompt = async (id: string) => {
         setDeletingId(id);
         try {
-            const response = await fetch(`/api/my-prompts/${id}`, { method: "DELETE" });
-            const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "删除提示词失败");
-            setItems((current) => current.filter((item) => item.id !== id));
+            await deleteMyPrompt(id);
             message.success("提示词已删除");
+            const targetPage = Math.min(page, Math.max(1, Math.ceil(Math.max(0, total - 1) / PAGE_SIZE)));
+            if (targetPage === page) await loadPrompts(targetPage);
+            else setPage(targetPage);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "删除提示词失败");
         } finally {
@@ -160,7 +162,7 @@ export function MyPromptsPage() {
                             columns={columns}
                             dataSource={items}
                             tableLayout="fixed"
-                            pagination={{ pageSize: 8, hideOnSinglePage: true }}
+                            pagination={{ current: page, pageSize: PAGE_SIZE, total, hideOnSinglePage: true, showSizeChanger: false, onChange: setPage }}
                             locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有保存提示词" /> }}
                         />
                     </section>

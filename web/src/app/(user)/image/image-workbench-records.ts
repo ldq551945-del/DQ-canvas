@@ -3,6 +3,7 @@
 import { nanoid } from "nanoid";
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, GenerationLogSlotSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { readImageMeta } from "@/lib/image-utils";
 import { deleteGenerationLogs as deleteServerGenerationLogs, listGenerationLogs, recordGenerationLog, type StoredGenerationLogRecord } from "@/services/api/generation-logs";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -71,10 +72,11 @@ export type GenerationLog = {
     error?: string;
     imageTasks?: PendingImageTask[];
     failures?: GenerationFailure[];
+    requestSnapshot?: GenerationLogRequestSnapshot;
 };
 
 export type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
-export type GenerationSnapshot = { text: string; config: AiConfig; references: ReferenceImage[] };
+export type GenerationSnapshot = { text: string; config: AiConfig; references: ReferenceImage[]; count?: number };
 
 export function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
@@ -246,20 +248,31 @@ export function stableResultImageUrl(image?: GeneratedImage) {
 
 export async function serverImageLogToWorkbenchLog(record: StoredGenerationLogRecord): Promise<GenerationLog> {
     const createdAt = Date.parse(record.createdAt) || Date.now();
+    const snapshot = record.requestSnapshot;
+    const slotsByAssetIndex = new Map((snapshot?.slots || []).filter((slot) => slot.status === "success" && slot.assetIndex !== undefined).map((slot) => [slot.assetIndex!, slot]));
     const images: GeneratedImage[] = record.assets.map((asset, index) => ({
-        id: `${serverWorkbenchLogId(record)}:${index}`,
+        id: slotsByAssetIndex.get(index)?.id || `${serverWorkbenchLogId(record)}:${index}`,
         dataUrl: browserReadableMediaUrl(stableAssetUrl(asset)),
         remoteUrl: asset.remoteUrl,
         serverUrl: asset.serverUrl,
         storageKey: undefined,
-        taskId: record.taskId || (record.id.startsWith("image-task:") ? record.id.replace(/^image-task:/, "") : undefined),
-        slotIndex: index,
+        taskId: slotsByAssetIndex.get(index)?.taskId || record.taskId || (record.id.startsWith("image-task:") ? record.id.replace(/^image-task:/, "") : undefined),
+        slotIndex: slotsByAssetIndex.get(index)?.index ?? index,
         durationMs: record.durationMs || 0,
         width: asset.width || 0,
         height: asset.height || 0,
         bytes: asset.bytes || 0,
         mimeType: asset.mimeType,
     }));
+    const parameters = snapshot?.parameters || {};
+    const imageTasks = (snapshot?.slots || []).flatMap((slot): PendingImageTask[] =>
+        slot.status === "pending" && slot.taskId
+            ? [{ resultId: slot.id, taskId: slot.taskId, kind: slot.taskKind === "edit" ? "edit" : "generation", model: slot.taskModel || parameters.model || record.model, index: slot.index, startedAt: slot.startedAt || createdAt }]
+            : [],
+    );
+    const failures = (snapshot?.slots || []).flatMap((slot): GenerationFailure[] => (slot.status === "failed" ? [{ resultId: slot.id, index: slot.index, error: slot.error || record.error || "生成失败" }] : []));
+    const references = (snapshot?.references || []).flatMap(imageReferenceFromSnapshot);
+    const pendingCount = (snapshot?.slots || []).filter((slot) => slot.status === "pending").length;
     return normalizeLog({
         id: serverWorkbenchLogId(record),
         creativeConversationId: record.conversationId,
@@ -268,17 +281,27 @@ export async function serverImageLogToWorkbenchLog(record: StoredGenerationLogRe
         prompt: record.prompt,
         time: new Date(createdAt).toLocaleString("zh-CN", { hour12: false }),
         model: record.model,
-        config: { model: record.model, imageModel: record.model, quality: "", size: "", count: String(record.count || Math.max(1, images.length)) },
-        references: [],
+        config: {
+            model: parameters.model || record.model,
+            imageModel: parameters.model || record.model,
+            quality: parameters.quality || "",
+            size: parameters.size || "",
+            count: parameters.count || String(record.count || Math.max(1, images.length)),
+        },
+        references,
         durationMs: record.durationMs || 0,
         successCount: record.successCount || images.length,
-        failCount: record.failCount || 0,
+        failCount: failures.length || record.failCount || 0,
+        pendingCount,
         imageCount: record.count || Math.max(1, images.length + (record.failCount || 0)),
         size: "",
         quality: "",
         status: record.status === "pending" ? "生成中" : record.status === "failed" ? "失败" : "成功",
         images,
         thumbnails: images.map((image) => image.dataUrl),
+        imageTasks,
+        failures,
+        requestSnapshot: snapshot,
         error: record.error,
     });
 }
@@ -320,6 +343,7 @@ export async function recordImageWorkbenchLog(log: GenerationLog) {
         successCount: log.successCount || assets.length,
         failCount: log.failCount || 0,
         assets,
+        requestSnapshot: log.requestSnapshot,
         error: log.error,
         createdAt: log.createdAt,
         completedAt: log.pendingCount ? undefined : Date.now(),
@@ -367,6 +391,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
         imageTasks,
         failures,
+        requestSnapshot: log.requestSnapshot,
         error: log.error,
     };
 }
@@ -465,6 +490,7 @@ export function buildLogFromResults(baseLog: GenerationLog | null, snapshot: Gen
     const logConfig = buildLogConfig(snapshot.config, count);
     const status: GenerationLog["status"] = pendingCount ? "生成中" : images.length ? "成功" : "失败";
     const errorMessage = error || failures[0]?.error;
+    const requestSnapshot = mergeImageRequestSnapshot(baseLog?.requestSnapshot, snapshot, results, count, errorMessage);
     return buildLog({
         baseLog,
         prompt: snapshot.text,
@@ -480,6 +506,7 @@ export function buildLogFromResults(baseLog: GenerationLog | null, snapshot: Gen
         images,
         imageTasks,
         failures,
+        requestSnapshot,
         error: errorMessage,
     });
 }
@@ -499,6 +526,7 @@ function buildLog({
     images,
     imageTasks,
     failures,
+    requestSnapshot,
     error,
 }: {
     baseLog?: GenerationLog | null;
@@ -515,6 +543,7 @@ function buildLog({
     images: GeneratedImage[];
     imageTasks: PendingImageTask[];
     failures: GenerationFailure[];
+    requestSnapshot: GenerationLogRequestSnapshot;
     error?: string;
 }): GenerationLog {
     const logConfig = {
@@ -546,6 +575,7 @@ function buildLog({
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
         imageTasks,
         failures,
+        requestSnapshot,
         error,
     };
 }
@@ -560,17 +590,101 @@ function buildLogConfig(config: AiConfig, count: string): GenerationLogConfig {
     };
 }
 
-export function snapshotFromLog(log: GenerationLog, fallbackConfig: AiConfig): GenerationSnapshot {
-    const model = log.config.imageModel || log.model || fallbackConfig.imageModel || fallbackConfig.model;
+export function snapshotFromLog(log: GenerationLog, fallbackConfig: AiConfig, resultId?: string): GenerationSnapshot {
+    const slot = resultId ? log.requestSnapshot?.slots.find((item) => item.id === resultId) : undefined;
+    const parameters = { ...log.requestSnapshot?.parameters, ...slot?.parameters };
+    const model = parameters.model || log.config.imageModel || log.model || fallbackConfig.imageModel || fallbackConfig.model;
+    const snapshotReferences = log.requestSnapshot?.references || [];
+    const referenceIds = slot?.referenceIds?.length ? new Set(slot.referenceIds) : undefined;
+    const restoredReferences = snapshotReferences.filter((item) => !referenceIds || referenceIds.has(item.id)).flatMap(imageReferenceFromSnapshot);
     return {
-        text: log.prompt,
-        references: log.references || [],
+        text: slot?.prompt || log.prompt,
+        references: restoredReferences.length ? restoredReferences : log.references || [],
         config: {
             ...fallbackConfig,
             ...log.config,
             model,
             imageModel: model,
+            size: parameters.size || log.config.size || fallbackConfig.size,
+            quality: parameters.quality || log.config.quality || fallbackConfig.quality,
             count: "1",
         },
+        count: 1,
     };
+}
+
+function mergeImageRequestSnapshot(base: GenerationLogRequestSnapshot | undefined, snapshot: GenerationSnapshot, results: GenerationResult[], count: string, error?: string): GenerationLogRequestSnapshot {
+    const parameters = imageSnapshotParameters(snapshot.config, count);
+    const currentReferences = snapshot.references.map(imageReferenceSnapshot);
+    const references = Array.from(new Map([...(base?.references || []), ...currentReferences].map((item) => [item.id, item])).values());
+    const currentReferenceIds = currentReferences.map((item) => item.id);
+    const previousSlots = new Map((base?.slots || []).map((slot) => [slot.id, slot]));
+    let assetIndex = 0;
+    const slots = results.map((result, index): GenerationLogSlotSnapshot => {
+        const previous = previousSlots.get(result.id);
+        const task = result.task;
+        const slot: GenerationLogSlotSnapshot = {
+            ...previous,
+            id: result.id,
+            index,
+            status: result.status,
+            prompt: previous?.prompt || snapshot.text,
+            parameters: previous?.parameters || parameters,
+            referenceIds: previous?.referenceIds || currentReferenceIds,
+            assetIndex: result.status === "success" ? assetIndex : undefined,
+            taskId: task?.taskId || result.image?.taskId || previous?.taskId,
+            taskKind: task?.kind || previous?.taskKind,
+            taskModel: task?.model || previous?.taskModel || parameters.model,
+            startedAt: task?.startedAt || previous?.startedAt,
+            error: result.status === "failed" ? result.error || error || previous?.error || "生成失败" : undefined,
+        };
+        if (result.status === "success") assetIndex += 1;
+        return slot;
+    });
+    return { version: 1, parameters, references, slots };
+}
+
+function imageSnapshotParameters(config: GenerationLogConfig | AiConfig, count: string): GenerationLogSnapshotParameters {
+    return {
+        model: config.imageModel || config.model,
+        size: config.size,
+        quality: config.quality,
+        count,
+    };
+}
+
+function imageReferenceSnapshot(reference: ReferenceImage): GenerationLogReferenceSnapshot {
+    const stableUrl = [reference.serverUrl, reference.url, reference.remoteUrl, reference.dataUrl].find((value) => value && !/^(?:data|blob):/i.test(value));
+    return {
+        id: reference.id,
+        kind: "image",
+        name: reference.name,
+        mimeType: reference.type,
+        url: stableUrl,
+        remoteUrl: reference.remoteUrl,
+        serverUrl: reference.serverUrl,
+        storageKey: reference.storageKey,
+        width: reference.width,
+        height: reference.height,
+    };
+}
+
+function imageReferenceFromSnapshot(reference: GenerationLogReferenceSnapshot): ReferenceImage[] {
+    if (reference.kind !== "image") return [];
+    const dataUrl = browserReadableMediaUrl(reference.serverUrl || reference.url || reference.remoteUrl || "");
+    if (!dataUrl && !reference.storageKey) return [];
+    return [
+        {
+            id: reference.id,
+            name: reference.name,
+            type: reference.mimeType,
+            dataUrl,
+            url: reference.url,
+            remoteUrl: reference.remoteUrl,
+            serverUrl: reference.serverUrl,
+            storageKey: reference.storageKey,
+            width: reference.width,
+            height: reference.height,
+        },
+    ];
 }

@@ -52,7 +52,12 @@ import {
 } from "./store-types";
 
 export class AuthInputError extends Error {
-    status = 400;
+    constructor(
+        message: string,
+        public status = 400,
+    ) {
+        super(message);
+    }
 }
 
 export class EmailCodeAttemptError extends AuthInputError {

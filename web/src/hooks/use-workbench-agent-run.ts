@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
 import type { CreativeDeliverableSummary, CreativeFoundation } from "@/lib/creative-agent-contract";
+import type { WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
 import { formatAgentMessageText } from "@/components/agent/agent-message-format";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 
@@ -22,6 +23,7 @@ export type WorkbenchAgentParameterPatch = Partial<Record<"model" | "size" | "qu
 
 type AgentRunStage = "planning" | "submitting";
 export type WorkbenchCreativeReviewContext = { recordId: string; foundation: CreativeFoundation; deliverables: CreativeDeliverableSummary[] };
+type WorkbenchGenerationSubmitter = (input: { promptOverride: string; signal: AbortSignal; parameterPatch: WorkbenchAgentParameterPatch; conversationId: string }) => Promise<string | null | undefined>;
 type PendingAgentGenerate = {
     messageId: string;
     hasReferences: boolean;
@@ -30,6 +32,7 @@ type PendingAgentGenerate = {
     conversationId: string;
     foundation?: CreativeFoundation;
     deliverables: CreativeDeliverableSummary[];
+    submitGeneration: WorkbenchGenerationSubmitter;
 };
 type WorkbenchAgentPlanPayload = {
     intent?: unknown;
@@ -54,13 +57,15 @@ type UseWorkbenchAgentRunOptions = {
     currentConfig: Record<string, unknown>;
     hasReferences: boolean;
     referenceTypes: WorkbenchAgentReferenceType[];
+    attachments: WorkbenchAgentAttachment[];
     conversationId?: string;
     ensureCreativeConversation: () => Promise<string>;
     setPrompt: (value: string) => void;
     setLastAgentPrompt: (value: string) => void;
     setAgentMessages: Dispatch<SetStateAction<WorkbenchAgentMessage[]>>;
     applyParameterPatch: (patch: WorkbenchAgentParameterPatch) => void;
-    submitGeneration: (input: { promptOverride: string; signal: AbortSignal; parameterPatch: WorkbenchAgentParameterPatch; conversationId: string }) => Promise<string | null | undefined>;
+    submitGeneration: WorkbenchGenerationSubmitter;
+    onRequestSent?: () => void;
     onManualModelRequired?: () => void;
 };
 
@@ -75,6 +80,7 @@ export function useWorkbenchAgentRun({
     currentConfig,
     hasReferences,
     referenceTypes,
+    attachments,
     conversationId,
     ensureCreativeConversation,
     setPrompt,
@@ -82,12 +88,14 @@ export function useWorkbenchAgentRun({
     setAgentMessages,
     applyParameterPatch,
     submitGeneration,
+    onRequestSent,
     onManualModelRequired,
 }: UseWorkbenchAgentRunOptions) {
     const [agentRunning, setAgentRunning] = useState(false);
     const [pendingAgentGenerate, setPendingAgentGenerate] = useState<PendingAgentGenerate | null>(null);
     const [creativeReviewContext, setCreativeReviewContext] = useState<WorkbenchCreativeReviewContext | null>(null);
     const agentRequestRef = useRef<{ messageId: string; controller: AbortController; stage: AgentRunStage } | null>(null);
+    const retryActionsRef = useRef(new Map<string, () => void>());
     const mediaLabel = workspace === "image" ? "图片" : "视频";
 
     const runAgentGenerate = useCallback(async () => {
@@ -98,56 +106,94 @@ export function useWorkbenchAgentRun({
             return;
         }
         const progressId = nanoid();
-        const controller = new AbortController();
+        const submittedAttachments = attachments.map((item) => ({ ...item }));
+        let resolvedConversationId = conversationId;
         setPendingAgentGenerate(null);
         setCreativeReviewContext(null);
-        agentRequestRef.current = { messageId: progressId, controller, stage: "planning" };
-        setPrompt("");
-        setAgentMessages((items) => appendWorkbenchAgentRequest(items, text, createWorkbenchAgentProgressMessage(progressId, hasReferences)));
-        setAgentRunning(true);
-        try {
-            const sharedConversationId = conversationId || (await ensureCreativeConversation());
-            const response = await fetch("/api/agent/workbench", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                signal: controller.signal,
-                body: JSON.stringify({ requestId: progressId, workspace, conversationId: sharedConversationId, prompt: text, previousPrompt, models, modelIds, skillIds, smartPlanning, currentConfig, hasReferences, referenceTypes }),
-            });
-            const payload = (await response.json().catch(() => ({}))) as { data?: WorkbenchAgentPlanPayload; msg?: string };
-            if (!response.ok || !payload.data) throw new Error(payload.msg || "Agent 参数解析失败");
-            if (controller.signal.aborted || agentRequestRef.current?.messageId !== progressId) return;
-
-            const patch = normalizeParameterPatch(payload.data.parameterPatch);
-            applyParameterPatch(patch);
-            const resolvedPrompt = typeof payload.data.resolvedPrompt === "string" && payload.data.resolvedPrompt.trim() ? payload.data.resolvedPrompt : text;
-            setLastAgentPrompt(resolvedPrompt);
-            const shouldGenerate = payload.data.shouldGenerate !== false;
-            const reply = typeof payload.data.reply === "string" && payload.data.reply.trim() ? payload.data.reply : "已完成处理。";
-            const choices = Array.isArray(payload.data.choices) ? (payload.data.choices as WorkbenchAgentChoice[]) : [];
-            const intent = payload.data.intent === "conversation" ? "conversation" : "generation";
-            const foundation = payload.data.foundation && typeof payload.data.foundation === "object" ? (payload.data.foundation as CreativeFoundation) : undefined;
-            const deliverables = Array.isArray(payload.data.deliverables) ? (payload.data.deliverables as CreativeDeliverableSummary[]) : [];
-            setAgentMessages((items) => applyWorkbenchAgentPlan(items, progressId, shouldGenerate ? "已理解需求，正在创建生成任务。" : reply, choices));
-            if (shouldGenerate) {
-                if (agentRequestRef.current?.messageId === progressId) agentRequestRef.current.stage = "submitting";
-                setPendingAgentGenerate({ messageId: progressId, hasReferences, resolvedPrompt, parameterPatch: patch, conversationId: sharedConversationId, foundation: intent === "generation" ? foundation : undefined, deliverables });
+        const executePlanning = async (appendRequest: boolean) => {
+            if (agentRequestRef.current) return;
+            const controller = new AbortController();
+            agentRequestRef.current = { messageId: progressId, controller, stage: "planning" };
+            if (appendRequest) {
+                setPrompt("");
+                setAgentMessages((items) => appendWorkbenchAgentRequest(items, text, submittedAttachments, createWorkbenchAgentProgressMessage(progressId, hasReferences)));
+                onRequestSent?.();
             } else {
+                setAgentMessages((items) => updateWorkbenchAgentProgress(items, progressId, { phase: "planning", hasReferences }, "正在理解你的需求。"));
+            }
+            setAgentRunning(true);
+            try {
+                resolvedConversationId ||= await ensureCreativeConversation();
+                const response = await fetch("/api/agent/workbench", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    signal: controller.signal,
+                    body: JSON.stringify({
+                        requestId: progressId,
+                        workspace,
+                        conversationId: resolvedConversationId,
+                        prompt: text,
+                        previousPrompt,
+                        models,
+                        modelIds,
+                        skillIds,
+                        smartPlanning,
+                        currentConfig,
+                        hasReferences,
+                        referenceTypes,
+                        attachments: submittedAttachments,
+                    }),
+                });
+                const payload = (await response.json().catch(() => ({}))) as { data?: WorkbenchAgentPlanPayload; msg?: string };
+                if (!response.ok || !payload.data) throw new Error(payload.msg || "Agent 参数解析失败");
+                if (controller.signal.aborted || agentRequestRef.current?.messageId !== progressId) return;
+
+                const patch = normalizeParameterPatch(payload.data.parameterPatch);
+                applyParameterPatch(patch);
+                const resolvedPrompt = typeof payload.data.resolvedPrompt === "string" && payload.data.resolvedPrompt.trim() ? payload.data.resolvedPrompt : text;
+                setLastAgentPrompt(resolvedPrompt);
+                const shouldGenerate = payload.data.shouldGenerate !== false;
+                const reply = typeof payload.data.reply === "string" && payload.data.reply.trim() ? payload.data.reply : "已完成处理。";
+                const choices = Array.isArray(payload.data.choices) ? (payload.data.choices as WorkbenchAgentChoice[]) : [];
+                const intent = payload.data.intent === "conversation" ? "conversation" : "generation";
+                const foundation = payload.data.foundation && typeof payload.data.foundation === "object" ? (payload.data.foundation as CreativeFoundation) : undefined;
+                const deliverables = Array.isArray(payload.data.deliverables) ? (payload.data.deliverables as CreativeDeliverableSummary[]) : [];
+                setAgentMessages((items) => applyWorkbenchAgentPlan(items, progressId, shouldGenerate ? "已理解需求，正在创建生成任务。" : reply, choices));
+                if (shouldGenerate) {
+                    if (agentRequestRef.current?.messageId === progressId) agentRequestRef.current.stage = "submitting";
+                    setPendingAgentGenerate({
+                        messageId: progressId,
+                        hasReferences,
+                        resolvedPrompt,
+                        parameterPatch: patch,
+                        conversationId: resolvedConversationId,
+                        foundation: intent === "generation" ? foundation : undefined,
+                        deliverables,
+                        submitGeneration,
+                    });
+                } else {
+                    retryActionsRef.current.delete(progressId);
+                    agentRequestRef.current = null;
+                    setAgentRunning(false);
+                }
+            } catch (error) {
+                if (agentRequestRef.current?.messageId !== progressId) return;
+                const errorMessage = error instanceof Error ? error.message : `${mediaLabel} Agent 规划失败`;
+                const failure = buildWorkbenchAgentFailureUpdate({ aborted: controller.signal.aborted, failedAt: "planning", hasReferences, mediaLabel, errorMessage });
+                setPendingAgentGenerate(null);
+                setAgentMessages((items) => updateWorkbenchAgentProgress(items, progressId, failure.progress, failure.text));
+                if (!controller.signal.aborted) retryActionsRef.current.set(progressId, () => void executePlanning(false));
+                else retryActionsRef.current.delete(progressId);
                 agentRequestRef.current = null;
                 setAgentRunning(false);
+            } finally {
+                void refreshUserPointsIfSystem("system");
             }
-        } catch (error) {
-            if (agentRequestRef.current?.messageId !== progressId) return;
-            const errorMessage = error instanceof Error ? error.message : `${mediaLabel} Agent 规划失败`;
-            const failure = buildWorkbenchAgentFailureUpdate({ aborted: controller.signal.aborted, failedAt: "planning", hasReferences, mediaLabel, errorMessage });
-            setPendingAgentGenerate(null);
-            setAgentMessages((items) => updateWorkbenchAgentProgress(items, progressId, failure.progress, failure.text));
-            agentRequestRef.current = null;
-            setAgentRunning(false);
-        } finally {
-            void refreshUserPointsIfSystem("system");
-        }
+        };
+        await executePlanning(true);
     }, [
         applyParameterPatch,
+        attachments,
         conversationId,
         currentConfig,
         ensureCreativeConversation,
@@ -156,6 +202,7 @@ export function useWorkbenchAgentRun({
         models,
         modelIds,
         onManualModelRequired,
+        onRequestSent,
         previousPrompt,
         prompt,
         referenceTypes,
@@ -164,6 +211,7 @@ export function useWorkbenchAgentRun({
         setPrompt,
         skillIds,
         smartPlanning,
+        submitGeneration,
         workspace,
     ]);
 
@@ -171,6 +219,7 @@ export function useWorkbenchAgentRun({
         const active = agentRequestRef.current;
         if (!active) return;
         active.controller.abort();
+        retryActionsRef.current.delete(active.messageId);
         setPendingAgentGenerate(null);
         setAgentMessages((items) => updateWorkbenchAgentProgress(items, active.messageId, { phase: "cancelled", hasReferences, failedAt: active.stage }, "你已停止本轮 Agent，本次没有创建生成任务。"));
         agentRequestRef.current = null;
@@ -186,26 +235,44 @@ export function useWorkbenchAgentRun({
             setAgentRunning(false);
             return;
         }
-        void submitGeneration({ promptOverride: pending.resolvedPrompt, signal: active.controller.signal, parameterPatch: pending.parameterPatch, conversationId: pending.conversationId })
+        const retrySubmission = () => {
+            if (agentRequestRef.current) return;
+            const controller = new AbortController();
+            agentRequestRef.current = { messageId: pending.messageId, controller, stage: "submitting" };
+            setAgentMessages((items) => updateWorkbenchAgentProgress(items, pending.messageId, { phase: "submitting", hasReferences: pending.hasReferences, shouldGenerate: true }, "正在重新创建生成任务。"));
+            setAgentRunning(true);
+            setPendingAgentGenerate(pending);
+        };
+        void pending
+            .submitGeneration({ promptOverride: pending.resolvedPrompt, signal: active.controller.signal, parameterPatch: pending.parameterPatch, conversationId: pending.conversationId })
             .then((recordId) => {
                 if (active.controller.signal.aborted || agentRequestRef.current?.messageId !== pending.messageId) return;
-                if (!recordId) throw new Error(`${mediaLabel}生成任务未能创建，请检查模型与参数`);
-                if (pending.foundation) setCreativeReviewContext({ recordId, foundation: pending.foundation, deliverables: pending.deliverables });
+                const acceptedRecordId = acceptWorkbenchGenerationSubmission(recordId, mediaLabel);
+                retryActionsRef.current.delete(pending.messageId);
+                if (pending.foundation) setCreativeReviewContext({ recordId: acceptedRecordId, foundation: pending.foundation, deliverables: pending.deliverables });
                 setAgentMessages((items) => updateWorkbenchAgentResponse(items, pending.messageId, `已提交${mediaLabel}生成任务，结果会显示在工作区。`));
             })
             .catch((error) => {
                 if (active.controller.signal.aborted) return;
                 const errorMessage = error instanceof Error ? error.message : `${mediaLabel}生成任务创建失败`;
                 const failure = buildWorkbenchAgentFailureUpdate({ aborted: false, failedAt: "submitting", hasReferences: pending.hasReferences, shouldGenerate: true, mediaLabel, errorMessage });
-                setAgentMessages((items) => updateWorkbenchAgentResponse(items, pending.messageId, failure.text, "error"));
+                retryActionsRef.current.set(pending.messageId, retrySubmission);
+                setAgentMessages((items) => updateWorkbenchAgentProgress(items, pending.messageId, failure.progress, failure.text));
             })
             .finally(() => {
                 if (agentRequestRef.current?.messageId === pending.messageId) agentRequestRef.current = null;
                 setAgentRunning(false);
             });
-    }, [mediaLabel, pendingAgentGenerate, setAgentMessages, submitGeneration]);
+    }, [mediaLabel, pendingAgentGenerate, setAgentMessages]);
 
-    return { agentRunning, runAgentGenerate, cancelAgentRun, creativeReviewContext };
+    const retryAgentMessage = useCallback((messageId: string) => retryActionsRef.current.get(messageId)?.(), []);
+
+    return { agentRunning, runAgentGenerate, retryAgentMessage, cancelAgentRun, creativeReviewContext };
+}
+
+export function acceptWorkbenchGenerationSubmission(recordId: string | null | undefined, mediaLabel: string) {
+    if (!recordId) throw new Error(`${mediaLabel}生成任务未能创建，请检查模型与参数`);
+    return recordId;
 }
 
 export function workbenchRequiresManualModel(smartPlanning: boolean, modelIds: string[]) {

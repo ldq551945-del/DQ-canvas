@@ -38,5 +38,7 @@ describe("countLocalMediaReferences", () => {
         );
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
         expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("unnest($1::text[])"), [["permanent/one.png", "permanent/two.png"]]);
+        const sql = String(mocks.postgresQuery.mock.calls[0]?.[0]);
+        for (const table of ["creative_assets", "library_assets", "canvas_projects", "drama_projects", "generation_log_assets", "published_work_assets"]) expect(sql).toContain(table);
     });
 });

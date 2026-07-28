@@ -7,7 +7,7 @@ import type { TableColumnsType } from "antd";
 import dayjs, { type Dayjs } from "dayjs";
 import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileText, FileUp, Landmark, Package, Plus, QrCode, ReceiptText, RefreshCw, Save, Search, Settings2, Undo2, WalletCards, XCircle } from "lucide-react";
 
-import type { PaymentConfigRequirement, PaymentConfigSummary, PaymentProviderConfig, PaymentProviderConfigField } from "@/lib/payment-config-types";
+import { DEFAULT_ALIPAY_PAYMENT_MODE, getAlipayPaymentModePresentation, type PaymentConfigRequirement, type PaymentConfigSummary, type PaymentProviderConfig, type PaymentProviderConfigField } from "@/lib/payment-config-types";
 import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
 import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
 import { BillingReconciliationImport } from "./billing-reconciliation-import";
@@ -82,6 +82,7 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
     const [advancedOpen, setAdvancedOpen] = useState(false);
     const activeProvider = providers.find((provider) => provider.id === activeProviderId) || providers[0];
     const enabled = Form.useWatch("enabled", form);
+    const alipayMode = Form.useWatch("mode", form);
 
     useEffect(() => {
         if (providers.length && !providers.some((provider) => provider.id === activeProviderId)) setActiveProviderId(providers[0].id);
@@ -119,7 +120,10 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
 
     const routeFieldKeys = ["notifyUrl", "returnUrl", "cancelUrl", "successUrl"];
     const mainFields = activeProvider?.fields.filter((field) => !field.advanced && !routeFieldKeys.includes(field.key)) || [];
-    const routeFields = activeProvider?.fields.filter((field) => routeFieldKeys.includes(field.key)) || [];
+    const selectedAlipayMode = activeProvider?.id === "alipay" ? normalizePaymentFormValue(alipayMode || activeProvider.fields.find((field) => field.key === "mode")?.value || DEFAULT_ALIPAY_PAYMENT_MODE) : "";
+    const isAlipayFaceToFace = selectedAlipayMode === "face_to_face";
+    const alipayPresentation = getAlipayPaymentModePresentation(selectedAlipayMode);
+    const routeFields = activeProvider?.fields.filter((field) => routeFieldKeys.includes(field.key) && !(isAlipayFaceToFace && field.key === "returnUrl")) || [];
     const advancedFields = activeProvider?.fields.filter((field) => field.advanced && !routeFieldKeys.includes(field.key)) || [];
     const sortedMainFields = sortPaymentFields(mainFields);
     const sortedRouteFields = sortPaymentFields(routeFields);
@@ -176,7 +180,9 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
                                             </Tag>
                                             <Tag className="m-0">{activeProvider.sourceLabel}</Tag>
                                         </div>
-                                        <div className="mt-1 line-clamp-2 max-w-3xl text-xs leading-5 text-stone-500 sm:mt-2 sm:line-clamp-none sm:text-sm sm:leading-6 dark:text-stone-400">{activeProvider.description}</div>
+                                        <div className="mt-1 line-clamp-2 max-w-3xl text-xs leading-5 text-stone-500 sm:mt-2 sm:line-clamp-none sm:text-sm sm:leading-6 dark:text-stone-400">
+                                            {activeProvider.id === "alipay" ? alipayPresentation?.description || activeProvider.description : activeProvider.description}
+                                        </div>
                                         <div className="mt-3 flex flex-wrap gap-2 text-xs text-stone-500 dark:text-stone-400">
                                             <span className="rounded-full bg-stone-100 px-2.5 py-1 ring-1 ring-stone-200 dark:bg-stone-900 dark:ring-stone-800">
                                                 必填 {requiredReady}/{requiredFields.length}
@@ -225,7 +231,10 @@ export function PaymentConfigPanel({ paymentConfig, loading, embedded, onRefresh
                                     ))}
                                 </PaymentFieldSection>
                                 {routeFields.length ? (
-                                    <PaymentFieldSection title="回调与返回" description="外部支付平台需要填写回调地址时，用上方系统回调地址；这里可覆盖同步返回、取消返回和通知地址。">
+                                    <PaymentFieldSection
+                                        title={isAlipayFaceToFace ? "异步回调" : "回调与返回"}
+                                        description={isAlipayFaceToFace ? "当面付自动使用本站异步通知地址，不需要同步返回地址；只有需要自定义通知域名时才填写。" : "这些地址默认使用当前网站的系统地址，无需填写；只有需要改成其他域名或页面时才覆盖。"}
+                                    >
                                         {sortedRouteFields.map((field) => (
                                             <PaymentConfigFieldControl key={field.key} field={field} providerEnabled={formEnabled} />
                                         ))}
@@ -334,12 +343,15 @@ export function PaymentConfigFieldControl({ field, providerEnabled }: { field: P
         },
     ];
     const wide = isWidePaymentField(field);
+    const usesSystemDefault = paymentFieldUsesSystemDefault(field);
     const inputClassName = "admin-payment-compact-control w-full";
     return (
         <div className={`min-w-0 self-start rounded-2xl border border-stone-200/80 bg-white shadow-sm shadow-stone-200/20 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/10 ${wide ? "p-3 md:col-span-full" : "p-3"}`}>
             <PaymentFieldHeader field={field} />
             <Form.Item name={field.key} rules={rules} className="m-0 !mt-2.5">
-                {field.kind === "select" ? (
+                {field.key === "mode" && field.options?.length === 2 ? (
+                    <Segmented block className="admin-payment-mode-segmented" options={field.options} />
+                ) : field.kind === "select" ? (
                     <Select className={inputClassName} options={field.options || []} placeholder={field.placeholder} />
                 ) : field.kind === "textarea" ? (
                     <Input.TextArea className="admin-payment-textarea" rows={field.secret ? 5 : 4} maxLength={20_000} placeholder={field.configured && field.secret ? "已配置，留空不修改" : field.placeholder} />
@@ -349,26 +361,31 @@ export function PaymentConfigFieldControl({ field, providerEnabled }: { field: P
                     <Input className={inputClassName} maxLength={2000} placeholder={field.placeholder} />
                 )}
             </Form.Item>
-            {field.note ? <div className="mt-2.5 text-xs leading-5 text-stone-500 dark:text-stone-400">{field.note}</div> : null}
+            {field.note || usesSystemDefault ? <div className="mt-2.5 text-xs leading-5 text-stone-500 dark:text-stone-400">{field.note || "留空时自动使用系统默认值，仅在需要自定义时填写。"}</div> : null}
         </div>
     );
 }
 
 export function PaymentFieldHeader({ field }: { field: PaymentProviderConfigField & { configured: boolean; sourceLabel: string } }) {
+    const usesSystemDefault = paymentFieldUsesSystemDefault(field);
     return (
         <div className="flex min-w-0 items-center justify-between gap-2">
             <div className="min-w-0">
                 <div className="truncate text-[13px] font-semibold leading-5 text-stone-950 dark:text-stone-100">{field.label}</div>
-                {field.configured ? <div className="mt-0.5 text-xs text-stone-400 dark:text-stone-500">{field.sourceLabel}</div> : null}
+                {field.configured || usesSystemDefault ? <div className="mt-0.5 text-xs text-stone-400 dark:text-stone-500">{field.configured ? field.sourceLabel : "留空自动使用"}</div> : null}
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-1">
                 {field.required ? <Tag className="m-0">必填</Tag> : null}
-                <Tag className="m-0" color={field.configured ? "green" : "default"}>
-                    {field.configured ? "已配置" : "未配置"}
+                <Tag className="m-0" color={field.configured ? "green" : usesSystemDefault ? "blue" : "default"}>
+                    {field.configured ? "已配置" : usesSystemDefault ? "系统默认" : "未配置"}
                 </Tag>
             </div>
         </div>
     );
+}
+
+function paymentFieldUsesSystemDefault(field: PaymentProviderConfigField & { configured: boolean }) {
+    return !field.configured && !field.required && /^默认(?:\s|$)/.test(field.placeholder || "");
 }
 
 export function RequirementGrid({ checkout, webhook, webhookOptional }: { checkout: PaymentConfigRequirement[]; webhook: PaymentConfigRequirement[]; webhookOptional?: boolean }) {

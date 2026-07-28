@@ -151,6 +151,30 @@ describe("video generation candidate failover", () => {
         expect((await response.json()).task.model).toBe("video");
     });
 
+    it("uses the SD2.0 model route without affecting OpenAI models on the same channel", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [
+                {
+                    ...channels[0],
+                    models: ["openai-text", "sd2.0"],
+                    advancedConfig: {
+                        protocol: "auto",
+                        createPath: "/wrong-channel-path",
+                        modelConfigs: { "sd2.0": { capability: "video", protocol: "seedance", createPath: "/sd2/videos", queryPath: "/sd2/videos/:task_id" } },
+                    },
+                },
+            ],
+            logicalModels: [{ ...settings.logicalModels[0], bindings: [{ ...settings.logicalModels[0].bindings[0], upstreamModel: "sd2.0" }] }],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-sd2", status: "queued" }));
+
+        const response = await POST(request());
+
+        expect(response.status).toBe(200);
+        expect(mocks.fetchInternalApi.mock.calls[0][0]).toContain("/api/ai/system/one/sd2/videos");
+    });
+
     it("persists the Drama project, episode and shot task context", async () => {
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-drama", status: "queued" }));
         const context = { surface: "drama", projectId: "drama-one", episodeId: "episode-one", shotId: "shot-one", estimatedPoints: 8, attemptNo: 2, clientRequestId: "drama-video:one" };
@@ -172,20 +196,20 @@ describe("video generation candidate failover", () => {
     it("rejects an image logical model for a video task", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             ...settings,
-            systemChannels: [...channels, { id: "image", name: "图片渠道", baseUrl: "https://image.example.com/v1", apiKey: "image-secret", apiFormat: "openai", models: ["sd2"], enabled: true, advancedConfig: { protocol: "openai" } }],
+            systemChannels: [...channels, { id: "image", name: "图片渠道", baseUrl: "https://image.example.com/v1", apiKey: "image-secret", apiFormat: "openai", models: ["stable-diffusion-2.0"], enabled: true, advancedConfig: { protocol: "openai" } }],
             logicalModels: [
                 ...settings.logicalModels,
                 {
-                    id: "sd2",
+                    id: "stable-diffusion-2.0",
                     name: "Stable Diffusion",
                     capability: "image",
                     enabled: true,
-                    bindings: [{ id: "image-binding", channelId: "image", upstreamModel: "sd2", enabled: true, priority: 1 }],
+                    bindings: [{ id: "image-binding", channelId: "image", upstreamModel: "stable-diffusion-2.0", enabled: true, priority: 1 }],
                 },
             ],
         });
 
-        const response = await POST(request({ model: "sd2" }));
+        const response = await POST(request({ model: "stable-diffusion-2.0" }));
 
         expect(response.status).toBe(400);
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();

@@ -1,17 +1,21 @@
 "use client";
 
-import { Check, Download, Pencil, Trash2, X } from "lucide-react";
+import { Check, Download, Pencil, Share2, Trash2, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Button, Input } from "antd";
+import { App, Button, Input } from "antd";
+import { useState } from "react";
 
-import { useCanvasStore, type CanvasProject } from "../stores/use-canvas-store";
+import { useCanvasStore, type CanvasProjectSummary } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { exportCanvasProjects } from "../utils/canvas-export";
 
-export function CanvasProjectCard({ project }: { project: CanvasProject }) {
+export function CanvasProjectCard({ project }: { project: CanvasProjectSummary }) {
+    const { message } = App.useApp();
     const router = useRouter();
     const searchParams = useSearchParams();
     const renameProject = useCanvasStore((state) => state.renameProject);
+    const loadProject = useCanvasStore((state) => state.loadProject);
+    const [exporting, setExporting] = useState(false);
     const selectedIds = useCanvasUiStore((state) => state.selectedProjectIds);
     const editingId = useCanvasUiStore((state) => state.editingProjectId);
     const editingTitle = useCanvasUiStore((state) => state.editingProjectTitle);
@@ -26,6 +30,18 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const saveTitle = () => {
         renameProject(project.id, editingTitle);
         stopEditing();
+    };
+    const exportProject = async () => {
+        if (exporting) return;
+        setExporting(true);
+        try {
+            const detail = await loadProject(project.id);
+            await exportCanvasProjects([detail]);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "画布导出失败");
+        } finally {
+            setExporting(false);
+        }
     };
 
     return (
@@ -55,7 +71,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     >
                         <h2 className="truncate text-base font-semibold text-stone-950 sm:text-xl dark:text-stone-100">{project.title}</h2>
                         <p className="mt-1.5 text-xs leading-5 text-stone-600 sm:mt-3 sm:text-sm sm:leading-6 dark:text-stone-400">
-                            {project.nodes.length} 个节点 · {project.connections.length} 条连线
+                            {project.nodeCount} 个节点 · {project.connectionCount} 条连线
                         </p>
                     </button>
                 )}
@@ -70,7 +86,8 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                         </>
                     ) : (
                         <>
-                            <Button type="text" size="small" shape="circle" icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects([project], project.title || "VOZEB PRO 画布")} aria-label="导出" />
+                            <Button type="text" size="small" shape="circle" loading={exporting} icon={<Download className="size-4" />} onClick={() => void exportProject()} aria-label="导出" />
+                            <Button type="text" size="small" shape="circle" icon={<Share2 className="size-4" />} onClick={() => router.push(`/works?sourceType=canvas&sourceId=${encodeURIComponent(project.id)}`)} aria-label="发布作品" />
                             <Button type="text" size="small" shape="circle" icon={<Pencil className="size-4" />} onClick={() => startEditing(project.id, project.title)} aria-label="重命名" />
                             <Button type="text" size="small" shape="circle" icon={<Trash2 className="size-4" />} onClick={() => setDeleteIds([project.id])} aria-label="删除" />
                         </>

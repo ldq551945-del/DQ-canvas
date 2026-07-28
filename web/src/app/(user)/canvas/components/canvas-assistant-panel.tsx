@@ -189,6 +189,8 @@ export function CanvasAssistantPanel({
         }
 
         const refs = savedReferences || selectedReferences;
+        const submittedReferenceIds = new Set(refs.map((item) => item.id));
+        const runSnapshot = compactSnapshot(snapshotRef.current);
         const userMessage: CanvasAssistantMessage = { id: nanoid(), role: "user", text, references: refs };
         const assistantId = nanoid();
         appendMessage(session.id, userMessage);
@@ -205,7 +207,7 @@ export function CanvasAssistantPanel({
                     conversationId,
                     projectId: snapshotRef.current.projectId,
                     prompt: text,
-                    snapshot: compactSnapshot(snapshotRef.current),
+                    snapshot: { ...runSnapshot, selectedNodeIds: Array.from(submittedReferenceIds) },
                     assetIds: [],
                     skillIds: selectedSkillId ? [selectedSkillId] : [],
                     modelIds: smartPlanning ? [] : selectedModelIds,
@@ -213,6 +215,10 @@ export function CanvasAssistantPanel({
             });
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.msg || "创建 Agent 任务失败");
+            if (submittedReferenceIds.size) {
+                setRemovedReferenceIds((current) => new Set([...current, ...submittedReferenceIds]));
+                onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((id) => !submittedReferenceIds.has(id))));
+            }
             if (payload.data.run.conversationId && payload.data.run.conversationId !== conversationId) onConversationChange(payload.data.run.conversationId);
             setActiveRunId(payload.data.run.id);
             setSelectedSkillId(undefined);
@@ -224,7 +230,7 @@ export function CanvasAssistantPanel({
         }
     };
 
-    const waitForBackendAgent = async (runId: string, sessionId: string, assistantId: string) => {
+    const waitForBackendAgent = async (runId: string, sessionId: string, assistantId: string, retryTaskId?: string) => {
         try {
             await watchCanvasAgentRun(runId, {
                 onPlan: (ops, reply) => {
@@ -233,7 +239,9 @@ export function CanvasAssistantPanel({
                 },
                 onAssistant: (text, detail) => {
                     if (detail?.runId && detail.taskId) {
-                        appendMessage(sessionId, { id: nanoid(), role: "error", title: detail.title || "创作任务失败", text, detail });
+                        const failure = { id: detail.taskId === retryTaskId ? assistantId : nanoid(), role: "error" as const, title: detail.title || "创作任务失败", text, detail };
+                        if (detail.taskId === retryTaskId) upsertMessage(sessionId, failure);
+                        else appendMessage(sessionId, failure);
                         return;
                     }
                     upsertMessage(sessionId, { id: assistantId, role: "assistant", text, ...(detail?.nodeIds?.length ? { detail } : {}) });
@@ -300,21 +308,21 @@ export function CanvasAssistantPanel({
         }
     };
 
-    const retryFailedTask = async (runId: string, taskId: string) => {
+    const retryFailedTask = async (runId: string, taskId: string, failedMessageId: string) => {
         const session = activeSession || localSessions[0];
         if (!session || isRunning) return;
-        const assistantId = nanoid();
+        const assistantId = failedMessageId;
         setIsRunning(true);
         setActiveRunId(runId);
         setRunStage({ key: "executing", text: "正在重新执行失败任务" });
+        upsertMessage(session.id, { id: assistantId, role: "assistant", title: undefined, text: "正在重新执行失败任务…", detail: undefined });
         try {
             const response = await fetch(`/api/agent/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/retry`, { method: "POST" });
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.msg || "任务重试失败");
-            appendMessage(session.id, { id: assistantId, role: "assistant", text: "已重新提交该失败任务。" });
-            await waitForBackendAgent(runId, session.id, assistantId);
+            await waitForBackendAgent(runId, session.id, assistantId, taskId);
         } catch (error) {
-            appendMessage(session.id, { id: assistantId, role: "error", title: "重试失败", text: friendlyAgentError(error, "任务重试失败，请稍后再试。") });
+            upsertMessage(session.id, { id: assistantId, role: "error", title: "重试失败", text: friendlyAgentError(error, "任务重试失败，请稍后再试。"), detail: { runId, taskId } });
             setIsRunning(false);
             setActiveRunId("");
         }
@@ -416,16 +424,20 @@ export function CanvasAssistantPanel({
                 ) : messages.length ? (
                     <>
                         {messages.map((message) => (
-                            <div key={message.id} className="space-y-2">
+                            <div key={message.id} className="space-y-1">
+                                {message.references?.length ? <MessageReferences message={message} /> : null}
                                 <AgentChatMessage
                                     item={assistantMessageToChatMessage(message)}
                                     theme={theme}
                                     user={user}
                                     onLocateNode={onLocateNode}
-                                    onRetryTask={(runId, taskId) => void retryFailedTask(runId, taskId)}
-                                    onEditMessage={(text) => setPrompt(text)}
+                                    onRetryTask={(runId, taskId) => void retryFailedTask(runId, taskId, message.id)}
+                                    onEditMessage={() => {
+                                        setPrompt(message.text);
+                                        setRemovedReferenceIds(new Set());
+                                        onSelectNodeIds(new Set((message.references || []).map((item) => item.id).filter((id) => nodes.some((node) => node.id === id))));
+                                    }}
                                 />
-                                {message.references?.length ? <MessageReferences message={message} /> : null}
                             </div>
                         ))}
                         {isRunning ? (

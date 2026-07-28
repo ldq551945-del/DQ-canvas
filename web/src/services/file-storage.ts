@@ -1,6 +1,6 @@
 "use client";
 
-import { getServerMediaBlob, serverMediaUrl, uploadServerMedia, type ServerMediaType } from "@/services/server-media-storage";
+import { getServerMediaBlob, parseServerMediaUrl, serverMediaUrl, uploadServerMedia, type ServerMediaType } from "@/services/server-media-storage";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number; remoteUrl?: string; serverUrl?: string };
 
@@ -16,9 +16,9 @@ export async function uploadGeneratedMediaFile(input: string | Blob, type: Exclu
 }
 
 export async function readStoredMediaFile(url: string, type: Exclude<ServerMediaType, "image">, mimeType: string): Promise<UploadedFile | null> {
-    if (!url.startsWith("/api/reference-assets/") && !url.startsWith("/api/generation-log-assets/")) return null;
-    const storageKey = url.startsWith("/api/reference-assets/") ? url.slice("/api/reference-assets/".length).split("/").map(decodeURIComponent).join("/") : "";
-    return { url, serverUrl: url, storageKey, bytes: 0, mimeType, ...(type === "video" ? await readVideoMeta(url) : await readAudioMeta(url)) };
+    const reference = parseServerMediaUrl(url);
+    if (!reference) return null;
+    return { url: reference.url, serverUrl: reference.url, storageKey: reference.storageKey, bytes: 0, mimeType, ...(type === "video" ? await readVideoMeta(reference.url) : await readAudioMeta(reference.url)) };
 }
 
 async function withMediaMeta(stored: Awaited<ReturnType<typeof uploadServerMedia>>, type: Exclude<ServerMediaType, "image">) {
@@ -30,8 +30,8 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     return serverMediaUrl(storageKey, fallback);
 }
 
-export function getMediaBlob(storageKey: string) {
-    return getServerMediaBlob(storageKey);
+export function getMediaBlob(storageKey: string, fallback = "") {
+    return getServerMediaBlob(storageKey, fallback);
 }
 
 export async function setMediaBlob(_storageKey: string, blob: Blob) {

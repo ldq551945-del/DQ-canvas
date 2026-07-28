@@ -5,6 +5,7 @@ import { Button, Input, Modal, Slider } from "antd";
 import { Brush, Eraser, RotateCcw, WandSparkles, X } from "lucide-react";
 
 import { readImageMeta } from "@/lib/image-utils";
+import { imagePreviewUrl } from "@/lib/media-image-url";
 
 export type CanvasImageMaskEditPayload = {
     prompt: string;
@@ -105,7 +106,7 @@ export function CanvasNodeMaskEditDialog({ dataUrl, open, onClose, onConfirm }: 
             <div className="grid gap-4 lg:grid-cols-[minmax(360px,1fr)_320px] lg:gap-5">
                 <div className="flex min-h-52 items-center justify-center rounded-xl border border-black/10 bg-transparent p-0 sm:min-h-[300px] lg:min-h-[360px] dark:border-white/10">
                     <div className="relative inline-block max-w-full overflow-hidden rounded-lg bg-transparent select-none">
-                        <img src={dataUrl} alt="" className="block max-h-[42vh] max-w-full bg-transparent sm:max-h-[60vh] lg:max-h-[68vh]" draggable={false} />
+                        <img src={imagePreviewUrl(dataUrl, 1920)} alt="" className="block max-h-[42vh] max-w-full bg-transparent sm:max-h-[60vh] lg:max-h-[68vh]" draggable={false} />
                         {image ? (
                             <>
                                 <canvas ref={maskCanvasRef} width={image.width} height={image.height} className="hidden" />

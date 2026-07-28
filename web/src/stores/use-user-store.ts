@@ -4,9 +4,11 @@ import { create } from "zustand";
 
 export type LocalUser = {
     id: string;
+    accountId: string;
     username: string;
     email?: string;
     displayName: string;
+    bio: string;
     avatarUrl?: string;
     role: "admin" | "user";
     status: "active" | "disabled";

@@ -1,15 +1,18 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Bot, BookOpen, Check, Circle, CircleStop, History, LoaderCircle, Plus, Search, SlidersHorizontal, XCircle } from "lucide-react";
+import { Bot, BookOpen, Check, CircleStop, FileAudio2, Film, History, LoaderCircle, Plus, RotateCcw, Search, SlidersHorizontal, XCircle } from "lucide-react";
 import { Button, Input, Popover, Tooltip } from "antd";
 
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
 import { formatAgentMessageText } from "@/components/agent/agent-message-format";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
+import { imageReferenceLabel } from "@/lib/image-reference-prompt";
+import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
-import { workbenchAgentProgressHeading, workbenchAgentProgressSteps, type WorkbenchAgentChoice, type WorkbenchAgentMessage } from "./workbench-agent-progress";
+import type { WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
+import type { WorkbenchAgentChoice, WorkbenchAgentMessage } from "./workbench-agent-progress";
 
 export type { WorkbenchAgentMessage, WorkbenchAgentSession } from "./workbench-agent-progress";
 export type WorkbenchSkillOption = AgentSkillSummary;
@@ -84,6 +87,7 @@ export function WorkbenchAgentConversation({
     onLoadOlder,
     onChoice,
     onEditMessage,
+    onRetryMessage,
 }: {
     messages: WorkbenchAgentMessage[];
     running: boolean;
@@ -91,7 +95,8 @@ export function WorkbenchAgentConversation({
     olderMessagesLoading?: boolean;
     onLoadOlder?: () => void;
     onChoice?: (choice: WorkbenchAgentChoice) => void;
-    onEditMessage: (text: string) => void;
+    onEditMessage: (message: WorkbenchAgentMessage) => void;
+    onRetryMessage?: (messageId: string) => void;
 }) {
     const scrollRef = useRef<HTMLDivElement>(null);
     const scrollStateRef = useRef<{ firstId?: string; height: number }>({ height: 0 });
@@ -118,13 +123,24 @@ export function WorkbenchAgentConversation({
                 const displayMessage = { ...message, text: formatAgentMessageText(message.text) };
                 return (
                     <div key={message.id} className={`group/message flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`flex max-w-[92%] flex-col ${message.role === "user" ? "items-end" : "items-start"}`}>
+                        <div className={cn("flex min-w-0 flex-col", message.role === "user" ? "max-w-[88%] items-end" : "w-full items-start")}>
+                            {message.role === "user" && message.attachments?.length ? <WorkbenchMessageAttachments attachments={message.attachments} /> : null}
                             <div
-                                className={`rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${message.role === "user" ? "max-w-full bg-stone-900 text-white dark:bg-white dark:text-stone-950" : message.role === "error" ? "max-w-full bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-200" : message.role === "warning" ? "max-w-full bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200" : "max-w-full bg-stone-100 text-stone-700 dark:bg-stone-800 dark:text-stone-200"}`}
+                                className={cn(
+                                    "max-w-full break-words text-sm leading-6",
+                                    message.role === "user" && "text-right text-stone-950 dark:text-stone-50",
+                                    message.role === "assistant" && "text-stone-700 dark:text-stone-200",
+                                    message.role === "error" && "text-red-700 dark:text-red-300",
+                                    message.role === "warning" && "text-amber-800 dark:text-amber-300",
+                                )}
                             >
-                                {message.progress ? <WorkbenchAgentProgressMessage message={displayMessage} /> : <WorkbenchAgentResponseMessage message={displayMessage} onChoice={onChoice} />}
+                                {message.progress ? (
+                                    <WorkbenchAgentProgressMessage message={displayMessage} onRetry={onRetryMessage ? () => onRetryMessage(message.id) : undefined} />
+                                ) : (
+                                    <WorkbenchAgentResponseMessage message={displayMessage} onChoice={onChoice} />
+                                )}
                             </div>
-                            {!message.progress ? <AgentMessageActions text={displayMessage.text} onEdit={message.role === "user" ? onEditMessage : undefined} align={message.role === "user" ? "end" : "start"} /> : null}
+                            {!message.progress ? <AgentMessageActions text={displayMessage.text} onEdit={message.role === "user" ? () => onEditMessage(message) : undefined} align={message.role === "user" ? "end" : "start"} /> : null}
                         </div>
                     </div>
                 );
@@ -139,32 +155,53 @@ export function WorkbenchAgentConversation({
     );
 }
 
-function WorkbenchAgentProgressMessage({ message }: { message: WorkbenchAgentMessage }) {
-    const progress = message.progress!;
-    const steps = workbenchAgentProgressSteps(progress);
+function WorkbenchMessageAttachments({ attachments }: { attachments: WorkbenchAgentAttachment[] }) {
+    let imageIndex = 0;
     return (
-        <div className="w-[320px] max-w-full">
-            <div className="font-semibold text-current">{workbenchAgentProgressHeading(progress)}</div>
-            <div className="mt-3 space-y-2">
-                {steps.map((step) => (
-                    <div key={step.key} className={`flex items-center gap-2 text-xs ${step.status === "pending" ? "text-stone-400 dark:text-stone-500" : "text-current"}`}>
-                        {step.status === "completed" ? <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" /> : null}
-                        {step.status === "running" ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-sky-600 dark:text-sky-300" /> : null}
-                        {step.status === "failed" ? <XCircle className="size-3.5 shrink-0 text-red-600 dark:text-red-300" /> : null}
-                        {step.status === "cancelled" ? <CircleStop className="size-3.5 shrink-0 text-amber-600 dark:text-amber-300" /> : null}
-                        {step.status === "pending" ? <Circle className="size-3.5 shrink-0" /> : null}
-                        <span>{step.label}</span>
+        <div className="mb-1.5 flex max-w-full flex-wrap justify-end gap-1.5" aria-label="本轮参考素材">
+            {attachments.map((item) => {
+                const label = item.kind === "image" ? imageReferenceLabel(imageIndex++) : item.kind === "video" ? "视频" : "音频";
+                return (
+                    <div
+                        key={`${item.kind}:${item.storageKey}`}
+                        className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-stone-200 bg-stone-100 text-stone-500 dark:border-stone-700 dark:bg-stone-800 dark:text-stone-300"
+                        title={item.name}
+                    >
+                        {item.kind === "image" ? <img src={imagePreviewUrl(item.url, 192)} alt={item.name} loading="lazy" className="size-full object-cover" /> : null}
+                        {item.kind === "video" ? <Film className="size-5" aria-hidden /> : null}
+                        {item.kind === "audio" ? <FileAudio2 className="size-5" aria-hidden /> : null}
+                        <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{label}</span>
                     </div>
-                ))}
+                );
+            })}
+        </div>
+    );
+}
+
+function WorkbenchAgentProgressMessage({ message, onRetry }: { message: WorkbenchAgentMessage; onRetry?: () => void }) {
+    const progress = message.progress!;
+    const label = progress.phase === "planning" ? "思考中" : progress.phase === "submitting" ? "正在创建生成任务" : progress.phase === "failed" ? message.text || "处理失败" : progress.phase === "cancelled" ? message.text || "已取消" : "已完成";
+    return (
+        <div className="flex flex-col items-start gap-1 text-sm text-current">
+            <div className="flex items-start gap-2">
+                {progress.phase === "planning" || progress.phase === "submitting" ? <LoaderCircle className="mt-1 size-3.5 shrink-0 animate-spin text-stone-500 dark:text-stone-400" /> : null}
+                {progress.phase === "completed" ? <Check className="mt-1 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" /> : null}
+                {progress.phase === "failed" ? <XCircle className="mt-1 size-3.5 shrink-0 text-red-600 dark:text-red-300" /> : null}
+                {progress.phase === "cancelled" ? <CircleStop className="mt-1 size-3.5 shrink-0 text-amber-600 dark:text-amber-300" /> : null}
+                <span>{label}</span>
             </div>
-            <p className="mt-3 border-t border-current/10 pt-2 text-xs leading-5 opacity-80">{message.text}</p>
+            {progress.phase === "failed" && onRetry ? (
+                <Button type="text" size="small" className="!h-7 !px-1.5" icon={<RotateCcw className="size-3.5" />} onClick={onRetry}>
+                    重试
+                </Button>
+            ) : null}
         </div>
     );
 }
 
 function WorkbenchAgentResponseMessage({ message, onChoice }: { message: WorkbenchAgentMessage; onChoice?: (choice: WorkbenchAgentChoice) => void }) {
     return (
-        <div className="w-[340px] max-w-full">
+        <div className="max-w-full">
             <p className="whitespace-pre-wrap">{message.text}</p>
             {message.choices?.length ? (
                 <div className="mt-3 space-y-2 border-t border-current/10 pt-3">

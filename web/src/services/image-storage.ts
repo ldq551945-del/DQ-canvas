@@ -29,8 +29,8 @@ export async function resolveStoredImageDataUrl(storageKey?: string, fallback = 
     return serverMediaUrl(storageKey, fallback);
 }
 
-export function getImageBlob(storageKey: string) {
-    return getServerMediaBlob(storageKey);
+export function getImageBlob(storageKey: string, fallback = "") {
+    return getServerMediaBlob(storageKey, fallback);
 }
 
 export async function setImageBlob(_storageKey: string, blob: Blob) {
@@ -38,7 +38,7 @@ export async function setImageBlob(_storageKey: string, blob: Blob) {
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; remoteUrl?: string; serverUrl?: string; storageKey?: string }) {
-    const candidates = uniqueImageSources([serverMediaUrl(image.storageKey), image.serverUrl, image.remoteUrl, image.url, image.dataUrl]);
+    const candidates = uniqueImageSources([serverMediaUrl(image.storageKey, image.serverUrl || image.url || image.dataUrl), image.serverUrl, image.remoteUrl, image.url, image.dataUrl]);
     let fallback = "";
     for (const url of candidates) {
         if (url.startsWith("data:")) return url;

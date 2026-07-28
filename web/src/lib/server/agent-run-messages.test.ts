@@ -15,9 +15,14 @@ describe("Agent 返回文案", () => {
         expect(agentRunCompletionReply(run)).toBe("已完成 1 个创作任务。\n\n「主图」已生成并返回画布。");
     });
 
-    it("does not mention canvas for chat media completion", () => {
+    it("does not expose per-task media titles in chat completion", () => {
         const image = task({ title: "主图", type: "image", result: { url: "https://example.com/image.png" } });
-        expect(agentRunCompletionReply(agentRun({ surface: "chat", projectId: undefined, tasks: [image] }))).toBe("「主图」已生成。");
+        const detail = task({ id: "detail", title: "环境生活方式版", type: "image", result: { url: "https://example.com/detail.png" } });
+        const reply = agentRunCompletionReply(agentRun({ surface: "chat", projectId: undefined, tasks: [image, detail] }));
+
+        expect(reply).toBe("已完成 2 个创作任务。");
+        expect(reply).not.toContain("主图");
+        expect(reply).not.toContain("环境生活方式版");
     });
 
     it("keeps the visual review internal", () => {
@@ -45,7 +50,24 @@ describe("Agent 返回文案", () => {
     });
 
     it("preserves the first failed task cause instead of replacing it with a dependency error", () => {
-        expect(agentRunFailureMessage([task({ title: "辣妹图", status: "failed", error: "模型 gpt-image-2-4k 暂不可用" }), task({ title: "配套视频", status: "ready", dependencies: ["task"] })])).toBe("「辣妹图」失败：模型 gpt-image-2-4k 暂不可用");
+        expect(agentRunFailureMessage([task({ title: "辣妹图", status: "failed", error: "模型 gpt-image-2-4k 暂不可用" }), task({ title: "配套视频", status: "ready", dependencies: ["task"] })])).toContain("「辣妹图」：模型 gpt-image-2-4k 暂不可用");
+    });
+
+    it("reports partial image success and every failed result", () => {
+        const partial = task({
+            title: "角色图",
+            type: "image",
+            count: 3,
+            status: "failed",
+            error: "上游生成失败",
+            childTasks: [
+                { id: "one", status: "completed", attempt: 1, result: { url: "https://example.com/one.png" } },
+                { id: "two", status: "failed", attempt: 1, error: "上游生成失败" },
+                { id: "three", status: "failed", attempt: 1, error: "上游生成失败" },
+            ],
+        });
+
+        expect(agentRunFailureMessage([partial])).toBe("生成结果：成功 1 张，失败 2 张。\n失败原因：\n「角色图」：上游生成失败");
     });
 });
 

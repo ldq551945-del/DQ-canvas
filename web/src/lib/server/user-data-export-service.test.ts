@@ -51,7 +51,7 @@ describe("buildUserDataExport", () => {
         mocks.listCreativeConversations.mockResolvedValue([]);
         mocks.listCreativeAssets.mockResolvedValue([]);
         mocks.listCreativeMessages.mockResolvedValue([]);
-        mocks.listDramaProjectSummaries.mockResolvedValue([]);
+        mocks.listDramaProjectSummaries.mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 100 });
         mocks.listGenerationLogs.mockResolvedValue({ items: [], total: 0 });
         mocks.listLibraryAssets.mockResolvedValue([]);
         mocks.listLocalMediaRegistrationsForUser.mockResolvedValue([]);
@@ -152,5 +152,19 @@ describe("buildUserDataExport", () => {
         expect(result.billing.orders).toEqual([{ id: "order-1" }]);
         expect(result.billing.payments).toEqual([{ id: "payment-1" }]);
         expect(result.billing.planAssignments).toEqual([{ id: "assignment-1" }]);
+    });
+
+    it("collects every Drama summary page before reading owned project details", async () => {
+        mocks.listDramaProjectSummaries.mockResolvedValueOnce({ items: [{ id: "drama-one" }], total: 2, page: 1, pageSize: 100 }).mockResolvedValueOnce({ items: [{ id: "drama-two" }], total: 2, page: 2, pageSize: 100 });
+        mocks.getDramaProject.mockImplementation(async (id: string) => ({ id, title: id }));
+
+        const result = await buildUserDataExport("user-one");
+
+        expect(mocks.listDramaProjectSummaries).toHaveBeenNthCalledWith(1, "user-one", { page: 1, pageSize: 100 });
+        expect(mocks.listDramaProjectSummaries).toHaveBeenNthCalledWith(2, "user-one", { page: 2, pageSize: 100 });
+        expect(result.dramaProjects).toEqual([
+            { id: "drama-one", title: "drama-one" },
+            { id: "drama-two", title: "drama-two" },
+        ]);
     });
 });

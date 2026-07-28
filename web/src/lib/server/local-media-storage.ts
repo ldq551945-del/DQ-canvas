@@ -26,11 +26,12 @@ export function createDatedMediaPath(storageClass: LocalMediaClass, type: LocalM
     return `${storageClass}/${year}/${month}/${day}/${folder}/${year}${month}${day}-${hours}${minutes}${seconds}-${randomUUID()}${suffix.toLowerCase()}`;
 }
 
-export async function listLocalMediaAssets(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string } = {}) {
+export async function listLocalMediaAssets(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string; ownerUserIds?: string[] } = {}) {
     if (getDatabaseProvider() === "postgres") return listRegisteredLocalMediaAssets(input);
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const pageSize = Math.max(1, Math.min(100, Math.floor(Number(input.pageSize) || 20)));
     const search = (input.search || "").trim().toLowerCase();
+    const ownerUserIds = new Set(input.ownerUserIds || []);
     const registrations = new Map((await listLocalMediaRegistrations()).map((item) => [item.storageKey, item]));
     const all = [...(await scanGenerationMedia()), ...(await scanReferenceMedia())].map((asset) => ({ ...asset, ...registrationMetadata(registrations.get(asset.storageKey) || null) })).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
     const filtered = all
@@ -40,7 +41,8 @@ export async function listLocalMediaAssets(input: { page?: number; pageSize?: nu
         .filter((asset) =>
             !search
                 ? true
-                : `${asset.name} ${asset.originalName || ""} ${asset.ownerUserId || ""} ${asset.source || ""} ${asset.conversationId || ""} ${asset.runId || ""} ${asset.taskId || ""} ${asset.projectId || ""} ${asset.scope} ${asset.type}`
+                : ownerUserIds.has(asset.ownerUserId || "") ||
+                  `${asset.name} ${asset.originalName || ""} ${asset.ownerUserId || ""} ${asset.source || ""} ${asset.conversationId || ""} ${asset.runId || ""} ${asset.taskId || ""} ${asset.projectId || ""} ${asset.scope} ${asset.type}`
                       .toLowerCase()
                       .includes(search),
         );
@@ -69,7 +71,7 @@ export async function getLocalMediaAssetSummary() {
     return (await listLocalMediaAssets({ page: 1, pageSize: 1 })).summary;
 }
 
-async function listRegisteredLocalMediaAssets(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string }) {
+async function listRegisteredLocalMediaAssets(input: { page?: number; pageSize?: number; storageClass?: string; type?: string; source?: string; search?: string; ownerUserIds?: string[] }) {
     const page = await listLocalMediaRegistrationPage(input);
     const items = page.items.map(localMediaAssetFromRegistration);
     const references = await countLocalMediaReferences(items.map((item) => item.storageKey));

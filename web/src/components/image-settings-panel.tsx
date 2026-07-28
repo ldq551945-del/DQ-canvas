@@ -4,6 +4,7 @@ import { type ReactNode, useState } from "react";
 import { ConfigProvider, Switch } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { parseImageDimensions } from "@/lib/image-size";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -42,22 +43,8 @@ type ImageSettingsPanelProps = {
 };
 
 export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10, showSizeControls = true }: ImageSettingsPanelProps) {
-    const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
-    const selectedAspect = aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
-    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
-    const selectAspect = (value: string) => {
-        const option = aspectOptions.find((item) => item.value === value);
-        onConfigChange("size", option?.size || option?.value || "auto");
-    };
-    const updateDimension = (key: "width" | "height", value: number | null) => {
-        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
-        const width = key === "width" ? next : dimensions.width;
-        const height = key === "height" ? next : dimensions.height;
-        onConfigChange("size", `${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
-    };
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -81,46 +68,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                     </div>
                 </div>
-                {showSizeControls ? (
-                    <>
-                        <div className="space-y-2.5">
-                            <div className="flex items-center justify-between gap-3">
-                                <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
-                                        16倍数对齐
-                                    </span>
-                                    <span title="输入完成后自动向上补成 16 的倍数" onMouseDown={(event) => event.stopPropagation()}>
-                                        <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                                <DimensionInput prefix="W" value={dimensions.width} disabled={activeSize === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
-                                <span className="text-lg opacity-45">↔</span>
-                                <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
-                            </div>
-                        </div>
-                        <div className="space-y-2.5">
-                            <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
-                            <div className="grid grid-cols-4 gap-2.5">
-                                {aspectOptions.map((item) => (
-                                    <button
-                                        key={item.value}
-                                        type="button"
-                                        className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
-                                        style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
-                                        onMouseDown={(event) => event.stopPropagation()}
-                                        onClick={() => selectAspect(item.value)}
-                                    >
-                                        <AspectIcon type={item.icon} width={item.width} height={item.height} color={theme.node.text} />
-                                        <span>{item.label}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    </>
-                ) : null}
+                {showSizeControls ? <ImageSizeControls size={config.size || "auto"} onChange={(value) => onConfigChange("size", value)} theme={theme} /> : null}
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
@@ -134,6 +82,67 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
             </div>
         </ImageSettingsTheme>
+    );
+}
+
+export function ImageSizeControls({ size, onChange, theme, compact = false }: { size: string; onChange: (value: string) => void; theme: CanvasTheme; compact?: boolean }) {
+    const [snapDimensionToStep, setSnapDimensionToStep] = useState(true);
+    const activeSize = size || "auto";
+    const selectedAspect = aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
+    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
+    const updateDimension = (key: "width" | "height", value: number | null) => {
+        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
+        const width = key === "width" ? next : dimensions.width;
+        const height = key === "height" ? next : dimensions.height;
+        onChange(`${alignDimension(width, snapDimensionToStep)}x${alignDimension(height, snapDimensionToStep)}`);
+    };
+
+    return (
+        <div className="space-y-3">
+            <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                    <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium" style={{ color: theme.node.muted }}>
+                            16倍数对齐
+                        </span>
+                        <span title="输入完成后自动向上补成 16 的倍数" onMouseDown={(event) => event.stopPropagation()}>
+                            <Switch size="small" checked={snapDimensionToStep} onChange={setSnapDimensionToStep} />
+                        </span>
+                    </div>
+                </div>
+                <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
+                    <DimensionInput prefix="W" value={dimensions.width} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("width", value)} />
+                    <span className="text-lg opacity-45">×</span>
+                    <DimensionInput prefix="H" value={dimensions.height} theme={theme} alignToStep={snapDimensionToStep} onChange={(value) => updateDimension("height", value)} />
+                </div>
+            </div>
+            <div className="space-y-2.5">
+                <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
+                <div className={compact ? "grid grid-cols-4 gap-2" : "grid grid-cols-4 gap-2.5"}>
+                    {aspectOptions.map((item) => (
+                        <button
+                            key={item.value}
+                            type="button"
+                            className={
+                                compact
+                                    ? "flex h-14 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border bg-transparent text-xs transition hover:opacity-80"
+                                    : "flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
+                            }
+                            style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={() => {
+                                const option = aspectOptions.find((candidate) => candidate.value === item.value);
+                                onChange(option?.size || option?.value || "auto");
+                            }}
+                        >
+                            <AspectIcon type={item.icon} width={item.width} height={item.height} color={theme.node.text} />
+                            <span>{item.label}</span>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        </div>
     );
 }
 
@@ -172,7 +181,7 @@ function OptionPill({ selected, theme, onClick, children }: { selected: boolean;
     );
 }
 
-function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; alignToStep: boolean; onChange: (value: number | null) => void }) {
+function DimensionInput({ prefix, value, theme, alignToStep, onChange }: { prefix: string; value: number; theme: CanvasTheme; alignToStep: boolean; onChange: (value: number | null) => void }) {
     const commit = (input: HTMLInputElement) => {
         const next = alignDimension(Math.max(1, Math.floor(Number(input.value) || value || 1024)), alignToStep);
         input.value = String(next);
@@ -180,14 +189,13 @@ function DimensionInput({ prefix, value, disabled, theme, alignToStep, onChange 
     };
 
     return (
-        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text, opacity: disabled ? 0.55 : 1 }}>
+        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text }}>
             <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
                 {prefix}
             </span>
             <input
                 type="number"
                 min={1}
-                disabled={disabled}
                 className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                 defaultValue={value || ""}
                 key={`${prefix}-${value}`}
@@ -239,10 +247,10 @@ function SettingTitle({ children, color }: { children: string; color: string }) 
 }
 
 function readSizeDimensions(size: string, fallback: { width: number; height: number }) {
-    const match = size?.match(/^(\d+)x(\d+)$/);
+    const dimensions = parseImageDimensions(size);
     return {
-        width: match ? Number(match[1]) : fallback.width,
-        height: match ? Number(match[2]) : fallback.height,
+        width: dimensions?.width || fallback.width,
+        height: dimensions?.height || fallback.height,
     };
 }
 

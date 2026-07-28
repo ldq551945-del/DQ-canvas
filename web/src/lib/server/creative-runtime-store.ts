@@ -234,6 +234,23 @@ export async function listCreativeAssets(conversationId: string, userId: string)
     return (await readRuntimeFile()).assets.filter((item) => item.conversationId === conversationId && item.userId === userId && item.status !== "deleted").sort((a, b) => a.createdAt - b.createdAt || a.ordinal - b.ordinal);
 }
 
+export async function listRecentCreativeMediaAssets(conversationId: string, userId: string, limit = 20) {
+    const boundedLimit = Math.max(1, Math.min(20, Math.floor(limit)));
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery("SELECT * FROM creative_assets WHERE conversation_id = $1 AND user_id = $2 AND status = 'ready' AND type IN ('image', 'video') ORDER BY created_at DESC, ordinal DESC LIMIT $3", [
+            conversationId,
+            userId,
+            boundedLimit,
+        ]);
+        return result.rows.map(mapAsset);
+    }
+    return (await readRuntimeFile()).assets
+        .filter((item) => item.conversationId === conversationId && item.userId === userId && item.status === "ready" && (item.type === "image" || item.type === "video"))
+        .sort((a, b) => b.createdAt - a.createdAt || b.ordinal - a.ordinal)
+        .slice(0, boundedLimit);
+}
+
 export async function getCreativeAsset(id: string) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();

@@ -38,7 +38,7 @@ export function useVideoReferenceInputs(input: {
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
                 const image = await uploadImage(file);
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height };
             }),
         );
         const nextVideoReferences = await Promise.all(
@@ -83,7 +83,7 @@ export function useVideoReferenceInputs(input: {
             const next = await Promise.all(
                 blobs.slice(0, SEEDANCE_REFERENCE_LIMITS.images - input.references.length).map(async (blob, index) => {
                     const image = await uploadImage(blob);
-                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height };
                 }),
             );
             input.setReferences((value) => [...value, ...next].slice(0, SEEDANCE_REFERENCE_LIMITS.images));

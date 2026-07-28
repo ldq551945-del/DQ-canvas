@@ -84,7 +84,7 @@ export function CreativeComposer({
     const visibleSkills = skills.filter((skill) => matchesSkillCategory(skill, skillCategory));
 
     return (
-        <div className={cn("mx-auto w-full max-w-[1120px]", centered ? "" : "px-3 pb-3 sm:px-6 sm:pb-5")}>
+        <div className={cn("mx-auto w-full", centered ? "max-w-[960px]" : "max-w-[1120px] px-3 pb-3 sm:px-6 sm:pb-5")}>
             <div className="creative-composer rounded-[14px] border border-[#dde2e7] bg-white p-2 shadow-[0_14px_38px_rgba(32,36,42,0.09)] dark:border-[#30363e] dark:bg-[#181b20] dark:shadow-black/30">
                 {selectedSkill || attachments.length || uploading ? (
                     <div className="flex gap-2 overflow-x-auto px-2 pb-1 pt-1">

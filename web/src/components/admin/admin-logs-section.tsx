@@ -26,6 +26,7 @@ import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
 import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
 import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
+import { AdminUserSearchSelect } from "@/components/admin/admin-user-identity";
 import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
@@ -104,7 +105,6 @@ import { PROMPT_PAGE_SIZE, PROMPT_SEARCH_DEBOUNCE_MS, CDK_PAGE_SIZE, GENERATION_
 
 export function AdminLogsSection({ controller }: { controller: AdminDashboardController }) {
     const {
-        users,
         generationLogs,
         generationLogTotal,
         generationLogPage,
@@ -140,11 +140,11 @@ export function AdminLogsSection({ controller }: { controller: AdminDashboardCon
         <Panel>
             <PanelHeader title="调用记录" description="查看用户通过画布、图片工作台和视频创作台产生的生成任务、入口来源和调用状态。" />
             <div className="space-y-4 p-4 sm:p-5">
-                <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1fr)_286px] xl:items-start">
-                    <div className="grid min-w-0 grid-cols-2 gap-2.5 sm:grid-cols-[minmax(220px,300px)_118px_138px_118px_minmax(132px,180px)]">
+                <div className="grid min-w-0 gap-3 2xl:grid-cols-[minmax(0,1fr)_286px] 2xl:items-start">
+                    <div className="grid min-w-0 grid-cols-2 gap-2.5 xl:grid-cols-[minmax(220px,300px)_118px_138px_118px_minmax(132px,180px)]">
                         <Input
                             allowClear
-                            className="col-span-2 min-w-0 sm:col-span-1"
+                            className="col-span-2 min-w-0 xl:col-span-1"
                             prefix={<Search className="size-4 text-stone-400" />}
                             placeholder="搜索日志"
                             value={generationLogSearch}
@@ -197,18 +197,14 @@ export function AdminLogsSection({ controller }: { controller: AdminDashboardCon
                                 { label: "生成中", value: "pending" },
                             ]}
                         />
-                        <Select
-                            allowClear
+                        <AdminUserSearchSelect
                             className="min-w-0"
-                            showSearch
-                            placeholder="用户"
+                            placeholder="搜索用户或 ID"
                             value={generationLogUserId || undefined}
-                            optionFilterProp="label"
                             onChange={(value) => {
                                 setGenerationLogUserId(value || "");
                                 setGenerationLogPage(1);
                             }}
-                            options={users.map((user) => ({ label: `${user.displayName} / ${user.username}`, value: user.id }))}
                         />
                     </div>
                     <DatePicker.RangePicker

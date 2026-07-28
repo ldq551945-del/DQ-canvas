@@ -10,9 +10,15 @@ export class BillingProductRepository {
         return result.rows.map(mapBillingProduct);
     }
 
-    async getProductById(id: string) {
-        const result = await this.db.query("SELECT * FROM billing_products WHERE id = $1", [id]);
+    async getProductById(id: string, forUpdate = false) {
+        const result = await this.db.query(`SELECT * FROM billing_products WHERE id = $1${forUpdate ? " FOR UPDATE" : ""}`, [id]);
         return result.rows[0] ? mapBillingProduct(result.rows[0]) : null;
+    }
+
+    async getProductsByIds(ids: string[], forUpdate = false) {
+        if (!ids.length) return [];
+        const result = await this.db.query(`SELECT * FROM billing_products WHERE id = ANY($1::text[]) ORDER BY id ASC${forUpdate ? " FOR UPDATE" : ""}`, [ids]);
+        return result.rows.map(mapBillingProduct);
     }
 
     async upsertProduct(product: BillingProductRecord) {

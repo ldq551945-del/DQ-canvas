@@ -52,7 +52,16 @@ describe("工作台会话与生成记录", () => {
             recordId: "video-workbench:record-1",
             hasMore: false,
             messages: [
-                { id: "user-message", role: "user", status: "completed", content: "生成产品视频", metadata: { workspace: "video" } },
+                {
+                    id: "user-message",
+                    role: "user",
+                    status: "completed",
+                    content: "生成产品视频",
+                    metadata: {
+                        workspace: "video",
+                        attachments: [{ kind: "image", name: "产品图", url: "/api/reference-assets/permanent/product.png", storageKey: "permanent/product.png", mimeType: "image/png", width: 1200, height: 800 }],
+                    },
+                },
                 { id: "assistant-message", role: "assistant", status: "completed", content: "已收到生成需求。", metadata: { workspace: "video" } },
             ],
         });
@@ -70,6 +79,7 @@ describe("工作台会话与生成记录", () => {
         expect(mocks.getCreativeWorkbenchSession).toHaveBeenCalledWith("video-conversation", "video");
         expect(result).toMatchObject({ recordId: "record-1", loaded: true });
         expect(result.messages).toEqual([expect.objectContaining({ role: "user", text: "生成产品视频" }), expect.objectContaining({ role: "assistant", text: "已收到生成需求。" })]);
+        expect(result.messages[0].attachments).toEqual([expect.objectContaining({ storageKey: "permanent/product.png", width: 1200, height: 800 })]);
     });
 
     it("prepends an older page without duplicating messages", async () => {
@@ -128,5 +138,23 @@ describe("工作台会话与生成记录", () => {
         expect(session.messages.filter((message) => message.role === "user")).toHaveLength(1);
         expect(session.messages.some((message) => message.text === "正在按当前参数创建生成任务。")).toBe(false);
         expect(session.prompt).toBe("");
+    });
+
+    it("keeps repeated text when each request used a different reference", () => {
+        const [session] = normalizeWorkbenchAgentSessions([
+            {
+                id: "different-references",
+                title: "不同参考图",
+                messages: [
+                    { id: "user-1", role: "user", text: "换成白发", attachments: [{ kind: "image", name: "一", url: "/api/reference-assets/permanent/one.png", storageKey: "permanent/one.png", mimeType: "image/png" }] },
+                    { id: "user-2", role: "user", text: "换成白发", attachments: [{ kind: "image", name: "二", url: "/api/reference-assets/permanent/two.png", storageKey: "permanent/two.png", mimeType: "image/png" }] },
+                ],
+                prompt: "",
+                lastPrompt: "换成白发",
+                updatedAt: 1,
+            },
+        ]);
+
+        expect(session.messages.filter((message) => message.role === "user")).toHaveLength(2);
     });
 });

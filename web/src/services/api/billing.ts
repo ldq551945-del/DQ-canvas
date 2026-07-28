@@ -12,6 +12,18 @@ export type BillingProduct = {
     enabled: boolean;
     sortOrder: number;
     metadata?: unknown;
+    pricing: {
+        listUnitAmountCents: number;
+        saleUnitAmountCents: number;
+        discountCents: number;
+        promotion?: {
+            id: string;
+            label: string;
+            unitAmountCents: number;
+            startsAt: string;
+            endsAt: string;
+        };
+    };
     createdAt: string;
     updatedAt: string;
 };
@@ -23,10 +35,16 @@ export type BillingOrder = {
     orderNo: string;
     productId?: string;
     userId?: string;
+    userAccountId?: string;
+    userUsername?: string;
+    userDisplayName?: string;
     productKind: "plan" | "points";
     planId?: string;
     status: BillingOrderStatus;
     subject: string;
+    listAmountCents: number;
+    promotionDiscountCents: number;
+    couponDiscountCents: number;
     amountCents: number;
     currency: string;
     pointsAmount: number;
@@ -36,12 +54,71 @@ export type BillingOrder = {
     provider: string;
     providerOrderId?: string;
     providerPaymentId?: string;
+    promotionCampaignId?: string;
+    userCouponId?: string;
     expiresAt?: string;
     paidAt?: string;
     closedAt?: string;
+    pricingSnapshot?: unknown;
     metadata?: unknown;
     createdAt: string;
     updatedAt: string;
+};
+
+export type CouponTemplate = {
+    id: string;
+    code: string;
+    name: string;
+    description: string;
+    discountType: "fixed" | "percentage";
+    discountValue: number;
+    minimumAmountCents: number;
+    maximumDiscountCents: number;
+    stackWithPromotion: boolean;
+    claimable: boolean;
+    enabled: boolean;
+    startsAt: string;
+    endsAt: string;
+    totalLimit: number;
+    perUserLimit: number;
+    issuedCount: number;
+    redeemedCount: number;
+    productIds: string[];
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type UserCouponStatus = "available" | "locked" | "redeemed" | "expired" | "revoked";
+
+export type UserCoupon = {
+    id: string;
+    templateId: string;
+    userId: string;
+    status: UserCouponStatus;
+    grantSource: string;
+    claimedAt: string;
+    expiresAt: string;
+    lockedOrderId?: string;
+    lockedAt?: string;
+    redeemedOrderId?: string;
+    redeemedAt?: string;
+    revokedAt?: string;
+    template?: CouponTemplate;
+    applicable?: boolean;
+    unavailableReason?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type BillingQuote = {
+    productId: string;
+    quantity: number;
+    listAmountCents: number;
+    promotionDiscountCents: number;
+    couponDiscountCents: number;
+    payableAmountCents: number;
+    promotion?: BillingProduct["pricing"]["promotion"];
+    pricingSnapshot: unknown;
 };
 
 export type PaymentCheckout = {
@@ -78,8 +155,35 @@ export async function cancelBillingOrder(orderId: string) {
     return requestBilling<{ order: BillingOrder }>(`/api/billing/orders/${encodeURIComponent(orderId)}/cancel`, { method: "POST" });
 }
 
-export async function createBillingOrder(input: { productId: string; provider: string; quantity?: number }) {
+export async function createBillingOrder(input: { productId: string; provider: string; quantity?: number; userCouponId?: string }) {
     return requestBilling<{ order: BillingOrder }>("/api/billing/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export async function listBillingCoupons(input: { page?: number; pageSize?: number; status?: UserCouponStatus; productId?: string; quantity?: number } = {}) {
+    const params = new URLSearchParams();
+    if (input.page) params.set("page", String(input.page));
+    if (input.pageSize) params.set("pageSize", String(input.pageSize));
+    if (input.status) params.set("status", input.status);
+    if (input.productId) params.set("productId", input.productId);
+    if (input.quantity) params.set("quantity", String(input.quantity));
+    const query = params.toString();
+    return requestCommerce<{ coupons: UserCoupon[]; templates: CouponTemplate[]; total: number; page: number; pageSize: number }>(`/api/billing/coupons${query ? `?${query}` : ""}`);
+}
+
+export async function claimBillingCoupon(input: { templateId?: string; code?: string }) {
+    return requestCommerce<{ coupon: UserCoupon }>("/api/billing/coupons/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+}
+
+export async function quoteBillingOrder(input: { productId: string; quantity?: number; userCouponId?: string }) {
+    return requestCommerce<{ quote: BillingQuote }>("/api/billing/quotes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -99,4 +203,11 @@ async function requestBilling<T>(url: string, init?: RequestInit) {
     const payload = (await response.json().catch(() => ({}))) as T & { error?: string };
     if (!response.ok) throw new Error(payload.error || "请求失败");
     return payload;
+}
+
+async function requestCommerce<T>(url: string, init?: RequestInit) {
+    const response = await fetch(url, { cache: "no-store", ...init });
+    const payload = (await response.json().catch(() => null)) as { code?: number; data?: T; msg?: string } | null;
+    if (!response.ok || !payload || payload.code !== 0 || payload.data === undefined) throw new Error(payload?.msg || "请求失败");
+    return payload.data;
 }

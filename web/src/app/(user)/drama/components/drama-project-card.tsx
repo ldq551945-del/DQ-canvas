@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Button, Popconfirm, Tag } from "antd";
-import { Clapperboard, Trash2 } from "lucide-react";
+import { Clapperboard, Share2, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import type { DramaProjectSummary } from "../types";
@@ -45,6 +45,9 @@ export function DramaProjectCard({ project }: { project: DramaProjectSummary }) 
                     <Popconfirm title="删除这个短剧项目？" onConfirm={() => deleteProject(project.id).catch((error) => message.error(error instanceof Error ? error.message : "项目删除失败"))}>
                         <Button type="text" shape="circle" danger className="!size-8" icon={<Trash2 className="size-4" />} aria-label="删除项目" />
                     </Popconfirm>
+                    <Button className="!h-8 !px-3" icon={<Share2 className="size-3.5" />} onClick={() => router.push(`/works?sourceType=drama&sourceId=${encodeURIComponent(project.id)}`)}>
+                        发布
+                    </Button>
                     <Button type="primary" className="!h-8 !px-3" onClick={() => router.push(`/drama/${project.id}`)}>
                         继续制作
                     </Button>

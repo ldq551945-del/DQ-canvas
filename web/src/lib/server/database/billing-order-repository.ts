@@ -9,11 +9,12 @@ export class BillingOrderRepository {
         const result = await this.db.query(
             `
             INSERT INTO billing_orders (
-                id, order_no, product_id, user_id, product_kind, plan_id, status, subject, amount_cents, currency, points_amount,
-                daily_points, period_days, quantity, provider, provider_order_id, provider_payment_id, expires_at,
-                paid_at, closed_at, metadata, created_at, updated_at
+                id, order_no, product_id, user_id, product_kind, plan_id, status, subject, list_amount_cents,
+                promotion_discount_cents, coupon_discount_cents, amount_cents, currency, points_amount, daily_points,
+                period_days, quantity, provider, provider_order_id, provider_payment_id, promotion_campaign_id,
+                user_coupon_id, expires_at, paid_at, closed_at, pricing_snapshot, metadata, created_at, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
             RETURNING *
             `,
             [
@@ -25,6 +26,9 @@ export class BillingOrderRepository {
                 order.planId || null,
                 order.status,
                 order.subject,
+                order.listAmountCents,
+                order.promotionDiscountCents,
+                order.couponDiscountCents,
                 order.amountCents,
                 order.currency,
                 order.pointsAmount,
@@ -34,9 +38,12 @@ export class BillingOrderRepository {
                 order.provider,
                 order.providerOrderId || null,
                 order.providerPaymentId || null,
+                order.promotionCampaignId || null,
+                order.userCouponId || null,
                 order.expiresAt || null,
                 order.paidAt || null,
                 order.closedAt || null,
+                jsonParam(order.pricingSnapshot ?? {}),
                 jsonParam(order.metadata ?? {}),
                 order.createdAt,
                 order.updatedAt,
@@ -61,14 +68,18 @@ export class BillingOrderRepository {
         const keyword = input.keyword?.trim().toLowerCase() || "";
         const result = await this.db.query(
             `
-            SELECT *, count(*) OVER() AS total_count
-            FROM billing_orders
-            WHERE ($1::text IS NULL OR user_id = $1)
-              AND ($2::text IS NULL OR status = $2)
-              AND ($3::text IS NULL OR plan_id = $3)
-              AND ($4::text IS NULL OR product_id = $4)
-              AND ($5 = '' OR lower(order_no) LIKE $6 OR lower(subject) LIKE $6 OR lower(coalesce(provider_order_id, '')) LIKE $6 OR lower(coalesce(provider_payment_id, '')) LIKE $6)
-            ORDER BY created_at DESC
+            SELECT orders.*, users.account_id AS user_account_id, users.username AS user_username,
+                   users.display_name AS user_display_name, count(*) OVER() AS total_count
+            FROM billing_orders orders
+            LEFT JOIN users ON users.id = orders.user_id
+            WHERE ($1::text IS NULL OR orders.user_id = $1)
+              AND ($2::text IS NULL OR orders.status = $2)
+              AND ($3::text IS NULL OR orders.plan_id = $3)
+              AND ($4::text IS NULL OR orders.product_id = $4)
+              AND ($5 = '' OR lower(orders.order_no) LIKE $6 OR lower(orders.subject) LIKE $6
+                   OR lower(coalesce(orders.provider_order_id, '')) LIKE $6 OR lower(coalesce(orders.provider_payment_id, '')) LIKE $6
+                   OR lpad(users.account_id::text, 4, '0') LIKE $6 OR lower(coalesce(users.username, '')) LIKE $6 OR lower(coalesce(users.display_name, '')) LIKE $6)
+            ORDER BY orders.created_at DESC
             LIMIT $7 OFFSET $8
             `,
             [input.userId || null, input.status || null, input.planId || null, input.productId || null, keyword, `%${keyword}%`, pageSize, (page - 1) * pageSize],
@@ -248,22 +259,34 @@ export class BillingOrderRepository {
                 ORDER BY expires_at ASC, id ASC
                 LIMIT $2
                 FOR UPDATE SKIP LOCKED
-            )
-            UPDATE billing_orders AS orders SET
-                status = 'closed',
-                closed_at = $1,
-                metadata = coalesce(orders.metadata, '{}'::jsonb) || jsonb_build_object(
-                    'close',
-                    jsonb_build_object(
-                        'reason', $4::text,
-                        'source', $5::text,
-                        'closedAt', $1::text
+            ), closed_orders AS (
+                UPDATE billing_orders AS orders SET
+                    status = 'closed',
+                    closed_at = $1,
+                    metadata = coalesce(orders.metadata, '{}'::jsonb) || jsonb_build_object(
+                        'close',
+                        jsonb_build_object(
+                            'reason', $4::text,
+                            'source', $5::text,
+                            'closedAt', $1::text
+                        )
                     )
-                )
-            FROM expired
-            WHERE orders.id = expired.id
-              AND orders.status = 'pending'
-            RETURNING orders.*
+                FROM expired
+                WHERE orders.id = expired.id
+                  AND orders.status = 'pending'
+                RETURNING orders.*
+            ), released_coupons AS (
+                UPDATE user_coupons AS coupon SET
+                    status = CASE WHEN coupon.expires_at <= $1 THEN 'expired' ELSE 'available' END,
+                    locked_order_id = NULL,
+                    locked_at = NULL
+                FROM closed_orders orders
+                WHERE coupon.id = orders.user_coupon_id
+                  AND coupon.status = 'locked'
+                  AND coupon.locked_order_id = orders.id
+                RETURNING coupon.id
+            )
+            SELECT * FROM closed_orders
             `,
             [input.expiredAt, input.limit, input.orderId || null, "订单超时自动关闭", "expiration-job"],
         );
@@ -280,19 +303,25 @@ export class BillingOrderRepository {
                 plan_id = CASE WHEN $5 THEN $6 ELSE plan_id END,
                 status = COALESCE($7, status),
                 subject = COALESCE($8, subject),
-                amount_cents = COALESCE($9, amount_cents),
-                currency = COALESCE($10, currency),
-                points_amount = COALESCE($11, points_amount),
-                daily_points = COALESCE($12, daily_points),
-                period_days = COALESCE($13, period_days),
-                quantity = COALESCE($14, quantity),
-                provider = COALESCE($15, provider),
-                provider_order_id = COALESCE($16, provider_order_id),
-                provider_payment_id = COALESCE($17, provider_payment_id),
-                expires_at = COALESCE($18, expires_at),
-                paid_at = COALESCE($19, paid_at),
-                closed_at = CASE WHEN $20 THEN $21 ELSE closed_at END,
-                metadata = COALESCE($22::jsonb, metadata)
+                list_amount_cents = COALESCE($9, list_amount_cents),
+                promotion_discount_cents = COALESCE($10, promotion_discount_cents),
+                coupon_discount_cents = COALESCE($11, coupon_discount_cents),
+                amount_cents = COALESCE($12, amount_cents),
+                currency = COALESCE($13, currency),
+                points_amount = COALESCE($14, points_amount),
+                daily_points = COALESCE($15, daily_points),
+                period_days = COALESCE($16, period_days),
+                quantity = COALESCE($17, quantity),
+                provider = COALESCE($18, provider),
+                provider_order_id = COALESCE($19, provider_order_id),
+                provider_payment_id = COALESCE($20, provider_payment_id),
+                promotion_campaign_id = CASE WHEN $21 THEN $22 ELSE promotion_campaign_id END,
+                user_coupon_id = CASE WHEN $23 THEN $24 ELSE user_coupon_id END,
+                expires_at = COALESCE($25, expires_at),
+                paid_at = COALESCE($26, paid_at),
+                closed_at = CASE WHEN $27 THEN $28 ELSE closed_at END,
+                pricing_snapshot = COALESCE($29::jsonb, pricing_snapshot),
+                metadata = COALESCE($30::jsonb, metadata)
             WHERE id = $1
             RETURNING *
             `,
@@ -305,6 +334,9 @@ export class BillingOrderRepository {
                 patch.planId || null,
                 patch.status,
                 patch.subject,
+                patch.listAmountCents,
+                patch.promotionDiscountCents,
+                patch.couponDiscountCents,
                 patch.amountCents,
                 patch.currency,
                 patch.pointsAmount,
@@ -314,10 +346,15 @@ export class BillingOrderRepository {
                 patch.provider,
                 patch.providerOrderId,
                 patch.providerPaymentId,
+                Object.prototype.hasOwnProperty.call(patch, "promotionCampaignId"),
+                patch.promotionCampaignId || null,
+                Object.prototype.hasOwnProperty.call(patch, "userCouponId"),
+                patch.userCouponId || null,
                 patch.expiresAt,
                 patch.paidAt,
                 Object.prototype.hasOwnProperty.call(patch, "closedAt"),
                 patch.closedAt || null,
+                jsonParam(patch.pricingSnapshot),
                 jsonParam(patch.metadata),
             ],
         );

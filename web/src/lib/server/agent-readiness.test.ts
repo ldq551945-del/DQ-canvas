@@ -6,7 +6,17 @@ describe("buildAgentReadiness", () => {
         const settings = {
             defaultModels: { textModel: "t", imageModel: "i", videoModel: "v", audioModel: "a" },
             logicalModels: [],
-            systemChannels: [{ id: "one", name: "主渠道", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "test", models: ["t", "i", "v", "a"] }],
+            systemChannels: [
+                {
+                    id: "one",
+                    name: "主渠道",
+                    enabled: true,
+                    baseUrl: "https://api.example.com/v1",
+                    apiKey: "test",
+                    models: ["t", "i", "v", "a"],
+                    advancedConfig: { modelCapabilities: { t: "text", i: "image", v: "video", a: "audio" } },
+                },
+            ],
             agentSkills: [{ enabled: true, workspaces: ["image", "canvas"] }],
             generationDefaults: {},
             generationConcurrency: {},

@@ -268,6 +268,9 @@ function BindingEditor({
     const channelOptions = channels.map((item) => ({ label: `${item.name}${item.enabled ? "" : "（停用）"}`, value: item.id }));
     const modelOptions = (channel?.models || []).map((model) => ({ label: model, value: model }));
     const profile = binding.capabilityProfile || {};
+    const effectiveAsync = profile.supportsAsync ?? (capability === "image" || capability === "video");
+    const timeoutSeconds = profile.timeoutMs ? Math.round(profile.timeoutMs / 1000) : undefined;
+    const defaultTimeoutSeconds = capability === "image" ? 600 : capability === "text" ? 120 : 180;
     const updateProfile = (patch: Partial<LogicalModelCapabilityProfile>) => onChange({ capabilityProfile: { ...profile, ...patch } });
     const updateList = (field: "aspectRatios", value: string) =>
         updateProfile({
@@ -322,7 +325,7 @@ function BindingEditor({
                         <Checkbox checked={profile.supportsReferenceAudio === true} onChange={(event) => updateProfile({ supportsReferenceAudio: event.target.checked })}>
                             参考音频
                         </Checkbox>
-                        <Checkbox checked={profile.supportsAsync === true} onChange={(event) => updateProfile({ supportsAsync: event.target.checked })}>
+                        <Checkbox checked={effectiveAsync} onChange={(event) => updateProfile({ supportsAsync: event.target.checked })}>
                             异步查询
                         </Checkbox>
                         <Checkbox checked={profile.supportsCancel === true} onChange={(event) => updateProfile({ supportsCancel: event.target.checked })}>
@@ -347,8 +350,16 @@ function BindingEditor({
                     <LabeledControl label="支持比例（逗号分隔）">
                         <Input value={profile.aspectRatios?.join(", ") || ""} placeholder="1:1, 16:9, 9:16" onChange={(event) => updateList("aspectRatios", event.target.value)} />
                     </LabeledControl>
-                    <LabeledControl label="超时（毫秒）">
-                        <InputNumber className="w-full" min={1000} max={3600000} precision={0} value={profile.timeoutMs} onChange={(value) => updateProfile({ timeoutMs: Number(value) || 0 })} />
+                    <LabeledControl label="请求超时（秒）">
+                        <InputNumber
+                            className="w-full"
+                            min={5}
+                            max={1800}
+                            precision={0}
+                            value={timeoutSeconds}
+                            placeholder={`默认 ${defaultTimeoutSeconds} 秒`}
+                            onChange={(value) => updateProfile({ timeoutMs: value ? Number(value) * 1000 : undefined })}
+                        />
                     </LabeledControl>
                     <LabeledControl label="并发上限">
                         <InputNumber className="w-full" min={1} max={1000} precision={0} value={profile.concurrencyLimit} onChange={(value) => updateProfile({ concurrencyLimit: Number(value) || 1 })} />

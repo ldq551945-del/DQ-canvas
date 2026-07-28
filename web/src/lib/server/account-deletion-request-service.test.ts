@@ -20,10 +20,11 @@ vi.mock("@/lib/server/database/account-deletion-request-repository", () => ({
 
 import { reviewAccountDeletionRequest, submitAccountDeletionRequest, withdrawOwnAccountDeletionRequest } from "./account-deletion-request-service";
 
-const user = { id: "user-one", username: "creator", displayName: "创作者", email: "creator@example.com" };
+const user = { id: "user-one", accountId: "0001", username: "creator", displayName: "创作者", email: "creator@example.com" };
 const stored = {
     id: "request-one",
     userId: user.id,
+    accountId: user.accountId,
     username: user.username,
     displayName: user.displayName,
     email: user.email,

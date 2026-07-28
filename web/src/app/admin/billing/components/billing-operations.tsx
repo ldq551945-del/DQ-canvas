@@ -8,16 +8,21 @@ import dayjs, { type Dayjs } from "dayjs";
 import { AlertTriangle, CheckCircle2, CircleDollarSign, Copy, CreditCard, FileText, FileUp, Landmark, Package, Pencil, Plus, QrCode, ReceiptText, RefreshCw, Save, Search, Settings2, Trash2, Undo2, WalletCards, XCircle } from "lucide-react";
 
 import type { PaymentConfigRequirement, PaymentConfigSummary, PaymentProviderConfig, PaymentProviderConfigField } from "@/lib/payment-config-types";
+import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import type { AdminBillingSummary as BillingSummary } from "@/lib/admin-billing-types";
 import type { BillingOrder, BillingOrderStatus, BillingProduct } from "@/services/api/billing";
 import { BillingReconciliationImport } from "./billing-reconciliation-import";
+import { CouponTemplatePanel } from "./coupon-template-panel";
+import { PromotionCampaignPanel } from "./promotion-campaign-panel";
 
-type BillingTab = "orders" | "products" | "payments";
+type BillingTab = "orders" | "products" | "promotions" | "coupons" | "payments";
 
 const PAGE_SIZE = 20;
 const tabOptions: Array<{ label: string; value: BillingTab }> = [
     { label: "订单运营", value: "orders" },
     { label: "套餐商品", value: "products" },
+    { label: "促销活动", value: "promotions" },
+    { label: "优惠券", value: "coupons" },
     { label: "支付配置", value: "payments" },
 ];
 const statusOptions: Array<{ label: string; value: BillingOrderStatus | "" }> = [
@@ -170,7 +175,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
     }, [endDate, message, page, startDate, status, submittedKeyword]);
 
     useEffect(() => {
-        if (activeTab === "orders" || activeTab === "products") void loadProducts();
+        if (activeTab === "orders" || activeTab === "products" || activeTab === "promotions" || activeTab === "coupons") void loadProducts();
     }, [activeTab, loadProducts]);
 
     useEffect(() => {
@@ -381,8 +386,8 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
         {
             title: "用户",
             dataIndex: "userId",
-            width: 180,
-            render: (value?: string) => <span className="font-mono text-xs text-stone-500 dark:text-stone-400">{value || "-"}</span>,
+            width: 220,
+            render: (_, order) => <AdminUserIdentity displayName={order.userDisplayName} username={order.userUsername} accountId={order.userAccountId} fallback={order.userId ? "用户信息不可用" : "未绑定用户"} />,
         },
         {
             title: "创建时间",
@@ -467,7 +472,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                                     allowClear
                                     value={keyword}
                                     prefix={<Search className="size-4 text-stone-400" />}
-                                    placeholder="订单号 / 商品 / 支付单号"
+                                    placeholder="订单号 / 商品 / 支付单号 / 用户 ID"
                                     onChange={(event) => setKeyword(event.target.value)}
                                     onPressEnter={() => {
                                         setSubmittedKeyword(keyword.trim());
@@ -558,6 +563,15 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                                                 <div className="min-w-0">
                                                     <div className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{product.name}</div>
                                                     <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500 dark:text-stone-400">{product.description || (product.productKind === "points" ? "积分充值商品" : product.planId || "未关联套餐")}</div>
+                                                    {product.pricing.discountCents > 0 ? (
+                                                        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+                                                            <Tag className="m-0" color="red">
+                                                                {product.pricing.promotion?.label || "活动进行中"}
+                                                            </Tag>
+                                                            <span className="font-semibold text-rose-600 dark:text-rose-300">活动价 {formatMoney(product.pricing.saleUnitAmountCents, product.currency)}</span>
+                                                            <span className="text-stone-400 line-through dark:text-stone-500">日常价 {formatMoney(product.amountCents, product.currency)}</span>
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                                 <div className="flex shrink-0 items-center gap-1.5">
                                                     <Tag color={product.productKind === "points" ? "gold" : "blue"}>{product.productKind === "points" ? "积分" : "套餐"}</Tag>
@@ -565,7 +579,7 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                                                 </div>
                                             </div>
                                             <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-stone-500 sm:mt-4 sm:grid-cols-4 dark:text-stone-400">
-                                                <ProductFact label="价格" value={formatMoney(product.amountCents, product.currency)} />
+                                                <ProductFact label="日常价" value={formatMoney(product.amountCents, product.currency)} />
                                                 <ProductFact label={product.productKind === "points" ? "充值积分" : "永久积分"} value={`${product.pointsAmount}`} />
                                                 <ProductFact label="每日赠送" value={product.productKind === "plan" ? `${product.dailyPoints}` : "-"} />
                                                 <ProductFact label="周期" value={product.productKind === "plan" ? (product.periodDays ? `${product.periodDays} 天` : "长期") : "一次性"} />
@@ -663,6 +677,10 @@ export function BillingOperations({ initialTab = "orders", initialPaymentConfig,
                     </Modal>
                 </>
             ) : null}
+
+            {activeTab === "promotions" ? <PromotionCampaignPanel products={products} productsLoading={productsLoading} /> : null}
+
+            {activeTab === "coupons" ? <CouponTemplatePanel products={products} productsLoading={productsLoading} /> : null}
 
             {activeTab === "payments" ? <PaymentConfigPanel paymentConfig={paymentConfig} loading={paymentConfigLoading} embedded={embedded} onRefresh={loadPaymentConfig} onCopy={(value) => void copyText(value, message)} /> : null}
         </div>

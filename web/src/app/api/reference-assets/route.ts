@@ -27,8 +27,12 @@ export async function POST(request: Request) {
         };
         const asset = body.persistent === true ? await writePersistentMediaDataUrl(dataUrl, type, context) : await writeReferenceMediaDataUrl(dataUrl, type, context);
         const origin = publicOrigin(request);
+        const browserUrl = `/api/reference-assets/${asset.token
+            .split("/")
+            .map((part) => encodeURIComponent(part))
+            .join("/")}`;
         return NextResponse.json({
-            url: asset.url || `${origin}/api/reference-assets/${asset.token}`,
+            url: browserUrl,
             upstreamUrl: asset.url || createSignedReferenceAssetUrl(asset.token, origin) || undefined,
             token: asset.token,
             key: asset.token,

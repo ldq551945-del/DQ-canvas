@@ -1,7 +1,11 @@
-import type { CanvasProject, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
 
-export function listCanvasProjects() {
-    return request<{ projects: CanvasProject[] }>("/api/canvas/projects", { cache: "no-store" }).then((data) => data.projects);
+export function listCanvasProjectSummaries() {
+    return request<{ projects: CanvasProjectSummary[] }>("/api/canvas/projects", { cache: "no-store" }).then((data) => data.projects);
+}
+
+export function getCanvasProject(id: string) {
+    return request<{ project: CanvasProject }>(`/api/canvas/projects/${encodeURIComponent(id)}`, { cache: "no-store" }).then((data) => data.project);
 }
 
 export function createCanvasProject(input: CreateCanvasProjectInput) {

@@ -15,9 +15,10 @@ export async function PATCH(request: Request) {
     if (!limit.allowed) return NextResponse.json({ error: "操作过于频繁，请稍后重试", retryAfter: Math.ceil((limit.resetAt - Date.now()) / 1000) }, { status: 429 });
 
     try {
-        const body = await readJsonBody<{ displayName?: unknown; email?: unknown; emailCode?: unknown }>(request);
+        const body = await readJsonBody<{ displayName?: unknown; bio?: unknown; email?: unknown; emailCode?: unknown }>(request);
         const user = await updateOwnProfile(currentUser.id, {
             displayName: typeof body.displayName === "string" ? body.displayName : undefined,
+            bio: typeof body.bio === "string" ? body.bio : undefined,
             email: typeof body.email === "string" ? body.email : undefined,
             emailCode: typeof body.emailCode === "string" ? body.emailCode : undefined,
         });

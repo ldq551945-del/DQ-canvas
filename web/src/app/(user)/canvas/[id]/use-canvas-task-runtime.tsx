@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useCallback } from "react";
 
+import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
 import { recordGenerationLog } from "@/services/api/generation-logs";
 import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationTask } from "@/services/api/image";
 import { waitForTextGenerationTask, type TextGenerationTask } from "@/services/api/text";
@@ -54,7 +55,6 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         hydratedUserId,
         hydrate,
         createProject,
-        openProject,
         updateProject,
         renameProject,
         deleteProjects,
@@ -344,7 +344,7 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
                 conversationId: currentProject?.creativeConversationId,
                 surface: "canvas",
                 projectId,
-                clientRequestId: `canvas-image:${projectId}:${nodeId}`,
+                ...createFreshGenerationTaskContext("canvas-image", [projectId, nodeId]),
             });
             setNodes((prev) =>
                 prev.map((node) =>

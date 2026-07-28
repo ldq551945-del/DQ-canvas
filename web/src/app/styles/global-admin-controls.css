@@ -154,6 +154,34 @@
         line-height: 36px !important;
     }
 
+    .admin-payment-mode-segmented.ant-segmented {
+        min-height: 36px;
+        padding: 3px;
+        border: 1px solid var(--border);
+        background: var(--muted);
+    }
+
+    .admin-payment-mode-segmented .ant-segmented-group {
+        display: flex;
+        width: 100%;
+    }
+
+    .admin-payment-mode-segmented .ant-segmented-item {
+        min-width: 0;
+        flex: 1 1 0;
+    }
+
+    .admin-payment-mode-segmented .ant-segmented-item-label {
+        min-height: 28px;
+        padding-inline: 8px;
+        line-height: 28px;
+        text-align: center;
+    }
+
+    .admin-payment-mode-segmented .ant-segmented-item-selected {
+        box-shadow: none;
+    }
+
     .admin-payment-textarea.ant-input {
         border-radius: 12px;
         padding: 10px 12px;

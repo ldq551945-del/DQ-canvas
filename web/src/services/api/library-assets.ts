@@ -4,6 +4,24 @@ export function listLibraryAssets() {
     return request<{ assets: Asset[] }>("/api/library-assets", { cache: "no-store" }).then((data) => data.assets);
 }
 
+export type LibraryAssetPage = { assets: Asset[]; total: number; page: number; pageSize: number };
+
+export function listLibraryAssetPage(input: { page: number; pageSize: number; kind?: Asset["kind"]; keyword?: string }, signal?: AbortSignal) {
+    const query = new URLSearchParams({ page: String(input.page), pageSize: String(input.pageSize) });
+    if (input.kind) query.set("kind", input.kind);
+    if (input.keyword?.trim()) query.set("keyword", input.keyword.trim());
+    return request<LibraryAssetPage>(`/api/library-assets?${query}`, { cache: "no-store", signal });
+}
+
+export async function listAllLibraryAssets() {
+    const assets: Asset[] = [];
+    for (let page = 1; ; page += 1) {
+        const result = await listLibraryAssetPage({ page, pageSize: 100 });
+        assets.push(...result.assets);
+        if (assets.length >= result.total || !result.assets.length) return assets;
+    }
+}
+
 export function createLibraryAsset(asset: CreateLibraryAssetInput) {
     return request<{ asset: Asset }>("/api/library-assets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(asset) }).then((data) => data.asset);
 }

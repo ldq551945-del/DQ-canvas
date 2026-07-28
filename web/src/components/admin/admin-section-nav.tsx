@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
     Activity,
+    BadgePercent,
+    BookOpen,
     CircleDollarSign,
     Cloud,
     ChevronDown,
@@ -14,6 +16,7 @@ import {
     ExternalLink,
     Film,
     Gift,
+    GalleryVerticalEnd,
     Globe2,
     HardDrive,
     KeyRound,
@@ -25,6 +28,8 @@ import {
     ReceiptText,
     SlidersHorizontal,
     Sparkles,
+    TicketPercent,
+    UserPlus,
     UsersRound,
     UserRoundX,
     WalletCards,
@@ -164,6 +169,9 @@ export const adminSections: AdminSection[] = [
     { key: "logs", label: "调用记录", description: "追踪用户生成任务、模型调用、入口来源和失败原因。", shortDescription: "生成与模型", icon: <Film className="size-4" /> },
     { key: "generationOperations", label: "生成运营", description: "统一查看生成任务、会话、项目、渠道健康和积分成本。", shortDescription: "任务与渠道", icon: <Activity className="size-4" /> },
     { key: "products", label: "套餐管理", description: "配置充值中心展示的套餐、价格、积分权益和有效期。", shortDescription: "商品与权益", icon: <CreditCard className="size-4" /> },
+    { key: "promotions", label: "促销活动", description: "配置限时活动价、促销标签、生效时间和适用商品。", shortDescription: "活动价", icon: <BadgePercent className="size-4" /> },
+    { key: "coupons", label: "优惠券", description: "管理优惠券规则、领取库存、适用商品和定向发放。", shortDescription: "领券与核销", icon: <TicketPercent className="size-4" /> },
+    { key: "referrals", label: "邀请奖励", description: "配置邀请码、首单奖励、冷静期、风控与结算。", shortDescription: "拉新与奖励", icon: <UserPlus className="size-4" /> },
     { key: "orders", label: "订单管理", description: "处理充值订单、收款确认、退款标记和基础对账。", shortDescription: "收款与售后", icon: <ReceiptText className="size-4" /> },
     { key: "points", label: "积分规则", description: "配置免费每日积分、模型基础扣费和生成参数倍率。", shortDescription: "额度与扣费", icon: <CircleDollarSign className="size-4" /> },
     { key: "payments", label: "支付渠道", description: "配置 Stripe、支付宝、微信支付、PayPly 和人工确认渠道。", shortDescription: "密钥与回调", icon: <PlugZap className="size-4" /> },
@@ -179,20 +187,24 @@ export const adminSections: AdminSection[] = [
     { key: "backup", label: "数据备份", description: "导出和恢复脱敏业务数据，并区分整库与媒体备份边界。", shortDescription: "导入与恢复", icon: <DatabaseBackup className="size-4" /> },
     { key: "updates", label: "版本更新", description: "集中查看版本更新、更新日志和 GitHub 开源仓库入口。", shortDescription: "升级维护", icon: <ExternalLink className="size-4" /> },
     { key: "announcements", label: "公告通知", description: "发布站内公告，并设置首页或登录后弹窗触达。", shortDescription: "弹窗触达", icon: <Megaphone className="size-4" /> },
+    { key: "works", label: "作品管理", description: "审核用户发布版本，处理驳回、公开预览和作品下架。", shortDescription: "审核与下架", icon: <GalleryVerticalEnd className="size-4" /> },
     { key: "prompts", label: "提示词运营", description: "维护用户端提示词库展示的公共提示词。", shortDescription: "公共资产", icon: <KeyRound className="size-4" /> },
+    { key: "adminHelp", label: "使用文档", description: "查看后台配置顺序、运营操作、检查项和风险提示。", shortDescription: "配置与运营", icon: <BookOpen className="size-4" /> },
 ];
 
-const adminSectionGroups: AdminSectionGroup[] = [
+export const adminSectionGroups: AdminSectionGroup[] = [
     { title: "经营分析", items: sectionsFor(["overview", "users", "logs", "generationOperations"]) },
     { title: "商品运营", items: sectionsFor(["products", "orders"]) },
+    { title: "营销推广", items: sectionsFor(["promotions", "coupons", "referrals"]) },
     { title: "财务管理", items: sectionsFor(["points", "payments", "cdk", "wallet"]) },
     { title: "上游配置", items: sectionsFor(["channels", "skills"]) },
-    { title: "系统管理", items: sectionsFor(["site", "settings", "accountDeletion", "updates"]) },
+    { title: "系统管理", items: sectionsFor(["site", "settings", "accountDeletion"]) },
     { title: "存储与备份", items: sectionsFor(["mediaStorage", "externalStorage", "backup"]) },
-    { title: "内容运营", items: sectionsFor(["announcements", "prompts"]) },
+    { title: "内容运营", items: sectionsFor(["works", "announcements", "prompts"]) },
+    { title: "帮助与支持", items: sectionsFor(["updates", "adminHelp"]) },
 ];
 
 function sectionsFor(keys: AdminSectionKey[]) {
-    const keySet = new Set(keys);
-    return adminSections.filter((section) => keySet.has(section.key));
+    const sections = new Map(adminSections.map((section) => [section.key, section]));
+    return keys.map((key) => sections.get(key)).filter((section): section is AdminSection => Boolean(section));
 }

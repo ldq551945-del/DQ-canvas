@@ -5,19 +5,23 @@ const mocks = vi.hoisted(() => ({
     siteMetadataBase: vi.fn(() => new URL("https://example.com")),
     absoluteSiteUrl: vi.fn((value: string, base = new URL("https://example.com")) => new URL(value, base).toString()),
     browserIconHref: vi.fn((site: { iconUrl?: string; logoUrl?: string }) => site.iconUrl || site.logoUrl || "/icon.svg"),
+    listPublicWorkSitemapEntries: vi.fn(),
 }));
 
 vi.mock("@/lib/server/site-metadata", () => mocks);
+vi.mock("@/lib/server/work-governance-service", () => ({ listPublicWorkSitemapEntries: mocks.listPublicWorkSitemapEntries }));
 
 import manifest from "./manifest";
 import robots from "./robots";
 import sitemap from "./sitemap";
-import { GET as favicon } from "./favicon.ico/route";
+import nextConfig from "../../next.config";
+import { GET as favicon } from "./api/site-icon/route";
 
 describe("site metadata routes", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getPublicSiteSettings.mockResolvedValue({ title: "自定义站点", iconUrl: "https://cdn.example.com/favicon.ico", seoDescription: "站点摘要" });
+        mocks.listPublicWorkSitemapEntries.mockResolvedValue([{ slug: "public-work", updatedAt: "2026-07-27T00:00:00.000Z" }]);
     });
 
     it("keeps private workspaces out of robots and points to the sitemap", () => {
@@ -28,8 +32,15 @@ describe("site metadata routes", () => {
         expect(result.sitemap).toBe("https://example.com/sitemap.xml");
     });
 
-    it("publishes only crawlable marketing and legal pages", () => {
-        expect(sitemap().map((entry) => entry.url)).toEqual(["https://example.com/", "https://example.com/announcements", "https://example.com/terms", "https://example.com/privacy"]);
+    it("publishes only crawlable public pages and approved works", async () => {
+        expect((await sitemap()).map((entry) => entry.url)).toEqual([
+            "https://example.com/",
+            "https://example.com/gallery",
+            "https://example.com/announcements",
+            "https://example.com/terms",
+            "https://example.com/privacy",
+            "https://example.com/share/public-work",
+        ]);
     });
 
     it("routes the web manifest icon through the backend-controlled favicon", async () => {
@@ -39,8 +50,18 @@ describe("site metadata routes", () => {
         expect(result.icons).toEqual([{ src: "/favicon.ico", sizes: "any", purpose: "any" }]);
     });
 
+    it("rewrites the reserved favicon path to the dynamic site icon route before static files", async () => {
+        const rewrites = await nextConfig("phase-production-build").rewrites?.();
+
+        expect(rewrites).toEqual({
+            beforeFiles: [{ source: "/favicon.ico", destination: "/api/site-icon" }],
+            afterFiles: [],
+            fallback: [],
+        });
+    });
+
     it("redirects the standard favicon route to the configured browser icon", async () => {
-        const response = await favicon(new Request("http://localhost:3000/favicon.ico"));
+        const response = await favicon(new Request("http://localhost:3000/api/site-icon"));
 
         expect(response.status).toBe(307);
         expect(response.headers.get("location")).toBe("https://cdn.example.com/favicon.ico");
@@ -50,7 +71,15 @@ describe("site metadata routes", () => {
     it("keeps a site-local icon relative to the current host", async () => {
         mocks.getPublicSiteSettings.mockResolvedValue({ title: "默认站点", iconUrl: "/icon.svg", logoUrl: "/logo.svg" });
 
-        const response = await favicon(new Request("http://localhost:3000/favicon.ico"));
+        const response = await favicon(new Request("http://localhost:3000/api/site-icon"));
+
+        expect(response.headers.get("location")).toBe("/icon.svg");
+    });
+
+    it("falls back to the infinite-evolution icon when favicon points back to itself", async () => {
+        mocks.getPublicSiteSettings.mockResolvedValue({ title: "默认站点", iconUrl: "/favicon.ico", logoUrl: "/logo.svg" });
+
+        const response = await favicon(new Request("http://localhost:3000/api/site-icon"));
 
         expect(response.headers.get("location")).toBe("/icon.svg");
     });

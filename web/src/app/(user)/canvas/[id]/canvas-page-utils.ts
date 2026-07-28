@@ -25,7 +25,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
-import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
+import { fitNodeSize, nodeSizeFromRatio, resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
 import { App, Button, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
@@ -235,12 +235,18 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
             if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && content?.startsWith("blob:") && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
             if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && !content && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
             if (!isCanvasImageNodeType(node.type) || !fallbackContent) return node;
-            if (node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveStoredImageDataUrl(node.metadata.storageKey, fallbackContent) } };
-            if (content?.startsWith("blob:") && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
-            if (!content && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
+            let hydratedNode = node;
+            if (node.metadata?.storageKey) hydratedNode = { ...node, metadata: { ...node.metadata, content: await resolveStoredImageDataUrl(node.metadata.storageKey, fallbackContent) } };
+            else if (content?.startsWith("blob:") && fallbackContent) hydratedNode = { ...node, metadata: { ...node.metadata, content: fallbackContent } };
+            else if (!content && fallbackContent) hydratedNode = { ...node, metadata: { ...node.metadata, content: fallbackContent } };
             const contentValue = content || "";
-            if (!contentValue.startsWith("data:image/")) return node;
-            return { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadCanvasImage(contentValue)) } };
+            if (contentValue.startsWith("data:image/")) hydratedNode = { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadCanvasImage(contentValue)) } };
+            if (hydratedNode.type === CanvasNodeType.Panorama) return hydratedNode;
+            const naturalWidth = hydratedNode.metadata?.naturalWidth;
+            const naturalHeight = hydratedNode.metadata?.naturalHeight;
+            if (naturalWidth && naturalHeight) return resizeImageNodeToNaturalRatio(hydratedNode, naturalWidth, naturalHeight);
+            const dimensions = await readImageMeta(hydratedNode.metadata?.content || fallbackContent);
+            return resizeImageNodeToNaturalRatio(hydratedNode, dimensions.width, dimensions.height);
         }),
     );
 }

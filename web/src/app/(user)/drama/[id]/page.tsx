@@ -10,7 +10,8 @@ import { createServerVideoGenerationTask } from "@/services/api/video";
 import { syncUserPointsFromHeaders } from "@/services/api/points";
 import { exportDramaJianyingDraft, getDramaProjectCosts, reviewDramaEpisode } from "@/services/api/drama-projects";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
-import { imagePreviewUrl } from "@/lib/media-image-url";
+import { mediaDownloadFileName } from "@/lib/media-file";
+import { imagePreviewUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { splitDramaSource } from "@/lib/drama-source-splitter";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -767,7 +768,11 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                         {renderTask.result?.url ? (
                                             <div className="mt-4">
                                                 <video className="max-h-[520px] w-full rounded-2xl bg-black" src={renderTask.result.url} controls preload="metadata" />
-                                                <a className="mt-3 inline-flex text-sm font-medium text-blue-600 hover:underline dark:text-cyan-300" href={renderTask.result.url} download={`${project.title}.mp4`}>
+                                                <a
+                                                    className="mt-3 inline-flex text-sm font-medium text-blue-600 hover:underline dark:text-cyan-300"
+                                                    href={originalMediaDownloadUrl(renderTask.result.url)}
+                                                    download={mediaDownloadFileName(renderTask.id, "video/mp4", renderTask.result.url)}
+                                                >
                                                     下载整集成片
                                                 </a>
                                             </div>
@@ -779,7 +784,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                         {episode.shots.map((shot) => (
                                             <article
                                                 key={shot.id}
-                                                className="grid gap-3 border-b border-border/70 p-3.5 transition-colors last:border-b-0 hover:bg-muted/25 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5 sm:px-4 sm:py-4 [content-visibility:auto]"
+                                                className="grid min-w-0 gap-3 overflow-hidden border-b border-border/70 p-3.5 transition-colors last:border-b-0 hover:bg-muted/25 [content-visibility:visible] sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-5 sm:px-4 sm:py-4 sm:[content-visibility:auto]"
                                             >
                                                 <div className="min-w-0 flex-1">
                                                     <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">

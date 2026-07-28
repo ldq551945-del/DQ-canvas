@@ -1,9 +1,9 @@
-import { createDecipheriv, createHmac, createVerify, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createDecipheriv, createHmac, timingSafeEqual } from "node:crypto";
 
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { JsonValue } from "@/lib/server/database";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
+import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
 
 type WebhookStatus = "succeeded" | "ignored";
 
@@ -200,7 +200,7 @@ export function verifyAlipaySignature(payload: Record<string, string>, paymentCo
         .sort()
         .map((key) => `${key}=${payload[key]}`)
         .join("&");
-    return verifyRsaSha256(content, sign, loadPublicKey(paymentConfig, "VOZEB_PRO_ALIPAY_PUBLIC_KEY", "VOZEB_PRO_ALIPAY_PUBLIC_KEY_PATH"));
+    return verifyRsaSha256(content, sign, loadPaymentPublicKey(paymentConfig, "VOZEB_PRO_ALIPAY_PUBLIC_KEY", "VOZEB_PRO_ALIPAY_PUBLIC_KEY_PATH"));
 }
 
 export function verifyWechatSignature(rawBody: string, headers: Headers, paymentConfig: PaymentRuntimeConfig) {
@@ -215,14 +215,6 @@ export function verifyWechatSignature(rawBody: string, headers: Headers, payment
     if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > wechatToleranceMs(paymentConfig)) return false;
     const content = `${timestamp}\n${nonce}\n${rawBody}\n`;
     return verifyRsaSha256(content, signature, loadWechatPlatformPublicKey(paymentConfig));
-}
-
-function verifyRsaSha256(content: string, signature: string, publicKey: string) {
-    try {
-        return createVerify("RSA-SHA256").update(content, "utf8").verify(publicKey, signature, "base64");
-    } catch {
-        return false;
-    }
 }
 
 export function decryptWechatResource(envelope: unknown, paymentConfig: PaymentRuntimeConfig) {
@@ -249,21 +241,7 @@ export function decryptWechatResource(envelope: unknown, paymentConfig: PaymentR
 }
 
 function loadWechatPlatformPublicKey(paymentConfig: PaymentRuntimeConfig) {
-    return loadPublicKey(paymentConfig, "VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY", "VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY_PATH", "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE", "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE_PATH");
-}
-
-function loadPublicKey(paymentConfig: PaymentRuntimeConfig, valueEnv: string, pathEnv: string, certificateEnv?: string, certificatePathEnv?: string) {
-    const direct = getPaymentRuntimeEnv(paymentConfig, valueEnv) || (certificateEnv ? getPaymentRuntimeEnv(paymentConfig, certificateEnv) : "");
-    if (direct) return normalizePublicKey(direct);
-    const path = getPaymentRuntimeEnv(paymentConfig, pathEnv) || (certificatePathEnv ? getPaymentRuntimeEnv(paymentConfig, certificatePathEnv) : "");
-    if (path) return normalizePublicKey(readFileSync(path, "utf8"));
-    throw new BillingInputError(`缺少支付公钥配置：${valueEnv}`, 500);
-}
-
-function normalizePublicKey(value: string) {
-    const text = value.replace(/\\n/g, "\n").trim();
-    if (text.includes("-----BEGIN")) return text;
-    return `-----BEGIN PUBLIC KEY-----\n${text.match(/.{1,64}/g)?.join("\n") || text}\n-----END PUBLIC KEY-----`;
+    return loadPaymentPublicKey(paymentConfig, "VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY", "VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY_PATH", "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE", "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE_PATH");
 }
 
 function requiredConfig(paymentConfig: PaymentRuntimeConfig, name: string) {

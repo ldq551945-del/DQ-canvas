@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 
 import { flattenPublicCapabilityModels, resolvePublicCapabilityModels } from "@/lib/public-model-catalog";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
+import { inferModelCapability } from "@/lib/model-capability";
 import { materializeLogicalModelPointCosts } from "@/lib/model-point-cost";
 
 type ApiCallFormat = "openai" | "gemini";
@@ -28,6 +29,27 @@ type SystemChannelAdvancedConfig = {
     supportsReferenceImage: boolean;
     supportsReferenceVideo: boolean;
     supportsReferenceAudio: boolean;
+    modelCatalogPaths?: string[];
+    modelCapabilities?: Record<string, ModelCapability>;
+    modelConfigs?: Record<
+        string,
+        {
+            capability: ModelCapability;
+            source?: "manual" | "provider" | "official" | "health";
+            apiFormat?: ApiCallFormat;
+            protocol?: SystemChannelProtocol;
+            createPath?: string;
+            queryPath?: string;
+            requestTemplate?: string;
+            resultField?: string;
+            statusField?: string;
+            durationRange?: string;
+            referenceRule?: string;
+            supportsReferenceImage?: boolean;
+            supportsReferenceVideo?: boolean;
+            supportsReferenceAudio?: boolean;
+        }
+    >;
 };
 
 type ModelChannel = {
@@ -184,64 +206,8 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-function isVideoModelName(model: string) {
-    const value = modelOptionName(model).toLowerCase();
-    return value.includes("seedance") || value.includes("video") || value.includes("sora") || value.includes("veo") || value.includes("kling") || value.includes("wan") || value.includes("hailuo");
-}
-
-function isImageModelName(model: string) {
-    const value = modelOptionName(model).toLowerCase();
-    return (
-        !isVideoModelName(model) &&
-        !isAudioModelName(model) &&
-        (value.includes("seedream") ||
-            value.includes("gpt-image") ||
-            value.includes("image") ||
-            value.includes("dall-e") ||
-            value.includes("dalle") ||
-            value.includes("imagen") ||
-            value.includes("flux") ||
-            isStableDiffusionImageModelName(value) ||
-            value.includes("sdxl") ||
-            value.includes("stable-diffusion") ||
-            value.includes("midjourney"))
-    );
-}
-
-function isStableDiffusionImageModelName(value: string) {
-    return value === "sd" || value.includes("stable diffusion") || value.includes("stable_diffusion") || /^sd(?:xl|[-_.\s]?\d)/.test(value);
-}
-
-function isAudioModelName(model: string) {
-    const value = modelOptionName(model).toLowerCase();
-    return value.includes("audio") || value.includes("tts") || value.includes("speech") || value.includes("voice") || value.includes("music") || value.includes("sound");
-}
-
-function isTextModelName(model: string) {
-    return !isImageModelName(model) && !isVideoModelName(model) && !isAudioModelName(model);
-}
-
-function normalizePublicLogicalModelCapability(model: LogicalModel): LogicalModel {
-    const modelNames = [model.id, ...(model.bindings || []).map((binding) => binding.upstreamModel)].map((item) => modelOptionName(item).trim()).filter(Boolean);
-    const inferredCapability = inferKnownModelCapability(modelNames);
-    if (!inferredCapability) return model;
-    return { ...model, capability: inferredCapability };
-}
-
-function inferKnownModelCapability(models: string[]): ModelCapability | null {
-    if (models.some((model) => isStableDiffusionImageModelName(model.toLowerCase()))) return "image";
-    if (models.some(isImageModelName)) return "image";
-    if (models.some(isVideoModelName)) return "video";
-    if (models.some(isAudioModelName)) return "audio";
-    return null;
-}
-
 export function modelMatchesCapability(model: string, capability?: ModelCapability) {
-    if (!capability) return true;
-    if (capability === "image") return isImageModelName(model);
-    if (capability === "video") return isVideoModelName(model);
-    if (capability === "audio") return isAudioModelName(model);
-    return isTextModelName(model);
+    return !capability || inferModelCapability(modelOptionName(model)) === capability;
 }
 
 function filterModelsByCapability(models: string[], capability?: ModelCapability) {
@@ -275,13 +241,11 @@ export function applyPublicSystemSettings(config: AiConfig, settings?: PublicSys
             models: uniqueRawModels(channel.models || []),
             ...(channel.advancedConfig ? { advancedConfig: channel.advancedConfig } : {}),
         }));
-    const logicalModels = (settings?.logicalModels || [])
-        .map(normalizePublicLogicalModelCapability)
-        .filter(
-            (model) =>
-                model.enabled &&
-                model.bindings.some((binding) => binding.enabled && channels.some((channel) => channel.id === binding.channelId && channel.models.some((upstream) => normalizedModelName(upstream) === normalizedModelName(binding.upstreamModel)))),
-        );
+    const logicalModels = (settings?.logicalModels || []).filter(
+        (model) =>
+            model.enabled &&
+            model.bindings.some((binding) => binding.enabled && channels.some((channel) => channel.id === binding.channelId && channel.models.some((upstream) => normalizedModelName(upstream) === normalizedModelName(binding.upstreamModel)))),
+    );
     const rawModels = modelOptionsFromChannels(channels);
     const capabilityModels = resolvePublicCapabilityModels(logicalModels, {
         image: filterModelsByCapability(rawModels, "image"),

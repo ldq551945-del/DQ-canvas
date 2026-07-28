@@ -159,12 +159,17 @@ const AdminWalletSection = dynamic(() => import("./admin-finance-sections").then
 const AdminPointsSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminPointsSection), { loading: AdminSectionLoading });
 const AdminOrdersSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminOrdersSection), { loading: AdminSectionLoading });
 const AdminProductsSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminProductsSection), { loading: AdminSectionLoading });
+const AdminPromotionsSection = dynamic(() => import("./admin-marketing-sections").then((module) => module.AdminPromotionsSection), { loading: AdminSectionLoading });
+const AdminCouponsSection = dynamic(() => import("./admin-marketing-sections").then((module) => module.AdminCouponsSection), { loading: AdminSectionLoading });
+const AdminReferralsSection = dynamic(() => import("./admin-marketing-sections").then((module) => module.AdminReferralsSection), { loading: AdminSectionLoading });
 const AdminPaymentsSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminPaymentsSection), { loading: AdminSectionLoading });
 const AdminCdkSection = dynamic(() => import("./admin-finance-sections").then((module) => module.AdminCdkSection), { loading: AdminSectionLoading });
 const AdminChannelsSection = dynamic(() => import("./admin-upstream-sections").then((module) => module.AdminChannelsSection), { loading: AdminSectionLoading });
 const AdminSkillsSection = dynamic(() => import("./admin-upstream-sections").then((module) => module.AdminSkillsSection), { loading: AdminSectionLoading });
 const AdminAnnouncementsSection = dynamic(() => import("./admin-content-sections").then((module) => module.AdminAnnouncementsSection), { loading: AdminSectionLoading });
 const AdminPromptsSection = dynamic(() => import("./admin-content-sections").then((module) => module.AdminPromptsSection), { loading: AdminSectionLoading });
+const AdminWorksSection = dynamic(() => import("@/app/admin/works/components/admin-works-section").then((module) => module.AdminWorksSection), { loading: AdminSectionLoading });
+const AdminHelpSection = dynamic(() => import("./admin-help-section").then((module) => module.AdminHelpSection), { loading: AdminSectionLoading });
 const AdminUsersSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminUsersSection), { loading: AdminSectionLoading });
 const AdminLogsSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminLogsSection), { loading: AdminSectionLoading });
 const AdminGenerationOperationsSection = dynamic(() => import("./admin-operations-sections").then((module) => module.AdminGenerationOperationsSection), { loading: AdminSectionLoading });
@@ -498,16 +503,21 @@ export function AdminDashboard(props: AdminDashboardProps) {
                     {activeSection === "points" ? <AdminPointsSection controller={controller} /> : null}
                     {activeSection === "orders" ? <AdminOrdersSection controller={controller} /> : null}
                     {activeSection === "products" ? <AdminProductsSection controller={controller} /> : null}
+                    {activeSection === "promotions" ? <AdminPromotionsSection controller={controller} /> : null}
+                    {activeSection === "coupons" ? <AdminCouponsSection controller={controller} /> : null}
+                    {activeSection === "referrals" ? <AdminReferralsSection controller={controller} /> : null}
                     {activeSection === "payments" ? <AdminPaymentsSection controller={controller} /> : null}
                     {activeSection === "updates" ? <AdminUpdatesSection controller={controller} /> : null}
                     {activeSection === "channels" ? <AdminChannelsSection controller={controller} /> : null}
                     {activeSection === "skills" ? <AdminSkillsSection controller={controller} /> : null}
                     {activeSection === "cdk" ? <AdminCdkSection controller={controller} /> : null}
                     {activeSection === "announcements" ? <AdminAnnouncementsSection controller={controller} /> : null}
+                    {activeSection === "works" ? <AdminWorksSection /> : null}
                     {activeSection === "prompts" ? <AdminPromptsSection controller={controller} /> : null}
                     {activeSection === "users" ? <AdminUsersSection controller={controller} /> : null}
                     {activeSection === "logs" ? <AdminLogsSection controller={controller} /> : null}
                     {activeSection === "generationOperations" ? <AdminGenerationOperationsSection controller={controller} /> : null}
+                    {activeSection === "adminHelp" ? <AdminHelpSection onOpenSection={setActiveSection} /> : null}
                 </div>
             </div>
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { getPublicUsersByIds } from "@/lib/auth/store";
 import { deleteExternalStorageFiles, listExternalStorageFiles } from "@/lib/server/object-storage-service";
 
 export const runtime = "nodejs";
@@ -17,8 +18,24 @@ export async function GET(request: Request) {
             limit: Number(params.get("limit") || 30),
             type: params.get("type") || undefined,
             source: params.get("source") || undefined,
+            ownerUserId: params.get("ownerUserId") || undefined,
         });
-        return NextResponse.json({ code: 0, data, msg: "OK" }, { headers: { "Cache-Control": "private, no-store" } });
+        const users = await getPublicUsersByIds(data.items.map((item) => item.ownerUserId || ""));
+        const userMap = new Map(users.map((user) => [user.id, user]));
+        return NextResponse.json(
+            {
+                code: 0,
+                data: {
+                    ...data,
+                    items: data.items.map((item) => {
+                        const owner = item.ownerUserId ? userMap.get(item.ownerUserId) : undefined;
+                        return { ...item, ownerAccountId: owner?.accountId, ownerUsername: owner?.username, ownerDisplayName: owner?.displayName };
+                    }),
+                },
+                msg: "OK",
+            },
+            { headers: { "Cache-Control": "private, no-store" } },
+        );
     } catch (error) {
         console.error("Object storage list failed", error);
         return NextResponse.json({ code: 500, data: null, msg: error instanceof Error ? error.message : "外部存储文件加载失败" }, { status: 500 });

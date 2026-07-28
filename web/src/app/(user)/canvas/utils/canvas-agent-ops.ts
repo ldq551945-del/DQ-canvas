@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 
 import { getNodeSpec } from "../constants";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ViewportTransform } from "../types";
+import { fitNodeAspectRatio, nodeSizeFromRatio } from "./canvas-node-size";
 
 export type CanvasAgentOp =
     | { type: "add_node"; id?: string; nodeType?: CanvasNodeType; title?: string; position?: { x: number; y: number }; x?: number; y?: number; width?: number; height?: number; metadata?: CanvasNodeMetadata }
@@ -40,15 +41,26 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
                 return;
             }
             const requestedPosition = op.position || { x: op.x ?? index * 36, y: op.y ?? index * 36 };
-            const position = op.id?.startsWith("output-agent-") ? findFreeNodePosition(nodes, requestedPosition, op.width || spec.width, op.height || spec.height) : requestedPosition;
+            const metadata = { ...spec.metadata, ...op.metadata };
+            const naturalWidth = metadata.naturalWidth;
+            const naturalHeight = metadata.naturalHeight;
+            const baseSize = { width: op.width || spec.width, height: op.height || spec.height };
+            const maxEdge = Math.max(baseSize.width, baseSize.height);
+            const size =
+                nodeType === CanvasNodeType.Image && !op.width && !op.height && naturalWidth && naturalHeight
+                    ? fitNodeAspectRatio(naturalWidth, naturalHeight, maxEdge, maxEdge)
+                    : nodeType === CanvasNodeType.Image && !op.width && !op.height && metadata.size
+                      ? nodeSizeFromRatio(metadata.size, maxEdge, maxEdge) || baseSize
+                      : baseSize;
+            const position = op.id?.startsWith("output-agent-") ? findFreeNodePosition(nodes, requestedPosition, size.width, size.height) : requestedPosition;
             const node: CanvasNodeData = {
                 id: op.id || `${nodeType}-${Date.now()}-${index}`,
                 type: nodeType,
                 title: op.title || spec.title,
                 position,
-                width: op.width || spec.width,
-                height: op.height || spec.height,
-                metadata: { ...spec.metadata, ...op.metadata },
+                width: size.width,
+                height: size.height,
+                metadata,
             };
             nodes = [...nodes, node];
             selectedNodeIds = [node.id];

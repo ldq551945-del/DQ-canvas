@@ -7,6 +7,7 @@ import type { Asset, CreateLibraryAssetInput } from "@/lib/library-asset-contrac
 import { createLibraryAsset, deleteLibraryAsset, listLibraryAssets, saveLibraryAsset } from "@/services/api/library-assets";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
+import { isPermanentServerMedia, serverMediaUrl } from "@/services/server-media-storage";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type { Asset, AssetKind, AudioAsset, ImageAsset, VideoAsset } from "@/lib/library-asset-contract";
@@ -18,7 +19,7 @@ type AssetStore = {
     assets: Asset[];
     hydrate: (force?: boolean) => Promise<void>;
     addAsset: (asset: CreateLibraryAssetInput) => Promise<string>;
-    updateAsset: (id: string, patch: Partial<CreateLibraryAssetInput>) => Promise<void>;
+    updateAsset: (id: string, asset: CreateLibraryAssetInput) => Promise<void>;
     removeAsset: (id: string) => Promise<void>;
     reset: () => void;
 };
@@ -66,11 +67,9 @@ export const useAssetStore = create<AssetStore>((set, get) => ({
         if (sessionEpoch.isCurrent(session)) set((state) => ({ assets: [asset, ...state.assets.filter((item) => item.id !== asset.id)], syncError: undefined }));
         return asset.id;
     },
-    updateAsset: async (id, patch) => {
+    updateAsset: async (id, input) => {
         const session = requireSession();
-        const current = get().assets.find((asset) => asset.id === id);
-        if (!current) throw new Error("素材不存在");
-        const prepared = await prepareAssetForServer({ ...current, ...patch } as CreateLibraryAssetInput);
+        const prepared = await prepareAssetForServer(input);
         if (!sessionEpoch.isCurrent(session)) throw new Error("登录会话已变更，请重试");
         const asset = await saveLibraryAsset(id, prepared);
         if (sessionEpoch.isCurrent(session)) set((state) => ({ assets: state.assets.map((item) => (item.id === id ? asset : item)), syncError: undefined }));
@@ -100,13 +99,13 @@ function requireSession() {
 async function prepareAssetForServer(input: CreateLibraryAssetInput): Promise<CreateLibraryAssetInput> {
     if (input.kind === "image") {
         const source = input.data.serverUrl || input.data.dataUrl || input.data.remoteUrl || "";
-        if (isPermanentMedia(input.data.storageKey, input.data.serverUrl)) return { ...input, coverUrl: await storeCover(input.coverUrl || input.data.serverUrl || input.data.dataUrl) };
+        if (isPermanentServerMedia(input.data.storageKey, input.data.serverUrl)) return { ...input, coverUrl: await storeCover(input.coverUrl || input.data.serverUrl || input.data.dataUrl) };
         const image = await uploadImage(source);
         return { ...input, coverUrl: await storeCover(input.coverUrl || image.url), data: { dataUrl: image.url, storageKey: image.storageKey, serverUrl: image.url, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } };
     }
     if (input.kind === "video" || input.kind === "audio") {
         const source = input.data.serverUrl || input.data.url || input.data.remoteUrl || "";
-        if (isPermanentMedia(input.data.storageKey, input.data.serverUrl)) return { ...input, coverUrl: await storeCover(input.coverUrl) };
+        if (isPermanentServerMedia(input.data.storageKey, input.data.serverUrl)) return { ...input, coverUrl: await storeCover(input.coverUrl) };
         const media = await uploadMediaFile(source, input.kind);
         if (input.kind === "audio")
             return { ...input, coverUrl: await storeCover(input.coverUrl), data: { url: media.url, storageKey: media.storageKey, serverUrl: media.url, durationMs: media.durationMs || input.data.durationMs, bytes: media.bytes, mimeType: media.mimeType } };
@@ -119,11 +118,7 @@ async function prepareAssetForServer(input: CreateLibraryAssetInput): Promise<Cr
     return { ...input, coverUrl: await storeCover(input.coverUrl) };
 }
 
-function isPermanentMedia(storageKey?: string, serverUrl?: string) {
-    return Boolean(storageKey?.startsWith("permanent/") && serverUrl?.startsWith("/api/reference-assets/"));
-}
-
 async function storeCover(value: string) {
-    if (!value || value.startsWith("/api/reference-assets/")) return value;
+    if (!value || isPermanentServerMedia(undefined, value)) return serverMediaUrl(undefined, value);
     return (await uploadImage(value)).url;
 }

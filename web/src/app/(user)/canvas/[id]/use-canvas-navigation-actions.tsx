@@ -115,7 +115,7 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
 
     const createAndOpenProject = useCallback(async () => {
         try {
-            const id = await createProject(`VOZEB PRO 画布 ${useCanvasStore.getState().projects.length + 1}`);
+            const id = await createProject(`VOZEB PRO 画布 ${useCanvasStore.getState().summaries.length + 1}`);
             router.push(`/canvas/${id}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "画布创建失败");

@@ -9,7 +9,7 @@ import { fetchOptionalResponses } from "@/lib/server/responses-request";
 import { registerAgentTaskAssets } from "@/lib/server/agent-run-assets";
 import { buildAgentProjectHandoff } from "@/lib/server/agent-run-project-handoff";
 import { getAgentRun, updateAgentRunById, type AgentRun, type AgentRunChildTask, type AgentRunReference, type AgentRunTask } from "@/lib/server/agent-run-store";
-import { assetAccessUrl, creativeAssetContext, resolveTaskReferences } from "@/lib/server/agent-run-surface-policy";
+import { assetAccessUrl, creativeAssetContext, resolveTaskReferences, selectedCanvasNodeIds } from "@/lib/server/agent-run-surface-policy";
 import { agentChildTaskTerminal, agentTaskCopies, resolveAgentTaskCount, resolveAgentVideoSeconds, validateAgentTaskResult, type AgentPlan } from "@/lib/server/agent-run-validation";
 import { agentRunCompletionReply, agentRunFailureMessage, agentTaskCompletionMessage, resultSummary } from "@/lib/server/agent-run-messages";
 import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
@@ -40,6 +40,7 @@ export const agentPlanTool = {
             objective: { type: "string", maxLength: 1000 },
             audience: { type: "string", maxLength: 500 },
             reply: { type: "string", maxLength: 1200 },
+            skillIds: { type: "array", maxItems: 6, items: { type: "string", maxLength: 160 } },
             decisions: {
                 type: "array",
                 minItems: 2,
@@ -155,7 +156,8 @@ export function planToOps(plan: AgentPlan, tasks: AgentRunTask[], runId: string,
     plan.deliverables.forEach((item, index) => {
         const logicalId = item.id?.trim() || `task-${index}`;
         const taskId = taskNodeIds.get(logicalId)!;
-        const targetNodeId = item.targetNodeId && existingNodeIds.has(item.targetNodeId) ? item.targetNodeId : undefined;
+        const normalizedTargetNodeId = tasks[index]?.targetNodeId;
+        const targetNodeId = normalizedTargetNodeId && existingNodeIds.has(normalizedTargetNodeId) ? normalizedTargetNodeId : undefined;
         ops.push(
             {
                 type: "add_node",
@@ -185,13 +187,16 @@ export function normalizeTasks(
     requestPrompt: string,
     surface: CreativeSurface,
     referencedAssets: CreativeAsset[],
+    requestedImageSize?: string,
 ): AgentRunTask[] {
     const defaults = Object.assign({}, ...skills.map((skill) => skill.defaultConfig || {})) as Record<string, unknown>;
     const globalDefaults = settings.generationDefaults;
     const nodes = snapshotNodes(snapshot);
+    const selectedNodeIds = new Set(selectedCanvasNodeIds(snapshot).filter((id) => nodes.has(id)));
     const assets = new Map(referencedAssets.map((asset) => [asset.id, asset]));
     return plan.deliverables.map((item, index) => {
-        const target = surface === "canvas" && item.targetNodeId ? nodes.get(item.targetNodeId) : undefined;
+        const targetNodeId = surface === "canvas" ? resolveCanvasTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
+        const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
         const selectedAssets = target ? [] : resolveTaskReferences(item.assetIds, assets, item.type);
         const references = [
             ...(target?.url && target.type ? [{ url: target.url, type: target.type }] : []),
@@ -204,7 +209,7 @@ export function normalizeTasks(
         const referenceContext = selectedAssets.map(creativeAssetContext).join("\n");
         return {
             id: item.id?.trim() || `task-${index}`,
-            targetNodeId: target ? item.targetNodeId : undefined,
+            targetNodeId: target ? targetNodeId : undefined,
             referenceAssetId: selectedAssets[0]?.id,
             referenceUrl: primaryReference?.url,
             referenceType: primaryReference?.type,
@@ -214,7 +219,7 @@ export function normalizeTasks(
             model: resolvePlannedModel(settings, item.type, item.model),
             prompt: `${withCreativeFoundation(item.prompt.trim(), plan.foundation)}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
             count: resolveAgentTaskCount(item.type, item.count, defaults.count, globalDefaults.canvasImageCount),
-            ratio: item.ratio?.trim() || textDefault(defaults.size) || (["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined),
+            ratio: item.type === "image" && requestedImageSize ? requestedImageSize : item.ratio?.trim() || textDefault(defaults.size) || (["image", "video"].includes(item.type) ? globalDefaults.imageSize : undefined),
             quality: item.quality?.trim() || textDefault(item.type === "video" ? defaults.vquality : defaults.quality) || (item.type === "video" ? globalDefaults.videoQuality : item.type === "image" ? globalDefaults.imageQuality : undefined),
             seconds: resolveAgentVideoSeconds(item.type, item.seconds, defaults.videoSeconds, globalDefaults.videoSeconds),
             voice: item.voice?.trim() || textDefault(defaults.voice) || (item.type === "audio" ? globalDefaults.audioVoice : undefined),
@@ -323,18 +328,6 @@ export function agentPlanFallbackExample(models: ReturnType<typeof agentModelOpt
     });
 }
 
-export function isCanvasConversationPrompt(prompt: string) {
-    const text = prompt.trim();
-    if (!text || requestsCanvasAction(text)) return false;
-    return /^(?:你在吗|在吗|你好|您好|嗨|哈喽|hello|hi|你是谁|你叫什么|谢谢|感谢|再见)[？?!！。,.\s]*$/i.test(text) || /(?:什么|为什么|怎么|如何|能否|可以|会不会|是不是).{0,24}[？?]\s*$/i.test(text);
-}
-
-function requestsCanvasAction(prompt: string) {
-    return /(?:生成|制作|创建|新增|添加|画|绘制|设计|写一个|写一段|改写|修改|编辑|删除|移除|移动|缩放|放大|缩小|连接|连线|选中|排列|整理|导入|放到画布|加入画布|节点|图片|视频|音频|文案|文字|海报|主视觉|generate|create|add|edit|delete|remove|move|connect|draw|design)/i.test(
-        prompt,
-    );
-}
-
 function snapshotNodes(snapshot: unknown) {
     const map = new Map<string, { summary: string; url?: string; type?: "image" | "video" | "audio" }>();
     const nodes = snapshot && typeof snapshot === "object" && Array.isArray((snapshot as { nodes?: unknown }).nodes) ? (snapshot as { nodes: Array<Record<string, unknown>> }).nodes : [];
@@ -343,10 +336,25 @@ function snapshotNodes(snapshot: unknown) {
         const metadata = node.metadata && typeof node.metadata === "object" ? (node.metadata as Record<string, unknown>) : {};
         const content = [metadata.content, metadata.prompt].find((item) => typeof item === "string" && item);
         const url = [metadata.remoteUrl, metadata.serverUrl, metadata.url, metadata.dataUrl].find((item) => typeof item === "string" && item) as string | undefined;
-        const type = node.type === "image" || node.type === "video" || node.type === "audio" ? node.type : undefined;
+        const type = node.type === "panorama" ? "image" : node.type === "image" || node.type === "video" || node.type === "audio" ? node.type : undefined;
         map.set(node.id, { summary: `${String(node.title || node.type || "节点").slice(0, 200)}${content ? `；内容：${String(content).slice(0, 2000)}` : ""}${url && !url.startsWith("data:") ? `；素材：${url.slice(0, 2000)}` : ""}`, url, type });
     }
     return map;
+}
+
+function resolveCanvasTargetNodeId(plannedTargetNodeId: string | undefined, taskType: AgentRunTask["type"], selectedNodeIds: Set<string>, nodes: Map<string, { type?: "image" | "video" | "audio" }>) {
+    const planned = plannedTargetNodeId?.trim();
+    if (!planned) return undefined;
+    if (!selectedNodeIds.size) return nodes.has(planned) ? planned : undefined;
+    if (selectedNodeIds.has(planned) && nodeSupportsTaskReference(nodes.get(planned)?.type, taskType)) return planned;
+    return Array.from(selectedNodeIds).find((id) => nodeSupportsTaskReference(nodes.get(id)?.type, taskType));
+}
+
+function nodeSupportsTaskReference(nodeType: "image" | "video" | "audio" | undefined, taskType: AgentRunTask["type"]) {
+    if (taskType === "image") return nodeType === "image";
+    if (taskType === "video") return nodeType === "image" || nodeType === "video";
+    if (taskType === "audio") return nodeType === "audio";
+    return false;
 }
 
 function textDefault(value: unknown) {
@@ -370,7 +378,17 @@ export async function executeTasks(runId: string, origin: string, cookie: string
                                 review,
                                 tasks: run.tasks.map((task) =>
                                     review.retryTaskIds.includes(task.id)
-                                        ? { ...task, status: "ready", attempts: 0, taskId: undefined, result: undefined, error: undefined, prompt: `${task.prompt}\n\n复盘修正：${reviewCorrection(review, task.id)}` }
+                                        ? {
+                                              ...task,
+                                              status: "ready",
+                                              attempts: Math.max(1, task.attempts),
+                                              taskId: undefined,
+                                              taskIds: undefined,
+                                              childTasks: undefined,
+                                              result: undefined,
+                                              error: undefined,
+                                              prompt: `${task.prompt}\n\n复盘修正：${reviewCorrection(review, task.id)}`,
+                                          }
                                         : task,
                                 ),
                             },
@@ -502,7 +520,8 @@ export async function refundTextResponse(userId: string, model: string, headers:
 }
 
 export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin: string, cookie: string, executionId: string) {
-    const attempt = task.taskId || task.childTasks?.some((child) => child.status === "pending") ? Math.max(1, task.attempts) : task.attempts + 1;
+    const resumeExisting = task.childTasks?.some((child) => child.status === "pending") || (task.status === "running" && task.taskId && !task.childTasks?.length);
+    const attempt = resumeExisting ? Math.max(1, task.attempts) : task.attempts + 1;
     if (!(await canContinue(runId, executionId))) return;
     if (!(await patchTask(runId, task.id, { status: "running", attempts: attempt, error: undefined }, "task.running", executionId))) return;
     try {
@@ -514,7 +533,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         const result = normalizeConstrainedTextResult(task, dispatched.result, attempt);
         validateAgentTaskResult(task.type, result);
         await patchTask(runId, task.id, {}, "task.validated", executionId);
-        const registered = await registerAgentTaskAssets(activeRun, { ...executableTask, attempts: attempt, result }, result, dispatched.sourceTaskIds);
+        const registeredAssetIds = dispatched.assetIds ?? (await registerAgentTaskAssets(activeRun, { ...executableTask, attempts: attempt, result }, result, dispatched.sourceTaskIds)).map((asset) => asset.id);
         await patchTask(
             runId,
             task.id,
@@ -524,7 +543,7 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
                 error: undefined,
                 taskId: dispatched.sourceTaskIds.at(-1),
                 taskIds: dispatched.sourceTaskIds,
-                assetIds: registered.map((asset) => asset.id),
+                assetIds: registeredAssetIds,
                 referenceAssetId: executableTask.referenceAssetId,
                 referenceUrl: executableTask.referenceUrl,
                 referenceType: executableTask.referenceType,
@@ -535,7 +554,11 @@ export async function runTaskWithRetry(runId: string, task: AgentRunTask, origin
         );
     } catch (error) {
         const message = toSafeGenerationErrorMessage(error, "生成任务失败");
-        if (await canContinue(runId, executionId)) await patchTask(runId, task.id, { status: "failed", error: message }, "task.failed", executionId);
+        if (await canContinue(runId, executionId)) {
+            const latest = await getAgentRun(runId);
+            const childTasks = latest?.tasks.find((item) => item.id === task.id)?.childTasks?.map((child) => (child.status === "pending" ? { ...child, status: "failed" as const, error: message } : child));
+            await patchTask(runId, task.id, { status: "failed", error: message, ...(childTasks ? { childTasks } : {}) }, "task.failed", executionId);
+        }
     }
 }
 
@@ -652,6 +675,7 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
                 : { config, messages: [{ role: "user", content: task.prompt }] };
     const results: unknown[] = [];
     const sourceTaskIds = Array.from(new Set(task.taskIds || []));
+    const registeredAssetIds = new Set(task.assetIds || []);
     const childTasks = normalizeChildTasks(task);
     const copies = agentTaskCopies(task.type, task.count);
     for (let index = 0; index < copies; index += 1) {
@@ -659,7 +683,11 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
         let child = childTasks[index];
         let taskId = child?.id;
         if (!taskId) {
-            const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: { "Content-Type": "application/json", cookie }, body: JSON.stringify(body), cache: "no-store" });
+            const bodyForCopy = {
+                ...body,
+                context: { ...context, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}:${index + 1}` },
+            };
+            const response = await fetchInternalApi(`${origin}${path}`, { method: "POST", headers: { "Content-Type": "application/json", cookie }, body: JSON.stringify(bodyForCopy), cache: "no-store" });
             if (!response.ok) throw new Error((await response.text()) || "生成任务创建失败");
             const payload = (await response.json()) as { task?: { id?: string } };
             const createdTaskId = payload.task?.id;
@@ -674,15 +702,20 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
             sourceTaskIds.push(taskId);
         }
         if (child?.status === "completed") {
+            const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result: child.result }, child.result, [taskId]);
+            registered.forEach((asset) => registeredAssetIds.add(asset.id));
+            await patchTask(run.id, task.id, { assetIds: Array.from(registeredAssetIds) }, "task.child.restored", executionId);
             results.push(child.result);
             continue;
         }
         const result = await pollTask(origin, task.type === "video" ? "/api/video-tasks" : path, taskId, cookie, run.id, task.type, executionId);
+        const registered = await registerAgentTaskAssets(run, { ...task, title: copies > 1 ? `${task.title} ${index + 1}` : task.title, count: 1, attempts: attempt, result }, result, [taskId]);
+        registered.forEach((asset) => registeredAssetIds.add(asset.id));
         childTasks[index] = { id: taskId, status: "completed", attempt: child?.attempt || attempt, result };
-        if (!(await patchTask(run.id, task.id, { taskId, taskIds: [...new Set(sourceTaskIds)], childTasks: [...childTasks] }, "task.child.completed", executionId))) throw new Error("Agent Run 已由新执行器接管");
+        if (!(await patchTask(run.id, task.id, { taskId, taskIds: [...new Set(sourceTaskIds)], childTasks: [...childTasks], assetIds: Array.from(registeredAssetIds) }, "task.child.completed", executionId))) throw new Error("Agent Run 已由新执行器接管");
         results.push(result);
     }
-    return { result: results.length === 1 ? results[0] : { results }, sourceTaskIds };
+    return { result: results.length === 1 ? results[0] : { results }, sourceTaskIds, assetIds: Array.from(registeredAssetIds) };
 }
 
 function normalizeChildTasks(task: AgentRunTask): AgentRunChildTask[] {
@@ -715,7 +748,7 @@ export function directCanvasTextContent(task: AgentRunTask) {
 }
 
 export async function pollTask(origin: string, path: string, taskId: string, cookie: string, runId: string, type: AgentRunTask["type"], executionId: string) {
-    const attempts = type === "video" ? 600 : 360;
+    const attempts = type === "video" ? 1800 : type === "image" || type === "audio" ? 900 : 300;
     for (let index = 0; index < attempts; index += 1) {
         if (!(await canContinue(runId, executionId))) throw new Error("Agent Run 已暂停、取消或已由新执行器接管");
         const response = await fetchInternalApi(`${origin}${path}/${encodeURIComponent(taskId)}`, { headers: { cookie }, cache: "no-store" });
@@ -779,7 +812,16 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
         const metadata =
             task.type === "text"
                 ? { content: String(record.content || ""), status: "success" }
-                : { content: String(record.dataUrl || ""), remoteUrl: String(record.remoteUrl || record.url || ""), serverUrl: String(record.serverUrl || ""), mimeType: String(record.mimeType || ""), status: "success" };
+                : {
+                      content: String(record.dataUrl || ""),
+                      remoteUrl: String(record.remoteUrl || record.url || ""),
+                      serverUrl: String(record.serverUrl || ""),
+                      mimeType: String(record.mimeType || ""),
+                      naturalWidth: positiveResultNumber(record.width),
+                      naturalHeight: positiveResultNumber(record.height),
+                      size: task.ratio,
+                      status: "success",
+                  };
         return [
             {
                 type: "add_node",
@@ -795,6 +837,11 @@ export function taskResultOps(runId: string, index: number, task: AgentRunTask) 
     ops.push({ type: "update_node", id: taskNodeId, metadata: { agentTaskStatus: "completed", agentTaskOutputNodeIds: nodeIds, agentTaskAttempts: task.attempts } });
     if (nodeIds.length) ops.push({ type: "select_nodes", ids: nodeIds });
     return { nodeIds, ops };
+}
+
+function positiveResultNumber(value: unknown) {
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 export function taskResultItems(value: unknown): Record<string, unknown>[] {

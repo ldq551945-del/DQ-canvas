@@ -195,7 +195,7 @@ export async function publishReferenceMedia(type: "image" | "video" | "audio", d
 
 export async function referenceBlobDataUrl(storageKey?: string, url = "") {
     if (url.startsWith("data:")) return url;
-    const blob = storageKey ? await getMediaBlob(storageKey) : url.startsWith("blob:") ? await (await fetch(url)).blob() : null;
+    const blob = storageKey ? await getMediaBlob(storageKey, url) : url.startsWith("blob:") ? await (await fetch(url)).blob() : null;
     if (!blob) throw new Error("参考素材已失效，请重新上传");
     return blobToDataUrl(blob);
 }

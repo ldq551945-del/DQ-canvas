@@ -1,11 +1,12 @@
 import { create } from "zustand";
 
 import { createClientSessionEpoch, type ClientSessionStamp } from "@/lib/client-session-epoch";
-import type { CanvasProject, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
-import { createCanvasProject, deleteCanvasProjects as deleteCanvasProjectsRequest, listCanvasProjects, saveCanvasProject } from "@/services/api/canvas-projects";
+import type { CanvasProject, CanvasProjectSummary, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
+import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
+import { createCanvasProject, deleteCanvasProjects as deleteCanvasProjectsRequest, getCanvasProject, listCanvasProjectSummaries, saveCanvasProject } from "@/services/api/canvas-projects";
 import { useUserStore } from "@/stores/use-user-store";
 
-export type { CanvasProject } from "@/lib/canvas-project-contract";
+export type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
 
 type CanvasProjectPatch = Partial<Pick<CanvasProject, "creativeConversationId" | "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>;
 
@@ -13,11 +14,12 @@ type CanvasStore = {
     hydrated: boolean;
     hydratedUserId: string;
     syncError?: string;
+    summaries: CanvasProjectSummary[];
     projects: CanvasProject[];
     hydrate: (force?: boolean) => Promise<void>;
+    loadProject: (id: string, force?: boolean) => Promise<CanvasProject>;
     createProject: (title?: string) => Promise<string>;
     importProject: (project: Partial<CanvasProject>, sourceHandoffId?: string) => Promise<string>;
-    openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => Promise<void>;
     updateProject: (id: string, patch: CanvasProjectPatch) => void;
@@ -27,6 +29,7 @@ type CanvasStore = {
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const saveQueues = new Map<string, Promise<void>>();
 const latestProjectTimes = new Map<string, number>();
+const projectRequests = new Map<string, Promise<CanvasProject>>();
 const sessionEpoch = createClientSessionEpoch(() => useUserStore.getState().user?.id || "");
 let hydrateRequestId = 0;
 let hydrateRequest: (ClientSessionStamp & { requestId: number; promise: Promise<void> }) | null = null;
@@ -34,26 +37,27 @@ let hydrateRequest: (ClientSessionStamp & { requestId: number; promise: Promise<
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
     hydrated: false,
     hydratedUserId: "",
+    summaries: [],
     projects: [],
     hydrate: async (force = false) => {
         const userId = useUserStore.getState().user?.id || "";
         if (!userId) {
             invalidateSession();
-            set({ hydrated: true, hydratedUserId: "", projects: [], syncError: undefined });
+            set({ hydrated: true, hydratedUserId: "", summaries: [], projects: [], syncError: undefined });
             return;
         }
         if (!force && get().hydrated && get().hydratedUserId === userId) return;
         const session = sessionEpoch.capture();
         if (!force && hydrateRequest?.userId === session.userId && hydrateRequest.epoch === session.epoch) return hydrateRequest.promise;
         const requestId = ++hydrateRequestId;
-        set((state) => ({ hydrated: false, hydratedUserId: userId, projects: state.hydratedUserId === userId ? state.projects : [], syncError: undefined }));
-        const promise = listCanvasProjects()
-            .then((projects) => {
+        set((state) => ({ hydrated: false, hydratedUserId: userId, summaries: state.hydratedUserId === userId ? state.summaries : [], projects: state.hydratedUserId === userId ? state.projects : [], syncError: undefined }));
+        const promise = listCanvasProjectSummaries()
+            .then((summaries) => {
                 if (!isActiveHydrate(session, requestId)) return;
-                set({ projects, hydrated: true, hydratedUserId: userId });
+                set({ summaries, hydrated: true, hydratedUserId: userId });
             })
             .catch((error) => {
-                if (isActiveHydrate(session, requestId)) set({ projects: [], hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "画布项目加载失败" });
+                if (isActiveHydrate(session, requestId)) set({ summaries: [], hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "画布项目加载失败" });
             })
             .finally(() => {
                 if (hydrateRequest?.requestId === requestId) hydrateRequest = null;
@@ -61,22 +65,52 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         hydrateRequest = { ...session, requestId, promise };
         return promise;
     },
+    loadProject: async (id, force = false) => {
+        const session = requireSession();
+        const current = get().projects.find((project) => project.id === id);
+        if (!force && current) return current;
+        const key = sessionEpoch.key(session, id);
+        const pending = projectRequests.get(key);
+        if (!force && pending) return pending;
+        const request = getCanvasProject(id)
+            .then((project) => {
+                assertCurrent(session);
+                latestProjectTimes.set(key, Date.parse(project.updatedAt) || Date.now());
+                set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)], summaries: upsertSummary(state.summaries, project), syncError: undefined }));
+                return project;
+            })
+            .finally(() => {
+                if (projectRequests.get(key) === request) projectRequests.delete(key);
+            });
+        projectRequests.set(key, request);
+        return request;
+    },
     createProject: async (title = "未命名画布") => {
         const session = requireSession();
         const project = await createCanvasProject({ title });
         assertCurrent(session);
-        set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)], syncError: undefined }));
+        set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)], summaries: upsertSummary(state.summaries, project), syncError: undefined }));
         return project.id;
     },
     importProject: async (project, sourceHandoffId) => {
         const session = requireSession();
         const created = await createCanvasProject({ title: project.title || "导入画布", sourceHandoffId, project });
         assertCurrent(session);
-        set((state) => ({ projects: [created, ...state.projects.filter((item) => item.id !== created.id)], syncError: undefined }));
+        set((state) => ({ projects: [created, ...state.projects.filter((item) => item.id !== created.id)], summaries: upsertSummary(state.summaries, created), syncError: undefined }));
         return created.id;
     },
-    openProject: (id) => get().projects.find((item) => item.id === id) || null,
-    renameProject: (id, title) => mutateProject(id, (project) => ({ ...project, title: title.trim() || project.title })),
+    renameProject: (id, title) => {
+        const nextTitle = title.trim();
+        if (!nextTitle) return;
+        if (get().projects.some((project) => project.id === id)) {
+            mutateProject(id, (project) => ({ ...project, title: nextTitle }));
+            return;
+        }
+        void get()
+            .loadProject(id)
+            .then(() => mutateProject(id, (project) => ({ ...project, title: nextTitle })))
+            .catch((error) => set({ syncError: error instanceof Error ? error.message : "画布项目重命名失败" }));
+    },
     deleteProjects: async (ids) => {
         const session = requireSession();
         const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
@@ -87,12 +121,12 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         await deleteCanvasProjectsRequest(uniqueIds);
         if (!sessionEpoch.isCurrent(session)) return;
         uniqueIds.forEach((id) => latestProjectTimes.delete(sessionEpoch.key(session, id)));
-        set((state) => ({ projects: state.projects.filter((project) => !uniqueIds.includes(project.id)), syncError: undefined }));
+        set((state) => ({ projects: state.projects.filter((project) => !uniqueIds.includes(project.id)), summaries: state.summaries.filter((project) => !uniqueIds.includes(project.id)), syncError: undefined }));
     },
     updateProject: (id, patch) => mutateProject(id, (project) => ({ ...project, ...patch })),
     reset: () => {
         invalidateSession();
-        set({ hydrated: false, hydratedUserId: "", projects: [], syncError: undefined });
+        set({ hydrated: false, hydratedUserId: "", summaries: [], projects: [], syncError: undefined });
     },
 }));
 
@@ -100,15 +134,16 @@ function mutateProject(projectId: string, updater: (project: CanvasProject) => C
     const session = sessionEpoch.capture();
     if (!session.userId) return;
     let nextProject: CanvasProject | undefined;
-    useCanvasStore.setState((state) => ({
-        projects: state.projects.map((project) => {
+    useCanvasStore.setState((state) => {
+        const projects = state.projects.map((project) => {
             if (project.id !== projectId) return project;
             const updated = updater(project);
             if (updated === project) return project;
             nextProject = { ...updated, updatedAt: nextUpdatedAt(session, project) };
             return nextProject;
-        }),
-    }));
+        });
+        return { projects, summaries: nextProject ? upsertSummary(state.summaries, nextProject) : state.summaries };
+    });
     if (nextProject) queueSave(session, nextProject);
 }
 
@@ -126,7 +161,7 @@ function queueSave(session: ClientSessionStamp, project: CanvasProject) {
                 try {
                     const saved = await saveCanvasProject(project);
                     if (!sessionEpoch.isCurrent(session)) return;
-                    useCanvasStore.setState((state) => ({ projects: state.projects.map((item) => (item.id === saved.id && item.updatedAt === project.updatedAt ? saved : item)), syncError: undefined }));
+                    useCanvasStore.setState((state) => ({ projects: state.projects.map((item) => (item.id === saved.id && item.updatedAt === project.updatedAt ? saved : item)), summaries: upsertSummary(state.summaries, saved), syncError: undefined }));
                 } catch (error) {
                     if (!sessionEpoch.isCurrent(session)) return;
                     const latest = useCanvasStore.getState().projects.find((item) => item.id === project.id);
@@ -176,4 +211,10 @@ function invalidateSession() {
     saveTimers.forEach((timer) => clearTimeout(timer));
     saveTimers.clear();
     latestProjectTimes.clear();
+    projectRequests.clear();
+}
+
+function upsertSummary(summaries: CanvasProjectSummary[], project: CanvasProject) {
+    const summary = summarizeCanvasProjectRecord(project);
+    return [summary, ...summaries.filter((item) => item.id !== project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
 }

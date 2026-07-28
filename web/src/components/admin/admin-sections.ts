@@ -12,14 +12,19 @@ export const ADMIN_SECTION_KEYS = [
     "wallet",
     "orders",
     "products",
+    "promotions",
+    "coupons",
+    "referrals",
     "payments",
     "updates",
     "cdk",
     "announcements",
+    "works",
     "users",
     "logs",
     "generationOperations",
     "prompts",
+    "adminHelp",
 ] as const;
 
 export type AdminSectionKey = (typeof ADMIN_SECTION_KEYS)[number];

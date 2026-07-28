@@ -1,4 +1,5 @@
-import type { CanvasProject } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
+import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { summarizeCanvasProject, type CreateOverviewMedia, type CreateOverviewProject } from "@/lib/create-workbench-overview";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
@@ -19,6 +20,25 @@ export async function listCanvasProjects(userId: string) {
         .filter((record) => record.userId === userId)
         .map((record) => record.project)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function listCanvasProjectSummaries(userId: string): Promise<CanvasProjectSummary[]> {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `SELECT id, title, created_at, updated_at,
+                    project_json->>'sourceHandoffId' AS source_handoff_id,
+                    project_json->>'creativeConversationId' AS creative_conversation_id,
+                    jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
+                    jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count
+             FROM canvas_projects
+             WHERE user_id = $1
+             ORDER BY updated_at DESC, id ASC`,
+            [userId],
+        );
+        return result.rows.map(mapProjectSummary);
+    }
+    return (await listCanvasProjects(userId)).map(summarizeCanvasProjectRecord);
 }
 
 export async function getLatestCanvasProjectOverview(userId: string): Promise<CreateOverviewProject | undefined> {
@@ -171,6 +191,21 @@ function mapPostgresOverview(row: Record<string, unknown>): CreateOverviewProjec
                 return [{ kind, url }];
             })
             .slice(0, 6),
+    };
+}
+
+function mapProjectSummary(row: Record<string, unknown>): CanvasProjectSummary {
+    const sourceHandoffId = String(row.source_handoff_id || "").trim();
+    const creativeConversationId = String(row.creative_conversation_id || "").trim();
+    return {
+        id: String(row.id || ""),
+        ...(sourceHandoffId ? { sourceHandoffId } : {}),
+        ...(creativeConversationId ? { creativeConversationId } : {}),
+        title: String(row.title || ""),
+        nodeCount: Math.max(0, Number(row.node_count) || 0),
+        connectionCount: Math.max(0, Number(row.connection_count) || 0),
+        createdAt: isoDate(row.created_at),
+        updatedAt: isoDate(row.updated_at),
     };
 }
 

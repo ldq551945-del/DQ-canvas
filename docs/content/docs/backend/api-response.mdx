@@ -9,7 +9,71 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 现有 Next.js Route Handler 按业务返回 JSON，错误通常使用 `{ error: string }` 并配合对应 HTTP 状态码。项目尚未统一为 `{ code, data, msg }`，新增或修改接口时应保持调用方已有契约，并在边界校验身份、权限和外部输入。
 
+促销与优惠券新增接口使用 `{ code, data, msg }`，其中成功时 `code = 0`，业务数据位于 `data`，失败时 `data = null` 且 HTTP 状态与 `code` 一致：
+
+- `GET /api/billing/coupons`、`POST /api/billing/coupons/claim`
+- `POST /api/billing/quotes`
+- `/api/admin/billing/promotions` 与 `/api/admin/billing/promotions/{id}`
+- `/api/admin/billing/coupon-templates` 与 `/api/admin/billing/coupon-templates/{id}`
+- `POST /api/admin/billing/coupons/grant`
+
+邀请奖励接口同样使用 `{ code, data, msg }`：
+
+- `GET /api/referrals`：返回当前用户的稳定邀请码、邀请链接、转化统计、脱敏邀请进度和奖励记录。
+- `GET/PATCH /api/admin/referrals`：读取或更新邀请计划规则；省略的 `PATCH` 字段保持原值。
+- `GET /api/admin/referrals/relationships`、`PATCH /api/admin/referrals/relationships/{id}`：分页读取邀请关系并执行恢复、冻结或拒绝。
+- `GET /api/admin/referrals/rewards`、`POST /api/admin/referrals/settle`：分页读取奖励记录并人工触发到期结算。
+- `POST /api/maintenance/referrals/settle`：使用维护令牌执行批量到期结算。
+
+`GET /invite/{code}` 是归因重定向而不是 JSON 接口：有效访问写入 30 天 HttpOnly、SameSite=Lax Cookie 后跳转注册页；`next` 只接受站内绝对路径。邀请业务仅在 PostgreSQL 下启用，文件 Provider 不创建关系或奖励账本。
+
+`POST /api/billing/orders` 保留既有兼容响应，同时接受可选 `userCouponId`；订单响应包含日常总价、活动优惠、券优惠、实付金额和只读价格快照。支付商下单、退款与对账不得重新计算价格，只能读取订单的 `amountCents`。
+
 服务端不得把异常堆栈、上游鉴权头、完整密钥或包含密钥的上游错误返回浏览器。外部渠道失败应保留可诊断的 HTTP 状态和脱敏消息。
+
+## 作品发布与分享
+
+作品发布、审核与公开详情 JSON 接口统一使用 `{ code, data, msg }`：成功时 `code = 0`，失败时 `data = null`，HTTP 状态与错误 `code` 一致。
+
+- `GET/POST /api/works`：分页读取本人作品或创建草稿。
+- `GET /api/works/sources`：读取本人素材、Canvas、短剧发布来源；指定 `sourceType + sourceId` 时返回媒体候选和仅基于项目内用户可见字段生成的 `suggestedPrompt`。保存草稿与提交审核都要求非空 `publicPrompt`。
+- `GET/PATCH /api/works/{id}`、`POST /api/works/{id}/submit`、`POST /api/works/{id}/revoke`：读取/保存本人草稿、提交审核和撤销分享。
+- `GET /api/works/sources`：按当前用户列出素材、Canvas、短剧来源及其可发布永久媒体。
+- `GET /api/admin/works`、`POST /api/admin/works/{id}/review`、`POST /api/admin/works/{id}/take-down`：管理员分页审核、驳回和下架。
+- `POST /api/admin/works/{id}/feature`：管理员设置或取消当前公开作品精选。
+- `GET /api/public/works/{slug}`、`POST /api/public/works/{slug}/view`：读取当前公开版本并限流记录访问量。
+- `GET /api/public/gallery`：按精选/最新/热门、分类、标签和关键词读取公开广场，使用 opaque cursor 稳定分页。
+- `POST /api/public/works/{slug}/report`：登录用户举报提交时的公开版本；作品所有者不能举报自己，同一版本的未结举报去重。
+- `GET/POST /api/works/{id}/appeal`：作品所有者读取治理记录或申诉本人被下架版本。
+- `GET /api/admin/work-cases`、`POST /api/admin/work-cases/{id}/resolve`：管理员筛选并处理举报/申诉；确认举报只处置同一线上版本，通过申诉只恢复没有其他线上版本的下架作品。
+
+所有私有接口校验登录身份、作品所有权、来源归属和媒体来源关系；管理员审核、精选和治理写操作同时记录安全审计。广场只返回 `public`，持链接可见作品仍可通过分享地址访问但不进入广场或站点地图；不可公开、待审、驳回、下架或撤销作品统一返回 404，不泄露作品是否存在。
+
+`GET/HEAD /api/public/works/{slug}/media/{assetId}` 是媒体响应而不是 JSON 成功包：本地文件返回支持单段 Range 的媒体流，对象存储 GET 返回 307 短期签名地址，HEAD 直接返回登记的类型、长度和 Range 元数据。请求会重新校验资产属于当前公开版本，不暴露对象 Key，也不提供公开原件下载；错误仍使用 `{ code, data, msg }`。
+
+## 媒体访问保护
+
+- `GET/HEAD /api/reference-assets/{path}` 要求当前用户拥有媒体、管理员身份，或携带绑定资源、`provider-read` 用途和过期时间的短期 HMAC。上游签名不能追加 `download=original` 变成匿名原件下载。
+- `GET/HEAD /api/generation-log-assets/{path}` 要求当前用户确实能从自己的生成记录访问该资源；跨用户和不存在资源统一隐藏为 404。
+- 本地媒体只接受单段 `bytes` Range；多段或非法 Range 返回 416，开放、后缀或显式超大 Range 每次最多返回 32 MiB，并通过 `Content-Range` 让播放器继续读取。媒体代理也会把 Range 规范到相同上限，上游忽略 Range 时仍受响应字节上限约束。
+- 本地原件返回弱 ETag、Last-Modified 和条件 304；图片 WebP 变体保留有限宽度与 ETag。HEAD 不创建本地文件流；对象存储 HEAD 不会把签名为 GET 的临时地址错误用于 HEAD。
+- 私有读取按用户或签名限流，公开作品按资源总量和可信客户端 IP 分层限流；本地文件、公开媒体和媒体代理另有进程内总并发/单身份并发许可，响应完成、错误、取消或租约到期时会释放并取消底层流。429 响应携带 `Retry-After`。
+- 客户端 IP 只在 `VOZEB_PRO_TRUSTED_PROXY_HOPS` 大于 `0` 时读取对应代理层；直连环境不得信任客户端自行提交的转发头。
+
+## 社区互动与榜单
+
+社区互动接口使用 `{ code, data, msg }`。匿名用户可以读取公开互动摘要、榜单和创作者资料；点赞、关注、本人互动记录和通知接口要求有效登录账号。当前产品不提供作品收藏、评论或评论举报。
+
+- `GET /api/public/works/{slug}/community`：返回作品互动计数、当前登录用户关系和作者是否可关注。
+- `POST /api/public/works/{slug}/community/like`、`POST /api/public/works/{slug}/community/follow`：以 `{ active: boolean }` 点赞/取消或关注/取消资料身份作者，并返回服务端权威状态；重复设置不会重复增加关系、计数或通知。
+- `GET /api/public/users/{username}`：返回活跃创作者的公开昵称、头像、简介、作品/获赞/关注统计和 `active + approved + public + profile` 作品 keyset 分页；不返回邮箱、内部用户 ID、隐藏/自定义作者身份或本人点赞历史。
+- `POST /api/public/users/{username}/follow`：直接关注或取消关注公开创作者；禁止自关注，公开主页失效后仍允许取消已有关系。
+- `POST /api/public/users/{username}/block`：以 `{ active: boolean }` 拉黑或取消拉黑用户；拉黑会原子解除双方关注并返回 `removedFollowCount`，任一方向存在拉黑关系时双方不得新增关注，关注/粉丝列表互相隐藏。
+- `GET /api/public/gallery/ranking?window=weekly|monthly`：读取 7 天或 30 天热榜和 opaque cursor；分数使用有效点赞 `3`、精选 `8` 与最多 `7` 分新鲜度，只统计活跃、非作者且互动时注册满 24 小时的账号。
+- `GET /api/community/activity?view=summary|following|followers|likes`：读取当前用户社区摘要，或分页读取关注、粉丝和本人点赞的仍有效公开作品；这些列表不出现在公开创作者主页。
+- `GET /api/notifications/interactions`、`POST /api/notifications/interactions/{id}/read`、`POST /api/notifications/interactions/read-all`：服务端分页读取互动通知、未读数并更新已读状态。
+
+作品作者的自点赞不会增加榜单权重，自关注会被拒绝。作品下架、撤销、公开版本变化或作者禁用后，公开读取、本人点赞列表和榜单都会立即排除对应记录。互动通知使用稳定去重键，取消后重新建立相同关系不会重复骚扰用户；作者关注通知进入本人 `/me` 社区主页，通知列表不会并入全局会话响应。
 
 ## 系统渠道密钥
 

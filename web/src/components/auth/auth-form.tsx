@@ -4,7 +4,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, UserRound } from "lucide-react";
 import { App, Button, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
@@ -22,9 +22,25 @@ type AuthFormProps = {
     className?: string;
     headerSlot?: ReactNode;
     authError?: string;
+    initialReferralCode?: string;
+    referralSource?: string;
+    inviteError?: string;
 };
 
-export function AuthForm({ mode, nextPath = "/create", registrationEnabled = true, emailRegistrationEnabled = false, firstUser = false, variant = "page", className, headerSlot, authError }: AuthFormProps) {
+export function AuthForm({
+    mode,
+    nextPath = "/create",
+    registrationEnabled = true,
+    emailRegistrationEnabled = false,
+    firstUser = false,
+    variant = "page",
+    className,
+    headerSlot,
+    authError,
+    initialReferralCode = "",
+    referralSource = "registration-form",
+    inviteError,
+}: AuthFormProps) {
     const router = useRouter();
     const { message } = App.useApp();
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
@@ -34,6 +50,7 @@ export function AuthForm({ mode, nextPath = "/create", registrationEnabled = tru
     const [emailCode, setEmailCode] = useState("");
     const [displayName, setDisplayName] = useState("");
     const [password, setPassword] = useState("");
+    const [referralCode, setReferralCode] = useState(initialReferralCode);
     const [submitting, setSubmitting] = useState(false);
     const [sendingCode, setSendingCode] = useState(false);
     const isRegister = mode === "register";
@@ -47,7 +64,7 @@ export function AuthForm({ mode, nextPath = "/create", registrationEnabled = tru
             const response = await fetch(isRegister ? "/api/auth/register" : "/api/auth/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, email, emailCode, displayName, password }),
+                body: JSON.stringify({ username, email, emailCode, displayName, password, referralCode: isRegister && !firstUser ? referralCode : undefined, referralSource }),
             });
             const payload = (await response.json()) as { user?: LocalUser; error?: string };
             if (!response.ok || !payload.user) throw new Error(payload.error || (isRegister ? "注册失败" : "登录失败"));
@@ -91,6 +108,8 @@ export function AuthForm({ mode, nextPath = "/create", registrationEnabled = tru
                 </div>
 
                 {authError ? <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-100">{authError}</div> : null}
+
+                {isRegister && inviteError ? <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-100">{inviteError}</div> : null}
 
                 {disabled ? <div className="rounded-md border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-900 dark:border-cyan-300/20 dark:bg-cyan-300/8 dark:text-cyan-50">当前站点已关闭注册，请联系管理员开通账号。</div> : null}
 
@@ -146,6 +165,22 @@ export function AuthForm({ mode, nextPath = "/create", registrationEnabled = tru
                     <label className="block space-y-3">
                         <span className="text-sm font-medium text-stone-700 dark:text-stone-200">创作昵称</span>
                         <Input size="large" value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="显示在账号菜单，可留空" autoComplete="name" disabled={submitting || disabled} />
+                    </label>
+                ) : null}
+
+                {isRegister && !firstUser ? (
+                    <label className="block space-y-3">
+                        <span className="text-sm font-medium text-stone-700 dark:text-stone-200">邀请码（选填）</span>
+                        <Input
+                            size="large"
+                            prefix={<Gift className="size-4 text-stone-500" />}
+                            value={referralCode}
+                            onChange={(event) => setReferralCode(event.target.value.toUpperCase())}
+                            placeholder="通过邀请链接进入时会自动填写"
+                            autoComplete="off"
+                            maxLength={24}
+                            disabled={submitting || disabled}
+                        />
                     </label>
                 ) : null}
 

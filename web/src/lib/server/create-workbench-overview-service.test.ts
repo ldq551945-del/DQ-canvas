@@ -5,7 +5,7 @@ import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 import { buildCreateGenerationOverview } from "./create-workbench-overview-service";
 
 describe("create workbench overview service", () => {
-    it("returns four running tasks and eight unique stable assets", () => {
+    it("returns four running tasks and six latest unique stable assets", () => {
         const logs = [
             ...Array.from({ length: 6 }, (_, index) => generationLog(`pending-${index}`, "pending", `2026-07-2${index}T12:00:00.000Z`, [])),
             generationLog("success-new", "success", "2026-07-26T12:00:00.000Z", [
@@ -19,7 +19,8 @@ describe("create workbench overview service", () => {
 
         expect(overview.runningTasks).toHaveLength(4);
         expect(overview.runningTasks[0].id).toBe("pending-5");
-        expect(overview.recentAssets).toHaveLength(8);
+        expect(overview.recentAssets).toHaveLength(6);
+        expect(overview.recentAssets[0]).toMatchObject({ id: "success-new-0", url: "/api/media/image-one.webp" });
         expect(overview.recentAssets.filter((asset) => asset.url === "/api/media/image-one.webp")).toHaveLength(1);
         expect(overview.recentAssets.some((asset) => asset.url.startsWith("data:"))).toBe(false);
     });

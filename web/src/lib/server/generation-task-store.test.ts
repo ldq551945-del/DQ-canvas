@@ -81,6 +81,19 @@ describe("mutateStoredGenerationTask", () => {
 });
 
 describe("listStoredGenerationTaskRecords", () => {
+    it("matches file-provider tasks through resolved public user ids", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        const now = Date.now();
+        mocks.records = [
+            { id: "task-one", userId: "user-one", type: "image", status: "success", payload: { prompt: "first" }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+            { id: "task-two", userId: "user-two", type: "image", status: "success", payload: { prompt: "second" }, createdAt: now, updatedAt: now, expiresAt: now + 60_000 },
+        ];
+
+        const result = await listStoredGenerationTaskRecords({ search: "0001", searchUserIds: ["user-one"], includeAll: false });
+
+        expect(result.items.map((item) => item.id)).toEqual(["task-one"]);
+    });
+
     it("pushes PostgreSQL filters, pagination and aggregate summary into database queries", async () => {
         vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
         vi.mocked(postgresQuery)
@@ -103,15 +116,16 @@ describe("listStoredGenerationTaskRecords", () => {
             } as never)
             .mockResolvedValueOnce({ rows: [{ task_type: "video", status: "success", total: "1", completed_total: "1", duration_total_ms: "1", points_cost: "3" }] } as never);
 
-        const result = await listStoredGenerationTaskRecords({ page: 1, pageSize: 20, type: "video", status: "success", surface: "chat", projectId: "project-one", userId: "user-one", search: "needle", includeAll: false });
+        const result = await listStoredGenerationTaskRecords({ page: 1, pageSize: 20, type: "video", status: "success", surface: "chat", projectId: "project-one", userId: "user-one", search: "needle", searchUserIds: ["user-one"], includeAll: false });
         const [pageQuery, pageParams] = vi.mocked(postgresQuery).mock.calls[0] || [];
         const [summaryQuery, summaryParams] = vi.mocked(postgresQuery).mock.calls[1] || [];
 
         expect(String(pageQuery)).toContain("payload::text ILIKE");
-        expect(String(pageQuery)).toContain("LIMIT $7 OFFSET $8");
-        expect(pageParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", 20, 0]);
+        expect(String(pageQuery)).toContain("user_id = ANY($7::text[])");
+        expect(String(pageQuery)).toContain("LIMIT $8 OFFSET $9");
+        expect(pageParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"], 20, 0]);
         expect(String(summaryQuery)).toContain("GROUP BY task_type, status");
-        expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle"]);
+        expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"]]);
         expect(result).toMatchObject({ total: 1, items: [{ id: "task-one", type: "video" }], all: [], summary: { total: 1, totalPointsCost: 3 } });
     });
 });

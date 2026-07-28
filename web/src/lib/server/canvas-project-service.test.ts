@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
     deleteCanvasProjects: vi.fn(),
     getCanvasProject: vi.fn(),
     listCanvasProjects: vi.fn(),
+    listCanvasProjectSummaries: vi.fn(),
     updateCanvasProject: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
 }));
@@ -20,6 +21,7 @@ vi.mock("@/lib/server/canvas-project-store", () => ({
     deleteCanvasProjects: mocks.deleteCanvasProjects,
     getCanvasProject: mocks.getCanvasProject,
     listCanvasProjects: mocks.listCanvasProjects,
+    listCanvasProjectSummaries: mocks.listCanvasProjectSummaries,
     updateCanvasProject: mocks.updateCanvasProject,
 }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));

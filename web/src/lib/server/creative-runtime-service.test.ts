@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     registerCreativeAssets: vi.fn(),
     getCreativeWorkbenchSessionDetail: vi.fn(),
     listCreativeWorkbenchSessionSummaries: vi.fn(),
+    getLocalMediaRegistrations: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     updateCreativeConversation: vi.fn(),
 }));
 vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writePersistentMediaDataUrl }));
+vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistrations: mocks.getLocalMediaRegistrations }));
 vi.mock("@/lib/server/creative-workbench-session-store", () => ({
     getCreativeWorkbenchSessionDetail: mocks.getCreativeWorkbenchSessionDetail,
     listCreativeWorkbenchSessionSummaries: mocks.listCreativeWorkbenchSessionSummaries,
@@ -38,6 +40,7 @@ describe("创作会话素材上传", () => {
         mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active" });
         mocks.getCreativeWorkbenchSessionDetail.mockReset().mockResolvedValue({ id: "conversation-one", messages: [], hasMore: false });
         mocks.listCreativeWorkbenchSessionSummaries.mockReset().mockResolvedValue([]);
+        mocks.getLocalMediaRegistrations.mockReset().mockResolvedValue([]);
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.registerCreativeAssets.mockReset().mockImplementation(async ([input]) => [{ ...input, id: "asset-one", status: "ready", metadata: input.metadata || {}, createdAt: 1, updatedAt: 1 }]);
     });
@@ -99,6 +102,60 @@ describe("创作会话素材上传", () => {
         });
         expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("workbenchPlan");
         expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("resolvedPrompt");
+    });
+
+    it("persists only owned permanent workbench references as message attachments", async () => {
+        mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
+        mocks.getLocalMediaRegistrations.mockResolvedValueOnce([
+            {
+                storageKey: "permanent/2026/07/28/images/reference.png",
+                scope: "generation",
+                storageClass: "permanent",
+                type: "image",
+                ownerUserId: "user-one",
+                originalName: "人物参考.png",
+                source: "image-workbench",
+                mimeType: "image/png",
+                bytes: 4,
+                createdAt: new Date().toISOString(),
+            },
+        ]);
+
+        await appendWorkbenchExchangeForUser("user-one", {
+            conversationId: "conversation-one",
+            workspace: "image",
+            prompt: "换成白头发",
+            reply: "已收到生成需求。",
+            attachments: [
+                {
+                    kind: "image",
+                    name: "客户端名称.png",
+                    url: "/api/reference-assets/permanent/2026/07/28/images/reference.png",
+                    storageKey: "permanent/2026/07/28/images/reference.png",
+                    mimeType: "image/png",
+                    width: 1600,
+                    height: 900,
+                },
+            ],
+        });
+
+        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userMetadata: {
+                    workspace: "image",
+                    attachments: [
+                        expect.objectContaining({
+                            kind: "image",
+                            name: "人物参考.png",
+                            url: "/api/generation-log-assets/permanent/2026/07/28/images/reference.png",
+                            storageKey: "permanent/2026/07/28/images/reference.png",
+                            width: 1600,
+                            height: 900,
+                        }),
+                    ],
+                },
+            }),
+        );
     });
 
     it("validates workbench summary and detail boundaries", async () => {

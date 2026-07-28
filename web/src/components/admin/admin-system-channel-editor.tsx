@@ -8,7 +8,9 @@ import { LabeledControl } from "@/components/admin/admin-settings-controls";
 import { formatCreditAmount } from "@/constant/credits";
 import { parseChannelExampleConfig } from "@/lib/channel-example-parser";
 import { buildGlobalAiOpcSelection, GLOBAL_AIOPC_PRESETS, globalAiOpcPresetOptions, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPresets } from "@/lib/globalaiopc-catalog";
-import type { SystemChannelAdvancedConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
+import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
 
 export type ChannelHealthKind = "text" | "image" | "video" | "audio";
@@ -48,6 +50,12 @@ const channelProtocolOptions: Array<{ value: SystemChannelProtocol; label: strin
     { value: "compatible", label: "通用兼容" },
 ];
 const ALL_GLOBAL_AIOPC_PRESETS = "__all_globalaiopc_presets__";
+const modelCapabilityOptions: Array<{ label: string; value: LogicalModelCapability }> = [
+    { label: "文本", value: "text" },
+    { label: "图片", value: "image" },
+    { label: "视频", value: "video" },
+    { label: "音频", value: "audio" },
+];
 
 export function createDefaultChannelAdvancedConfig(): SystemChannelAdvancedConfig {
     return {
@@ -97,6 +105,7 @@ export function SystemChannelEditor({
     const healthKinds: ChannelHealthKind[] = ["text", "image", "video", "audio"];
     const visibleHealthResults = healthKinds.map((kind) => healthResults[`${channel.id}:${kind}`]).filter((item): item is ChannelHealthResult => Boolean(item));
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
+    const capabilitySummary = channelCapabilitySummary(channel);
     const selectedGlobalPresets = resolveGlobalAiOpcPresets(advanced);
     const multipleGlobalPresets = advanced.protocol === "globalaiopc" && selectedGlobalPresets.length > 1;
     const updateAdvanced = (patch: Partial<SystemChannelAdvancedConfig>) => onChange({ advancedConfig: { ...advanced, ...patch } });
@@ -185,6 +194,7 @@ export function SystemChannelEditor({
                             {channel.enabled ? "启用" : "停用"}
                         </Tag>
                         <Tag className="m-0">{channel.models.length} 个模型</Tag>
+                        {capabilitySummary ? <Tag className="m-0">{capabilitySummary}</Tag> : null}
                     </div>
                     <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{channel.baseUrl || "未填写 Base URL"}</div>
                     <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">新手只需要填写名称、Base URL 和 API Key，再点一键检测接口。</div>
@@ -294,6 +304,9 @@ export function SystemChannelEditor({
                             />
                         </LabeledControl>
                     ) : null}
+                    <LabeledControl label="模型目录路径">
+                        <Select className="w-full" mode="tags" maxTagCount="responsive" value={advanced.modelCatalogPaths || []} placeholder="默认 /v1/models；可填写多个非标准路径" onChange={(modelCatalogPaths) => updateAdvanced({ modelCatalogPaths })} />
+                    </LabeledControl>
                     <LabeledControl label="模型列表">
                         <Select className="w-full" mode="tags" maxTagCount="responsive" value={channel.models} placeholder="检测会自动填，也可以手动输入模型名" onChange={(models) => onChange({ models })} />
                     </LabeledControl>
@@ -306,13 +319,14 @@ export function SystemChannelEditor({
                     <LabeledControl label="视频模型">
                         <Input value={advanced.videoModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ videoModel: event.target.value })} />
                     </LabeledControl>
+                    <ModelRouteConfigEditor channel={channel} advanced={advanced} onChange={updateAdvanced} />
                     <LabeledControl label="支持时长">
                         <Input disabled={multipleGlobalPresets} value={advanced.durationRange} placeholder={multipleGlobalPresets ? "按模型自动匹配" : "例如：5、10、15 秒"} onChange={(event) => updateAdvanced({ durationRange: event.target.value })} />
                     </LabeledControl>
-                    <LabeledControl label="创建路径">
+                    <LabeledControl label="兜底创建路径">
                         <Input disabled={multipleGlobalPresets} value={advanced.createPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/video/generations"} onChange={(event) => updateAdvanced({ createPath: event.target.value })} />
                     </LabeledControl>
-                    <LabeledControl label="查询路径">
+                    <LabeledControl label="兜底查询路径">
                         <Input disabled={multipleGlobalPresets} value={advanced.queryPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/video/generations/:task_id"} onChange={(event) => updateAdvanced({ queryPath: event.target.value })} />
                     </LabeledControl>
                     <LabeledControl label="结果字段">
@@ -355,11 +369,127 @@ export function SystemChannelEditor({
                             </Button>
                         ))}
                     </div>
-                    <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">检测会自动填写高级设置；部分视频专用渠道没有模型列表接口，手动填入模型名称后可直接单测视频，不影响已配置的生成接口。</div>
+                    <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。</div>
                 </div>
             </details>
         </div>
     );
+}
+
+function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: SystemModelChannel; advanced: SystemChannelAdvancedConfig; onChange: (patch: Partial<SystemChannelAdvancedConfig>) => void }) {
+    const [selected, setSelected] = useState("");
+    const selectedModel = channel.models.some((model) => normalizeModelId(model) === normalizeModelId(selected)) ? channel.models.find((model) => normalizeModelId(model) === normalizeModelId(selected)) || "" : channel.models[0] || "";
+    const key = normalizeModelId(selectedModel);
+    const stored = key ? advanced.modelConfigs?.[key] : undefined;
+    const config: SystemChannelModelConfig | undefined = selectedModel ? stored || { capability: channelModelCapability(channel, selectedModel) } : undefined;
+    const update = (patch: Partial<SystemChannelModelConfig>) => {
+        if (!key || !config) return;
+        const next = { ...config, ...patch, source: "manual" as const };
+        onChange({
+            modelCapabilities: { ...(advanced.modelCapabilities || {}), [key]: next.capability },
+            modelConfigs: { ...(advanced.modelConfigs || {}), [key]: next },
+        });
+    };
+    const clearRoutes = () => {
+        if (!key || !config) return;
+        const next = { ...(advanced.modelConfigs || {}) };
+        delete next[key];
+        onChange({ modelConfigs: next, modelCapabilities: { ...(advanced.modelCapabilities || {}), [key]: config.capability } });
+    };
+
+    return (
+        <div className="rounded-md border border-stone-200 bg-white/70 p-3 md:col-span-2 dark:border-stone-800 dark:bg-stone-950/50">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                    <div className="text-xs font-semibold text-stone-800 dark:text-stone-100">模型级路由</div>
+                    <div className="mt-1 text-[11px] leading-5 text-stone-500 dark:text-stone-400">同一公司接口包含多种能力时，每个模型独立保存协议与路径。</div>
+                </div>
+                {stored ? (
+                    <Button type="text" size="small" onClick={clearRoutes}>
+                        清除专属路径
+                    </Button>
+                ) : null}
+            </div>
+            {config ? (
+                <>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <LabeledControl label="模型">
+                            <Select className="w-full" showSearch optionFilterProp="label" value={selectedModel} options={channel.models.map((model) => ({ label: model, value: model }))} onChange={setSelected} />
+                        </LabeledControl>
+                        <LabeledControl label="能力">
+                            <Select className="w-full" value={config.capability} options={modelCapabilityOptions} onChange={(capability) => update({ capability })} />
+                        </LabeledControl>
+                        <LabeledControl label="API 格式">
+                            <Select
+                                className="w-full"
+                                allowClear
+                                placeholder="沿用渠道"
+                                value={config.apiFormat}
+                                options={[
+                                    { label: "OpenAI", value: "openai" },
+                                    { label: "Gemini", value: "gemini" },
+                                ]}
+                                onChange={(apiFormat) => update({ apiFormat })}
+                            />
+                        </LabeledControl>
+                        <LabeledControl label="协议">
+                            <Select className="w-full" allowClear placeholder="沿用渠道" value={config.protocol} options={channelProtocolOptions} onChange={(protocol) => update({ protocol })} />
+                        </LabeledControl>
+                        <LabeledControl label="创建路径">
+                            <Input
+                                value={config.createPath || ""}
+                                placeholder={config.capability === "text" ? "/chat/completions" : config.capability === "video" ? "/videos" : "/images/generations"}
+                                onChange={(event) => update({ createPath: event.target.value })}
+                            />
+                        </LabeledControl>
+                        <LabeledControl label="查询路径">
+                            <Input value={config.queryPath || ""} placeholder="/videos/:task_id" onChange={(event) => update({ queryPath: event.target.value })} />
+                        </LabeledControl>
+                        <LabeledControl label="结果字段">
+                            <Input value={config.resultField || ""} placeholder="video_url / data[0].url" onChange={(event) => update({ resultField: event.target.value })} />
+                        </LabeledControl>
+                        <LabeledControl label="状态字段">
+                            <Input value={config.statusField || ""} placeholder="status / state" onChange={(event) => update({ statusField: event.target.value })} />
+                        </LabeledControl>
+                    </div>
+                    <details className="mt-3 border-t border-stone-200 pt-2 dark:border-stone-800">
+                        <summary className="cursor-pointer text-xs font-medium text-stone-600 dark:text-stone-300">请求模板与参考素材</summary>
+                        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                            <div className="sm:col-span-2">
+                                <LabeledControl label="请求字段模板">
+                                    <Input.TextArea rows={3} value={config.requestTemplate || ""} placeholder='{"model":"{{model}}","prompt":"{{prompt}}"}' onChange={(event) => update({ requestTemplate: event.target.value })} />
+                                </LabeledControl>
+                            </div>
+                            <div className="sm:col-span-2 flex flex-wrap gap-4 text-xs text-stone-600 dark:text-stone-300">
+                                <Checkbox checked={config.supportsReferenceImage === true} onChange={(event) => update({ supportsReferenceImage: event.target.checked })}>
+                                    参考图片
+                                </Checkbox>
+                                <Checkbox checked={config.supportsReferenceVideo === true} onChange={(event) => update({ supportsReferenceVideo: event.target.checked })}>
+                                    参考视频
+                                </Checkbox>
+                                <Checkbox checked={config.supportsReferenceAudio === true} onChange={(event) => update({ supportsReferenceAudio: event.target.checked })}>
+                                    参考音频
+                                </Checkbox>
+                            </div>
+                        </div>
+                    </details>
+                </>
+            ) : (
+                <div className="mt-3 text-xs text-stone-500 dark:text-stone-400">拉取或手动添加模型后可设置独立路由。</div>
+            )}
+        </div>
+    );
+}
+
+function channelCapabilitySummary(channel: SystemModelChannel) {
+    const counts = channel.models.reduce((result, model) => ({ ...result, [channelModelCapability(channel, model)]: result[channelModelCapability(channel, model)] + 1 }), { text: 0, image: 0, video: 0, audio: 0 } as Record<
+        LogicalModelCapability,
+        number
+    >);
+    return modelCapabilityOptions
+        .filter(({ value }) => counts[value])
+        .map(({ value }) => `${capabilityLabel(value)} ${counts[value]}`)
+        .join(" · ");
 }
 
 function ChannelCapabilitySummary({ channel, results }: { channel: SystemModelChannel; results: ChannelHealthResult[] }) {

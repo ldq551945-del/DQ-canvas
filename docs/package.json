@@ -1,11 +1,11 @@
 {
   "name": "vozeb-pro-docs",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "next dev",
-    "start": "next start",
+    "dev": "next dev -p 3001",
+    "start": "next start -p 3001",
     "generate:source": "node --input-type=module -e \"import { postInstall } from 'fumadocs-mdx/next'; await postInstall();\"",
     "types:check": "next typegen && npm run generate:source && tsc --noEmit",
     "postinstall": "npm run generate:source"

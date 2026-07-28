@@ -1,8 +1,9 @@
-import { ArrowRight, CheckCircle2, ExternalLink, ShieldCheck } from "lucide-react";
+import { ArrowRight, CheckCircle2, ExternalLink, ShieldCheck, UsersRound } from "lucide-react";
 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { GitHubLink } from "@/components/layout/github-link";
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
+import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 import { APP_VERSION } from "@/constant/env";
 
 export function UpdateCenterPanel() {
@@ -35,6 +36,15 @@ export function UpdateCenterPanel() {
                                     >
                                         <ExternalLink className="size-4" />
                                         打开 Release
+                                    </a>
+                                    <a
+                                        href={VOZEB_QQ_GROUP_URL}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="admin-update-secondary-link col-span-2 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition sm:col-auto sm:h-10 sm:gap-2 sm:rounded-xl sm:px-4 sm:text-sm"
+                                    >
+                                        <UsersRound className="size-4" />
+                                        加入 QQ 群
                                     </a>
                                 </div>
                             </div>

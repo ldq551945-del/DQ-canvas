@@ -1,31 +1,20 @@
 "use client";
 
 import { useMemo } from "react";
-import * as ReactQuery from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import { ALL_PROMPTS_OPTION, fetchPrompts, type PromptListResponse } from "@/services/api/prompts";
 
 const PROMPT_PAGE_SIZE = 20;
-const usePagedPromptQuery = (ReactQuery as Record<string, any>)[`use${"In"}finiteQuery`];
-
-type PromptListQuery = {
-    data?: { pages: PromptListResponse[] };
-    error: unknown;
-    isError: boolean;
-    isLoading: boolean;
-    hasNextPage: boolean;
-    isFetchingNextPage: boolean;
-    fetchNextPage: () => Promise<unknown>;
-};
 
 export function usePromptList({ keyword, tags, category, enabled = true }: { keyword: string; tags: string[]; category: string; enabled?: boolean }) {
-    const query = usePagedPromptQuery({
+    const query = useInfiniteQuery({
         queryKey: ["prompts", keyword, tags, category],
         queryFn: ({ pageParam }: { pageParam: number }) => fetchPrompts({ keyword, tag: tags, category, page: pageParam, pageSize: PROMPT_PAGE_SIZE }),
         initialPageParam: 1,
         getNextPageParam: (lastPage: PromptListResponse, pages: PromptListResponse[]) => (pages.reduce((total, page) => total + page.items.length, 0) < lastPage.total ? pages.length + 1 : undefined),
         enabled,
-    }) as PromptListQuery;
+    });
     const firstPage = query.data?.pages[0];
     return {
         query,
@@ -33,5 +22,27 @@ export function usePromptList({ keyword, tags, category, enabled = true }: { key
         tags: useMemo(() => [ALL_PROMPTS_OPTION, ...(firstPage?.tags || [])], [firstPage?.tags]),
         categories: useMemo(() => [ALL_PROMPTS_OPTION, ...(firstPage?.categories || [])], [firstPage?.categories]),
         total: firstPage?.total || 0,
+    };
+}
+
+export function usePromptPage({ keyword, tag, category, page, pageSize = 16 }: { keyword: string; tag: string; category: string; page: number; pageSize?: number }) {
+    const query = useQuery({
+        queryKey: ["prompts", "page", keyword, tag, category, page, pageSize],
+        queryFn: () =>
+            fetchPrompts({
+                keyword,
+                tag: tag === ALL_PROMPTS_OPTION ? [] : [tag],
+                category,
+                page,
+                pageSize,
+            }),
+        placeholderData: (previous) => previous,
+    });
+    return {
+        query,
+        items: query.data?.items || [],
+        tags: [ALL_PROMPTS_OPTION, ...(query.data?.tags || [])],
+        categories: [ALL_PROMPTS_OPTION, ...(query.data?.categories || [])],
+        total: query.data?.total || 0,
     };
 }

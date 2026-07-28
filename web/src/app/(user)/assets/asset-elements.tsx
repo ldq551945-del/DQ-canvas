@@ -1,8 +1,8 @@
 "use client";
 
-import { Copy, Download, PencilLine, Search, Trash2, Upload } from "lucide-react";
+import { Copy, Download, PencilLine, Search, Share2, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent } from "react";
-import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
+import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -15,7 +15,23 @@ import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/st
 import { useUserStore } from "@/stores/use-user-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 
-export function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { asset: Asset; onOpen: () => void; onEdit: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void; onDelete: () => void }) {
+export function AssetCard({
+    asset,
+    onOpen,
+    onEdit,
+    onCopy,
+    onDownload,
+    onDelete,
+    onPublish,
+}: {
+    asset: Asset;
+    onOpen: () => void;
+    onEdit: () => void;
+    onCopy: (asset: Asset) => void;
+    onDownload: (asset: Asset) => void;
+    onDelete: () => void;
+    onPublish?: () => void;
+}) {
     const cover = asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "");
     const summary = assetSummary(asset);
     return (
@@ -57,7 +73,7 @@ export function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete 
                     </div>
                 </div>
             </button>
-            <div className="flex items-center gap-1 px-2 pb-2 sm:gap-2 sm:px-4 sm:pb-4">
+            <div className="flex flex-wrap items-center gap-1 px-2 pb-2 sm:gap-2 sm:px-4 sm:pb-4">
                 <Button size="small" onClick={onOpen}>
                     查看
                 </Button>
@@ -75,6 +91,11 @@ export function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete 
                     <Button size="small" icon={<Download className="size-3.5" />} onClick={() => onDownload(asset)}>
                         下载
                     </Button>
+                ) : null}
+                {onPublish ? (
+                    <Tooltip title="发布作品">
+                        <Button size="small" shape="circle" icon={<Share2 className="size-3.5" />} onClick={onPublish} aria-label={`发布 ${asset.title}`} />
+                    </Tooltip>
                 ) : null}
                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={onDelete}>
                     删除

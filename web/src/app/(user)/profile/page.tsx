@@ -13,6 +13,8 @@ import { downloadUserDataExport } from "@/services/api/user-data-export";
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 import { AccountDeletionPanel } from "./account-deletion-panel";
+import { CouponWalletSection } from "./profile-coupon-wallet";
+import { ProfileReferralCenter } from "./profile-referral-center";
 
 import {
     ProfileSectionKey,
@@ -22,6 +24,7 @@ import {
     profileDangerButtonClass,
     ProfileSectionNav,
     BillingCenterSection,
+    AccountEmailForm,
     ProfileForm,
     OrderList,
     AccountMetric,
@@ -41,15 +44,17 @@ export default function ProfilePage() {
     const requestedSection = parseProfileSection(searchParams.get("section"));
     const [activeSection, setActiveSection] = useState<ProfileSectionKey>(requestedSection);
     const [displayName, setDisplayName] = useState("");
+    const [bio, setBio] = useState("");
     const [email, setEmail] = useState("");
     const [emailCode, setEmailCode] = useState("");
     const [currentPassword, setCurrentPassword] = useState("");
     const [newPassword, setNewPassword] = useState("");
     const [savingProfile, setSavingProfile] = useState(false);
+    const [savingEmail, setSavingEmail] = useState(false);
     const [sendingCode, setSendingCode] = useState(false);
     const [savingPassword, setSavingPassword] = useState(false);
     const [exportingData, setExportingData] = useState(false);
-    const { products, orders, points, consumption, loading: accountLoading, refresh: refreshAccount } = useProfileData(activeSection);
+    const { products, coupons, orders, points, consumption, loading: accountLoading, refresh: refreshAccount } = useProfileData(activeSection);
 
     const boundEmail = user?.email || "";
     const emailChanged = email.trim().toLowerCase() !== boundEmail.toLowerCase();
@@ -61,6 +66,7 @@ export default function ProfilePage() {
     useEffect(() => {
         if (!user) return;
         setDisplayName(user.displayName || user.username);
+        setBio(user.bio || "");
         setEmail(user.email || "");
     }, [user]);
 
@@ -75,7 +81,7 @@ export default function ProfilePage() {
             const response = await fetch("/api/auth/profile", {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ displayName, email, emailCode }),
+                body: JSON.stringify({ displayName, bio }),
             });
             const payload = (await response.json()) as { user?: LocalUser; error?: string };
             if (!response.ok || !payload.user) throw new Error(payload.error || "保存个人资料失败");
@@ -86,6 +92,27 @@ export default function ProfilePage() {
             message.error(error instanceof Error ? error.message : "保存个人资料失败");
         } finally {
             setSavingProfile(false);
+        }
+    };
+
+    const saveEmail = async () => {
+        if (!emailChanged || savingEmail) return;
+        setSavingEmail(true);
+        try {
+            const response = await fetch("/api/auth/profile", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, emailCode }),
+            });
+            const payload = (await response.json()) as { user?: LocalUser; error?: string };
+            if (!response.ok || !payload.user) throw new Error(payload.error || "邮箱更新失败");
+            setUser(payload.user);
+            setEmailCode("");
+            message.success("邮箱已更新");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "邮箱更新失败");
+        } finally {
+            setSavingEmail(false);
         }
     };
 
@@ -150,7 +177,7 @@ export default function ProfilePage() {
                 <div className="mb-1 flex items-center justify-end gap-1.5 sm:mb-5 sm:justify-between sm:gap-3 sm:rounded-xl sm:border sm:border-border sm:bg-card sm:p-6 sm:text-card-foreground">
                     <div className="hidden min-w-0 sm:block">
                         <h1 className="text-lg font-semibold text-stone-950 sm:text-2xl dark:text-white">个人中心</h1>
-                        <p className="mt-2 hidden max-w-2xl text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">个人资料、套餐购买、订单记录、消费记录和积分流水统一放在一个用户后台里。</p>
+                        <p className="mt-2 hidden max-w-2xl text-sm leading-6 text-stone-500 sm:block dark:text-stone-400">个人资料、套餐优惠、订单记录、消费记录和积分流水统一放在一个用户后台里。</p>
                     </div>
                     <div className="flex shrink-0 gap-2">
                         <Button size="small" className={profileSecondaryButtonClass} icon={<RefreshCw className="size-3.5 sm:size-4" />} loading={accountLoading} onClick={() => void refreshAccount()}>
@@ -199,22 +226,8 @@ export default function ProfilePage() {
                         ) : null}
 
                         {activeSection === "profile" ? (
-                            <AccountPanel title="个人资料" description="修改昵称、绑定邮箱，邮箱可用于找回密码和登录。">
-                                <ProfileForm
-                                    user={user}
-                                    boundEmail={boundEmail}
-                                    emailChanged={emailChanged}
-                                    displayName={displayName}
-                                    email={email}
-                                    emailCode={emailCode}
-                                    sendingCode={sendingCode}
-                                    savingProfile={savingProfile}
-                                    onDisplayNameChange={setDisplayName}
-                                    onEmailChange={setEmail}
-                                    onEmailCodeChange={setEmailCode}
-                                    onSendEmailCode={() => void sendEmailCode()}
-                                    onSave={() => void saveProfile()}
-                                />
+                            <AccountPanel title="个人资料" description="更换头像、修改显示昵称和个人简介。">
+                                <ProfileForm user={user} displayName={displayName} bio={bio} savingProfile={savingProfile} onDisplayNameChange={setDisplayName} onBioChange={setBio} onSave={() => void saveProfile()} />
                             </AccountPanel>
                         ) : null}
 
@@ -226,6 +239,10 @@ export default function ProfilePage() {
                                 onCheckout={(product) => router.push(`/billing/checkout?product=${encodeURIComponent(product.id)}`)}
                             />
                         ) : null}
+
+                        {activeSection === "coupons" ? <CouponWalletSection coupons={coupons.items} templates={coupons.templates} total={coupons.total} loading={coupons.loading} onRefresh={coupons.refresh} /> : null}
+
+                        {activeSection === "referrals" ? <ProfileReferralCenter /> : null}
 
                         {activeSection === "orders" ? (
                             <AccountPanel title="订单记录" description="查看充值订单、支付渠道、订单状态和套餐开通结果。">
@@ -264,9 +281,26 @@ export default function ProfilePage() {
                         ) : null}
 
                         {activeSection === "security" ? (
-                            <AccountPanel title="账号安全" description="修改密码后会退出当前登录，需要重新登录。">
+                            <AccountPanel title="账户与安全" description="管理绑定邮箱、登录密码和个人数据。">
                                 <div className="max-w-2xl space-y-6">
-                                    <div className="max-w-xl space-y-4">
+                                    <AccountEmailForm
+                                        boundEmail={boundEmail}
+                                        emailChanged={emailChanged}
+                                        email={email}
+                                        emailCode={emailCode}
+                                        sendingCode={sendingCode}
+                                        savingEmail={savingEmail}
+                                        onEmailChange={setEmail}
+                                        onEmailCodeChange={setEmailCode}
+                                        onSendEmailCode={() => void sendEmailCode()}
+                                        onSave={() => void saveEmail()}
+                                    />
+
+                                    <div className="max-w-xl space-y-4 border-t border-stone-200 pt-5 dark:border-stone-800">
+                                        <div>
+                                            <h3 className="text-sm font-semibold text-stone-950 dark:text-white">登录密码</h3>
+                                            <p className="mt-1 text-sm leading-6 text-stone-500 dark:text-stone-400">修改密码后会退出当前登录，需要使用新密码重新登录。</p>
+                                        </div>
                                         <label className="block space-y-2">
                                             <span className="text-sm font-medium text-stone-700 dark:text-stone-200">当前密码</span>
                                             <Input.Password value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />

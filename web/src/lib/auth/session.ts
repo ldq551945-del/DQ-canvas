@@ -67,9 +67,12 @@ function shouldUseSecureSessionCookie(request?: Request) {
 export function serializeCurrentUser(user: CurrentUser) {
     return {
         id: user.id,
+        accountId: user.accountId,
         username: user.username,
         email: user.email,
         displayName: user.displayName,
+        bio: user.bio,
+        avatarUrl: user.avatarUrl,
         role: user.role,
         status: user.status,
         planId: user.planId,

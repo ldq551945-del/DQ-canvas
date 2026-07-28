@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, type AuthenticatedUserRecord, withPostgresTransaction } from "@/lib/server/database";
+import { inferModelCapability } from "@/lib/model-capability";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import { adjustPermanentPointsInAuthDb, consumePoints, creditPermanentPointsInAuthDb, refundPoints, walletClock } from "@/lib/server/points-wallet-service";
 import { hashPassword, verifyPassword } from "./password";
 import {
@@ -32,6 +33,8 @@ import {
     type StoredCdkRedemption,
     type StoredCdkCode,
     type PublicAnnouncement,
+    type AnnouncementPage,
+    type AnnouncementPageInput,
     type SiteSettings,
     type SiteShowcaseMode,
     type SiteShowcaseItem,
@@ -43,12 +46,10 @@ import {
     type MailSettings,
     type PublicUser,
     type PublicUserSummary,
-    type StoredUser,
     type StoredSession,
     type PublicPointRecord,
     type StoredPointRecord,
     type StoredQuotaUsage,
-    type EmailCodePurpose,
     type StoredEmailCode,
     type AuthSettings,
     type AuthDatabase,
@@ -60,15 +61,12 @@ import {
     isAuthInputError,
     isQuotaExceededError,
     SESSION_MAX_AGE_SECONDS,
-    EMAIL_CODE_MAX_AGE_MS,
-    EMAIL_CODE_RESEND_COOLDOWN_MS,
     DEFAULT_MODEL_POINT_COST_KEY,
     DEFAULT_SITE_SETTINGS,
     DEFAULT_MAIL_SETTINGS,
     DEFAULT_GENERATION_POINT_MULTIPLIERS,
     DEFAULT_ENTITLEMENT_LIMITS,
     DEFAULT_ENTITLEMENT_PLAN_ID,
-    DEFAULT_ENTITLEMENT_SETTINGS,
     DEFAULT_SETTINGS,
     AUTH_DATA_FILE,
     USERNAME_PATTERN,
@@ -79,7 +77,7 @@ import {
     mutateAuthDb,
     writeAuthDb,
     readPostgresAuthDb,
-    readPostgresAnnouncements,
+    readPostgresAnnouncementsPage,
     readPostgresAuthSettings,
     readPostgresCdkListData,
     readPostgresPublicUserData,
@@ -125,7 +123,6 @@ import {
     decryptAuthSettingsSecrets,
     encryptAuthSettingsSecrets,
     pruneExpiredSessions,
-    resolveInitialUserPoints,
     resolveDefaultPlan,
     resolveUserPlan,
     resolvePlanById,
@@ -136,9 +133,9 @@ import {
     resolveDailyUsageLimit,
     dailyUsageLimitLabel,
     countActiveAdmins,
-    normalizeUsername,
     normalizeEmail,
     normalizeDisplayName,
+    normalizeUserBio,
     normalizeSettings,
     normalizeLogicalModels,
     deriveLogicalModels,
@@ -196,13 +193,15 @@ import {
     addPointRecord,
     normalizeEmailCode,
     consumeEmailCode,
-    validateUsername,
     validateEmail,
     validatePassword,
     parseSessionCookie,
     hashToken,
-    randomNumericCode,
 } from "./store-normalizers";
+import { matchesPublicUser, publicUserFromAuthenticatedRecord, summarizePublicUsers, toPublicUser } from "./store-user-projection";
+
+export { authenticateUser, createEmailVerificationCode, createUser, createUserByAdmin } from "./store-user-access";
+export { toPublicUser };
 
 export function sessionMaxAgeSeconds() {
     return SESSION_MAX_AGE_SECONDS;
@@ -324,6 +323,23 @@ export async function getPublicUsersByIds(userIds: string[]): Promise<PublicUser
     return db.users.filter((user) => idSet.has(user.id)).map((user) => toPublicUser(user, db));
 }
 
+export async function findPublicUserIdsByKeyword(value: string, limit = 100): Promise<string[]> {
+    const keyword = normalizeText(value, "", 120).toLowerCase();
+    if (!keyword) return [];
+    const pageSize = Math.max(1, Math.min(100, Math.floor(limit)));
+    if (isPostgresDatabaseEnabled()) {
+        await ensurePostgresSchema();
+        const result = await createPostgresRepositories().users.list({ page: 1, pageSize, keyword });
+        return result.items.map((user) => user.id);
+    }
+    const db = await readAuthDb();
+    return db.users
+        .map((user) => toPublicUser(user, db))
+        .filter((user) => matchesPublicUser(user, { keyword }))
+        .slice(0, pageSize)
+        .map((user) => user.id);
+}
+
 export type PointRecordListResult = {
     records: PublicPointRecord[];
     total: number;
@@ -406,7 +422,7 @@ export async function listCdkCodes(input?: { page?: number; pageSize?: number; k
         const matchedFilter = filter === "all" || (filter === "redeemed" && code.redeemedCount > 0) || (filter === "unused" && !isCdkCodeExpired(code) && code.redeemedCount <= 0) || (filter === "expired" && isCdkCodeExpired(code));
         if (!matchedFilter) return false;
         if (!keyword) return true;
-        const redemptionsText = code.redemptions.map((item) => `${item.username} ${item.displayName}`).join(" ");
+        const redemptionsText = code.redemptions.map((item) => `${item.accountId || ""} ${item.username} ${item.displayName}`).join(" ");
         return [code.code || "", code.note, redemptionsText].some((value) => value.toLowerCase().includes(keyword));
     });
     const total = filtered.length;
@@ -529,8 +545,23 @@ export async function redeemCdkCode(userId: string, rawCode: string) {
 }
 
 export async function listAnnouncements(includeDisabled = false) {
-    const announcements = isPostgresDatabaseEnabled() ? await readPostgresAnnouncements() : (await readAuthDb()).announcements;
-    return announcements.filter((announcement) => includeDisabled || isAnnouncementVisible(announcement)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    return (await listAnnouncementsPage(includeDisabled, { page: 1, pageSize: 100 })).items;
+}
+
+export async function listAnnouncementsPage(includeDisabled = false, input: AnnouncementPageInput = {}): Promise<AnnouncementPage> {
+    const requestedPage = Number(input.page);
+    const requestedPageSize = Number(input.pageSize);
+    const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+    const pageSize = Number.isSafeInteger(requestedPageSize) && requestedPageSize > 0 ? Math.min(100, requestedPageSize) : 20;
+    if (isPostgresDatabaseEnabled()) return readPostgresAnnouncementsPage({ includeDisabled, page, pageSize });
+
+    const announcements = (await readAuthDb()).announcements.filter((announcement) => includeDisabled || isAnnouncementVisible(announcement)).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id.localeCompare(a.id));
+    return {
+        items: announcements.slice((page - 1) * pageSize, page * pageSize),
+        total: announcements.length,
+        page,
+        pageSize,
+    };
 }
 
 export async function createAnnouncement(input: Partial<PublicAnnouncement>) {
@@ -597,9 +628,8 @@ export function displayPointRecordDescription(record: StoredPointRecord) {
 }
 
 export function legacyPointUsageKindFromModel(model: string): PointUsageKind {
-    const lower = model.toLowerCase();
-    if (/(video|seedance|sora|veo|kling|wan|hailuo|runway|luma)/.test(lower)) return "video";
-    if (/(image|imagen|gpt-image|dall|flux|midjourney|sdxl|stable-diffusion)/.test(lower)) return "image";
+    const capability = inferModelCapability(model);
+    if (capability !== "text") return capability;
     return "api";
 }
 
@@ -682,155 +712,29 @@ export async function refundUserPoints(userId: string, model: string, amount: nu
     return nextUser ? { ...toPublicUser(nextUser, nextDb), pointsBalance: result.snapshot.totalPoints } : null;
 }
 
-export async function createUser(input: { username: string; email?: string; emailCode?: string; displayName?: string; password: string }) {
-    return mutateAuthDb((db) => {
-        const username = normalizeUsername(input.username);
-        const email = normalizeEmail(input.email);
-        const displayName = normalizeDisplayName(input.displayName || username);
-        validateUsername(username);
-        validatePassword(input.password);
-
-        const firstUser = db.users.length === 0;
-        if (!firstUser && !db.settings.registrationEnabled) throw new AuthInputError("注册已关闭");
-        if (!firstUser && db.settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
-        if (email) validateEmail(email);
-        if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
-        if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
-        if (!firstUser && db.settings.emailRegistrationEnabled) consumeEmailCode(db, { purpose: "register", email, code: input.emailCode });
-
-        const now = new Date().toISOString();
-        const user: StoredUser = {
-            id: randomUUID(),
-            username,
-            email: email || undefined,
-            displayName,
-            role: firstUser ? "admin" : "user",
-            status: "active",
-            planId: resolveDefaultPlan(db.settings.entitlements).id,
-            pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
-            createdAt: now,
-            updatedAt: now,
-        };
-        db.users.push(user);
-        return toPublicUser(user, db);
-    });
-}
-
-export async function createUserByAdmin(input: { username: string; email?: string; displayName?: string; password: string; role?: UserRole; status?: UserStatus; pointsBalance?: number; planId?: string }) {
-    return mutateAuthDb((db) => {
-        const username = normalizeUsername(input.username);
-        const email = normalizeEmail(input.email);
-        const displayName = normalizeDisplayName(input.displayName || username);
-        validateUsername(username);
-        validatePassword(input.password);
-        if (email) validateEmail(email);
-        if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
-        if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
-
-        const now = new Date().toISOString();
-        const plan = resolvePlanById(db.settings.entitlements, input.planId);
-        const pointsBalance = normalizePoints(input.pointsBalance, resolveInitialUserPoints(db, plan));
-        const intendedStatus = input.status === "disabled" ? "disabled" : "active";
-        const user: StoredUser = {
-            id: randomUUID(),
-            username,
-            email: email || undefined,
-            displayName,
-            role: input.role === "admin" ? "admin" : "user",
-            status: "active",
-            planId: plan.id,
-            pointsBalance: 0,
-            passwordHash: hashPassword(input.password),
-            createdAt: now,
-            updatedAt: now,
-        };
-        db.users.push(user);
-        const wallet = pointsBalance ? adjustPermanentPointsInAuthDb(db, { userId: user.id, amount: pointsBalance, description: "管理员创建用户", idempotencyKey: `admin-create:${user.id}`, now: new Date(now) }) : null;
-        user.status = intendedStatus;
-        return { ...toPublicUser(user, db), pointsBalance: wallet?.snapshot.totalPoints || 0 };
-    });
-}
-
-export async function authenticateUser(input: { username: string; password: string }) {
-    const account = normalizeUsername(input.username);
-    const accountEmail = normalizeEmail(input.username);
-    if (isPostgresDatabaseEnabled()) {
+export async function updateOwnProfile(userId: string, input: { displayName?: string; bio?: string; email?: string; emailCode?: string }) {
+    if (isPostgresDatabaseEnabled() && input.email === undefined) {
         await ensurePostgresSchema();
-        const repos = createPostgresRepositories();
-        const user = await repos.users.getByLogin(account, accountEmail || undefined);
-        if (!user || !verifyPassword(input.password, user.passwordHash)) throw new AuthInputError("用户名或密码不正确");
-        if (user.status !== "active") throw new AuthInputError("账号已被禁用");
-
-        const lastLoginAt = new Date().toISOString();
-        const updatedUser = await repos.users.update(user.id, { lastLoginAt });
         const clock = walletClock();
-        const details = await repos.users.getPublicDetails([user.id], { now: clock.now.toISOString(), date: clock.date });
-        const snapshot = details[0];
-        return snapshot ? publicUserFromAuthenticatedRecord(snapshot, clock.expiresAt) : toPublicUser({ ...(updatedUser || user), lastLoginAt });
-    }
-    const db = await readAuthDb();
-    const user = db.users.find((item) => item.username.toLowerCase() === account.toLowerCase() || (accountEmail && item.email?.toLowerCase() === accountEmail));
-    if (!user || !verifyPassword(input.password, user.passwordHash)) throw new AuthInputError("用户名或密码不正确");
-    if (user.status !== "active") throw new AuthInputError("账号已被禁用");
-
-    await mutateAuthDb((nextDb) => {
-        const nextUser = nextDb.users.find((item) => item.id === user.id);
-        if (nextUser) {
-            nextUser.lastLoginAt = new Date().toISOString();
-            nextUser.updatedAt = nextUser.lastLoginAt;
-        }
-    });
-
-    return toPublicUser({ ...user, lastLoginAt: new Date().toISOString() }, db);
-}
-
-export async function createEmailVerificationCode(input: { purpose: EmailCodePurpose; email: string; userId?: string }) {
-    return mutateAuthDb((db) => {
-        const email = normalizeEmail(input.email);
-        validateEmail(email);
-        const now = new Date();
-
-        if (input.purpose === "register") {
-            if (!db.settings.emailRegistrationEnabled) throw new AuthInputError("当前未开启邮箱注册");
-            if (db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
-        }
-
-        if (input.purpose === "email-change") {
-            if (!input.userId) throw new AuthInputError("请先登录");
-            if (db.users.some((user) => user.id !== input.userId && user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
-        }
-
-        if (input.purpose === "password-reset" && !db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) {
-            throw new AuthInputError("没有找到绑定该邮箱的账号");
-        }
-
-        const code = randomNumericCode();
-        const activeCode = db.emailCodes.find((item) => item.purpose === input.purpose && item.email === email && item.userId === input.userId && !item.consumedAt && Date.parse(item.expiresAt) > now.getTime());
-        if (activeCode && now.getTime() - Date.parse(activeCode.createdAt) < EMAIL_CODE_RESEND_COOLDOWN_MS) {
-            throw new AuthInputError("验证码发送过于频繁，请 60 秒后再试");
-        }
-        db.emailCodes = db.emailCodes.filter((item) => !(item.purpose === input.purpose && item.email === email && item.userId === input.userId && !item.consumedAt));
-        db.emailCodes.push({
-            id: randomUUID(),
-            purpose: input.purpose,
-            email,
-            userId: input.userId,
-            codeHash: hashToken(code),
-            createdAt: now.toISOString(),
-            expiresAt: new Date(now.getTime() + EMAIL_CODE_MAX_AGE_MS).toISOString(),
-            attempts: 0,
+        const record = await withPostgresTransaction(async (client) => {
+            const users = createPostgresRepositories(client).users;
+            const current = await users.getById(userId, true);
+            if (!current || current.status !== "active") throw new AuthInputError("用户不可用");
+            await users.update(userId, {
+                displayName: input.displayName === undefined ? undefined : normalizeDisplayName(input.displayName || current.username),
+                bio: input.bio === undefined ? undefined : normalizeUserBio(input.bio),
+            });
+            return (await users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
         });
-        return { code, email };
-    });
-}
-
-export async function updateOwnProfile(userId: string, input: { displayName?: string; email?: string; emailCode?: string }) {
+        if (!record) throw new AuthInputError("用户不可用");
+        return publicUserFromAuthenticatedRecord(record, clock.expiresAt);
+    }
     return mutateAuthDb((db) => {
         const user = db.users.find((item) => item.id === userId);
         if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
 
         if (input.displayName !== undefined) user.displayName = normalizeDisplayName(input.displayName || user.username);
+        if (input.bio !== undefined) user.bio = normalizeUserBio(input.bio);
 
         if (input.email !== undefined) {
             const email = normalizeEmail(input.email);
@@ -1023,72 +927,4 @@ export async function deleteUserByAdmin(actorId: string, userId: string) {
         db.emailCodes = db.emailCodes.filter((code) => code.userId !== user.id);
         return { ok: true };
     });
-}
-
-export function toPublicUser(user: StoredUser, db?: Pick<AuthDatabase, "settings" | "dailyPlanPointWallets">): PublicUser {
-    const plan = db ? resolveUserPlan(db, user) : DEFAULT_ENTITLEMENT_SETTINGS.plans[0];
-    const clock = walletClock();
-    const defaultPlan = db ? resolveDefaultPlan(db.settings.entitlements) : DEFAULT_ENTITLEMENT_SETTINGS.plans[0];
-    const freePlan = plan.id === defaultPlan.id;
-    const dailyEnabled = Boolean(plan.enabled && (!freePlan || db?.settings.freeDailyPointsEnabled));
-    const wallet = dailyEnabled ? db?.dailyPlanPointWallets.find((item) => item.userId === user.id && item.date === clock.date) : undefined;
-    const configuredDailyPoints = db && freePlan ? db.settings.freeDailyPoints : plan.dailyPoints;
-    const dailyPoints = dailyEnabled ? (wallet?.remainingPoints ?? Math.max(0, normalizePoints(configuredDailyPoints, 0))) : 0;
-    return buildPublicUser(
-        user,
-        { id: plan.id, name: plan.name },
-        {
-            permanentPoints: normalizePoints(user.pointsBalance, 0),
-            dailyPoints,
-            dailyPointsExpiresAt: clock.expiresAt,
-        },
-    );
-}
-
-function publicUserFromAuthenticatedRecord(record: AuthenticatedUserRecord, dailyPointsExpiresAt = walletClock().expiresAt) {
-    const fallbackPlan = DEFAULT_ENTITLEMENT_SETTINGS.plans[0];
-    return buildPublicUser(record.user, { id: record.planId || fallbackPlan.id, name: record.planName || fallbackPlan.name }, { permanentPoints: record.permanentPoints, dailyPoints: record.dailyPoints, dailyPointsExpiresAt });
-}
-
-function buildPublicUser(user: StoredUser, plan: { id: string; name: string }, wallet = { permanentPoints: normalizePoints(user.pointsBalance, 0), dailyPoints: 0, dailyPointsExpiresAt: walletClock().expiresAt }): PublicUser {
-    const totalPoints = Math.max(0, normalizePointAmount(wallet.permanentPoints + wallet.dailyPoints, 0));
-    return {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        displayName: user.displayName,
-        role: user.role,
-        status: user.status,
-        planId: plan.id,
-        planName: plan.name,
-        pointsBalance: totalPoints,
-        permanentPointsBalance: normalizePoints(wallet.permanentPoints, 0),
-        dailyPointsBalance: Math.max(0, normalizePoints(wallet.dailyPoints, 0)),
-        dailyPointsExpiresAt: wallet.dailyPointsExpiresAt,
-        createdAt: user.createdAt,
-        updatedAt: user.updatedAt,
-        lastLoginAt: user.lastLoginAt,
-    };
-}
-
-function matchesPublicUser(user: PublicUser, input: { keyword: string; role?: UserRole; status?: UserStatus }) {
-    if (input.role && user.role !== input.role) return false;
-    if (input.status && user.status !== input.status) return false;
-    if (!input.keyword) return true;
-    return [user.displayName, user.username, user.email || "", user.role, user.status, user.role === "admin" ? "管理员" : "普通用户", user.status === "active" ? "可用" : "禁用"].some((value) => value.toLowerCase().includes(input.keyword));
-}
-
-function summarizePublicUsers(users: PublicUser[], defaultPlanId: string): PublicUserSummary {
-    return {
-        total: users.length,
-        active: users.filter((user) => user.status === "active").length,
-        disabled: users.filter((user) => user.status === "disabled").length,
-        admins: users.filter((user) => user.role === "admin").length,
-        activeAdmins: users.filter((user) => user.role === "admin" && user.status === "active").length,
-        usersWithPlan: users.filter((user) => user.planId !== defaultPlanId).length,
-        totalPointsBalance: normalizePointAmount(
-            users.reduce((total, user) => total + Math.max(0, user.pointsBalance), 0),
-            0,
-        ),
-    };
 }

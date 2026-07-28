@@ -55,7 +55,18 @@ describe("workbench Agent progress", () => {
             { id: "assistant", role: "assistant" as const, text: "请补充素材" },
         ];
 
-        expect(appendWorkbenchAgentRequest(messages, "生成商品图", progress).filter((item) => item.role === "user")).toHaveLength(1);
-        expect(appendWorkbenchAgentRequest(messages, "换成竖版", progress).filter((item) => item.role === "user")).toHaveLength(2);
+        expect(appendWorkbenchAgentRequest(messages, "生成商品图", [], progress).filter((item) => item.role === "user")).toHaveLength(1);
+        expect(appendWorkbenchAgentRequest(messages, "换成竖版", [], progress).filter((item) => item.role === "user")).toHaveLength(2);
+    });
+
+    it("keeps the current-turn reference snapshot and does not deduplicate the same text with a different image", () => {
+        const first = { kind: "image" as const, name: "人物一", url: "/api/reference-assets/permanent/one.png", storageKey: "permanent/one.png", mimeType: "image/png" };
+        const second = { kind: "image" as const, name: "人物二", url: "/api/reference-assets/permanent/two.png", storageKey: "permanent/two.png", mimeType: "image/png" };
+        const firstMessages = appendWorkbenchAgentRequest([], "换成白发", [first], createWorkbenchAgentProgressMessage("first", true));
+        const next = appendWorkbenchAgentRequest(firstMessages, "换成白发", [second], createWorkbenchAgentProgressMessage("second", true));
+
+        expect(next.filter((item) => item.role === "user")).toHaveLength(2);
+        expect(next.find((item) => item.id === "first-user")?.attachments).toEqual([first]);
+        expect(next.find((item) => item.id === "second-user")?.attachments).toEqual([second]);
     });
 });

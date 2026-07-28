@@ -25,6 +25,22 @@ describe("Agent Function Call parsing refunds", () => {
         expect(refund).not.toHaveBeenCalled();
     });
 
+    it("drops an invalid project handoff before validating an ordinary generation plan", async () => {
+        const refund = vi.fn().mockResolvedValue(undefined);
+        const plan = {
+            objective: "制作森林女子角色设定图",
+            deliverables: [{ title: "角色设定图", type: "image" as const, prompt: "生成森林女子角色设定图" }],
+            projectHandoff: { surface: "canvas", title: "", ratio: "1:1", assetIds: [""] },
+        };
+
+        await expect(parseAgentPlanCall({ arguments: JSON.stringify(plan) }, refund, undefined, { allowProjectHandoff: false })).resolves.toMatchObject({
+            objective: "制作森林女子角色设定图",
+            projectHandoff: undefined,
+            deliverables: plan.deliverables,
+        });
+        expect(refund).not.toHaveBeenCalled();
+    });
+
     it("accepts a natural-language reply for a known conversation", async () => {
         const refund = vi.fn().mockResolvedValue(undefined);
 

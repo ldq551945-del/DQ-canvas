@@ -1,14 +1,29 @@
 import { NextResponse } from "next/server";
 
+import { AGNES_RECOMMENDED_CONFIG, isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
+import { buildGlobalAiOpcSelection, getGlobalAiOpcPresetForModel, isGlobalAiOpcBaseUrl, resolveGlobalAiOpcCatalogPresets } from "@/lib/globalaiopc-catalog";
+import { inferModelCapability } from "@/lib/model-capability";
+import { isProviderTimeoutError, resolveAdminChannelCredentials, sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
+import {
+    buildModelCatalogUrls,
+    configuredModelCatalog,
+    isModelCatalogUnsupported,
+    mergeModelCatalogEntries,
+    mergeModelConfigs,
+    modelCapabilitiesRecord,
+    nextModelsPageUrl,
+    normalizeModelConfigs,
+    officialModelCatalog,
+    officialModelConfigs,
+    parseModelCatalog,
+    parseModelConfigs,
+} from "@/lib/server/admin-model-catalog";
+import { isProviderBusinessError, readProviderError } from "@/lib/server/provider-task-config";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { isSafeOutboundUrl } from "@/lib/server/security";
-import { isProviderTimeoutError, resolveAdminChannelCredentials, sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
-import { buildModelsUrl, isModelCatalogUnsupported, parseModels } from "@/lib/server/admin-model-catalog";
-import { isProviderBusinessError, readProviderError } from "@/lib/server/provider-task-config";
-import { buildGlobalAiOpcSelection, isGlobalAiOpcBaseUrl, resolveGlobalAiOpcCatalogPresets } from "@/lib/globalaiopc-catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,18 +39,20 @@ type ModelsPayload = {
     globalAiOpcPreset?: unknown;
     globalAiOpcPresets?: unknown;
     createPath?: unknown;
+    modelCatalogPaths?: unknown;
+    configuredModels?: unknown;
+    modelCapabilities?: unknown;
+    modelConfigs?: unknown;
 };
 
-type ModelsResponse = {
-    data?: unknown;
-    models?: unknown;
-    result?: unknown;
+type ModelsResponse = Record<string, unknown> & {
     error?: { message?: string };
     msg?: string;
 };
 
 const MODEL_FETCH_COOLDOWN_MS = 30_000;
 const MODEL_FETCH_TIMEOUT_MS = 60_000;
+const MODEL_FETCH_MAX_PAGES = 20;
 const globalCooldownStore = globalThis as typeof globalThis & { __vozebProModelFetchCooldowns?: Map<string, number> };
 const modelFetchCooldowns = (globalCooldownStore.__vozebProModelFetchCooldowns ??= new Map<string, number>());
 
@@ -47,6 +64,7 @@ export async function POST(request: Request) {
     const [body, settings] = await Promise.all([readJsonBody<ModelsPayload>(request), getAuthSettings()]);
     const { baseUrl, apiKey, apiFormat, savedChannel } = resolveAdminChannelCredentials(settings, body);
     if (!baseUrl || !apiKey) return NextResponse.json({ error: "请先填写 Base URL 和 API Key" }, { status: 400 });
+
     const advancedConfig = {
         ...(savedChannel?.advancedConfig || {}),
         ...(body.protocol !== undefined ? { protocol: body.protocol } : {}),
@@ -54,14 +72,30 @@ export async function POST(request: Request) {
         ...(body.globalAiOpcPresets !== undefined ? { globalAiOpcPresets: body.globalAiOpcPresets } : {}),
         ...(body.createPath !== undefined ? { createPath: body.createPath } : {}),
     };
+    const configuredModels = body.configuredModels !== undefined ? body.configuredModels : savedChannel?.models;
+    const configuredCapabilities = body.modelCapabilities !== undefined ? body.modelCapabilities : savedChannel?.advancedConfig?.modelCapabilities;
+    const configuredCatalog = configuredModelCatalog(configuredModels, configuredCapabilities);
+    const configuredConfigs = normalizeModelConfigs(body.modelConfigs !== undefined ? body.modelConfigs : savedChannel?.advancedConfig?.modelConfigs);
+
     const globalAiOpcPresets = resolveGlobalAiOpcCatalogPresets(baseUrl, advancedConfig);
     if (globalAiOpcPresets.length) {
-        const catalog = buildGlobalAiOpcSelection(globalAiOpcPresets.map((preset) => preset.id));
-        return NextResponse.json({ models: catalog.models, globalAiOpcPresets: catalog.presetIds });
+        const selection = buildGlobalAiOpcSelection(globalAiOpcPresets.map((preset) => preset.id));
+        const discovered = selection.models.map((id) => ({ id, capability: getGlobalAiOpcPresetForModel(id)?.capability || inferModelCapability(id), source: "official" as const }));
+        const merged = mergeModelCatalogEntries(configuredCatalog, discovered);
+        const modelConfigs = mergeModelConfigs(merged, configuredConfigs);
+        return NextResponse.json({
+            models: merged.map((entry) => entry.id),
+            modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
+            modelConfigs,
+            discoveredCount: discovered.length,
+            totalCount: merged.length,
+            globalAiOpcPresets: selection.presetIds,
+        });
     }
     if (advancedConfig.protocol === "globalaiopc" || isGlobalAiOpcBaseUrl(baseUrl)) return NextResponse.json({ error: "未识别到 GlobalAiOpc 接口范围，请检查 Base URL 或重新选择接口范围" }, { status: 400 });
-    const modelsUrl = buildModelsUrl(baseUrl, apiFormat);
-    if (!(await isSafeOutboundUrl(modelsUrl))) return NextResponse.json({ error: "Base URL 不允许访问内网或保留地址" }, { status: 400 });
+
+    const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths);
+    if (!modelCatalogUrls.length || !(await Promise.all(modelCatalogUrls.map((url) => isSafeOutboundUrl(url)))).every(Boolean)) return NextResponse.json({ error: "模型目录地址不允许访问内网、保留地址或其他域名" }, { status: 400 });
 
     const cooldownKey = `${currentUser.id}:${baseUrl.toLowerCase()}`;
     const waitMs = (modelFetchCooldowns.get(cooldownKey) || 0) - Date.now();
@@ -69,25 +103,56 @@ export async function POST(request: Request) {
     modelFetchCooldowns.set(cooldownKey, Date.now() + MODEL_FETCH_COOLDOWN_MS);
 
     try {
-        const response = await fetch(modelsUrl, {
-            headers: apiFormat === "gemini" ? { "x-goog-api-key": apiKey } : { authorization: `Bearer ${apiKey}` },
-            cache: "no-store",
-            signal: AbortSignal.timeout(MODEL_FETCH_TIMEOUT_MS),
-        });
-        const payload = (await response.json().catch(() => ({}))) as ModelsResponse;
-        if (!response.ok || isProviderBusinessError(payload)) {
-            modelFetchCooldowns.delete(cooldownKey);
-            if (isModelCatalogUnsupported(response.status, payload)) {
-                return NextResponse.json({ error: "该上游未提供模型列表接口，请在高级设置的“模型列表”手动填写模型名称；不影响已配置的视频生成接口。" }, { status: 422 });
+        const providerCatalog = [] as ReturnType<typeof parseModelCatalog>;
+        let providerConfigs = {} as ReturnType<typeof parseModelConfigs>;
+        let catalogSucceeded = false;
+        const visited = new Set<string>();
+
+        for (const catalogUrl of modelCatalogUrls) {
+            let nextUrl = catalogUrl;
+            for (let page = 0; nextUrl && page < MODEL_FETCH_MAX_PAGES && !visited.has(nextUrl); page += 1) {
+                visited.add(nextUrl);
+                if (!(await isSafeOutboundUrl(nextUrl))) throw new Error("模型分页地址不允许访问内网或保留地址");
+                const response = await fetch(nextUrl, {
+                    headers: apiFormat === "gemini" ? { "x-goog-api-key": apiKey } : { authorization: `Bearer ${apiKey}` },
+                    cache: "no-store",
+                    signal: AbortSignal.timeout(MODEL_FETCH_TIMEOUT_MS),
+                });
+                const payload = (await response.json().catch(() => ({}))) as ModelsResponse;
+                if (!response.ok || isProviderBusinessError(payload)) {
+                    if (isModelCatalogUnsupported(response.status, payload) || [404, 405, 501].includes(response.status)) break;
+                    modelFetchCooldowns.delete(cooldownKey);
+                    return NextResponse.json({ error: sanitizeProviderMessage(readProviderError(payload) || payload.msg || payload.error?.message || `拉取模型失败：${response.status}`, [apiKey]) }, { status: 502 });
+                }
+                catalogSucceeded = true;
+                const pageCatalog = parseModelCatalog(payload);
+                providerCatalog.splice(0, providerCatalog.length, ...mergeModelCatalogEntries(providerCatalog, pageCatalog));
+                providerConfigs = { ...providerConfigs, ...parseModelConfigs(payload) };
+                nextUrl = nextModelsPageUrl(nextUrl, payload, apiFormat, pageCatalog.at(-1)?.id || providerCatalog.at(-1)?.id || "");
             }
-            return NextResponse.json({ error: sanitizeProviderMessage(readProviderError(payload) || payload.msg || payload.error?.message || `拉取模型失败：${response.status}`, [apiKey]) }, { status: 502 });
         }
-        const models = parseModels(payload);
-        if (!models.length) {
+
+        const officialCatalog = officialModelCatalog(baseUrl);
+        const discovered = mergeModelCatalogEntries(providerCatalog, officialCatalog);
+        const merged = mergeModelCatalogEntries(configuredCatalog, providerCatalog, officialCatalog);
+        if (!merged.length) {
             modelFetchCooldowns.delete(cooldownKey);
+            if (!catalogSucceeded) return NextResponse.json({ error: "该上游未提供模型列表接口，请在高级设置的“模型列表”手动填写模型名称；手工模型会在后续拉取时保留。" }, { status: 422 });
             return NextResponse.json({ error: "接口请求成功，但返回内容中没有识别到模型列表" }, { status: 502 });
         }
-        return NextResponse.json({ models });
+
+        const agnes = isAgnesApiBaseUrl(baseUrl);
+        const modelConfigs = mergeModelConfigs(merged, configuredConfigs, providerConfigs, officialModelConfigs(baseUrl));
+        return NextResponse.json({
+            models: merged.map((entry) => entry.id),
+            modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
+            modelConfigs,
+            discoveredCount: discovered.length,
+            totalCount: merged.length,
+            catalogSupported: catalogSucceeded,
+            ...(!catalogSucceeded ? { warning: "上游未公开模型目录，已保留现有手工模型。" } : {}),
+            ...(agnes ? { provider: "agnes", recommendedConfig: AGNES_RECOMMENDED_CONFIG } : {}),
+        });
     } catch (error) {
         modelFetchCooldowns.delete(cooldownKey);
         console.error("Admin model fetch failed", sanitizeProviderMessage(error, [apiKey]));

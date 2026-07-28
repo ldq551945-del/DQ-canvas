@@ -147,7 +147,7 @@ function MyAssetsTab({ open, onInsert }: { open: boolean; onInsert: (payload: In
 
             {!ready && !syncError ? (
                 <div className="grid min-h-32 place-items-center sm:min-h-56">
-                    <Spin size="small" tip="正在加载素材" />
+                    <Spin size="small" description="正在加载素材" />
                 </div>
             ) : syncError ? (
                 <Alert

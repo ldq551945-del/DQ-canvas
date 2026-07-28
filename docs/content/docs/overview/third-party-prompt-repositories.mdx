@@ -1,19 +1,14 @@
 ﻿---
 title: 第三方 GitHub 提示词仓库
-description: 当前已接入采集逻辑的第三方提示词仓库
+description: 当前内置公共提示词库的来源、许可与图片处理方式
 ---
 
 # 第三方 GitHub 提示词仓库
 
-VOZEB PRO 会把经过配置的第三方提示词源采集到管理员公共提示词库中。采集时只保留可显示的来源图片 URL，不会自动把第三方封面写入用户素材库。
+VOZEB PRO 的内置公共提示词库来自 [`tigerowo/awesome-gpt-image-2-prompts`](https://github.com/tigerowo/awesome-gpt-image-2-prompts)，当前固定到提交 `60e9c65baecfd6d6d51ac4e4d87f146af834bb64`，避免上游内容变化导致同一版本的数据不可复现。
 
-| 地址                                                               | 状态                       |
-| ------------------------------------------------------------------ | -------------------------- |
-| https://github.com/EvoLinkAI/awesome-gpt-image-2-API-and-Prompts   | 当前仓库不可访问，自动跳过 |
-| https://github.com/ZeroLu/awesome-gpt-image                        | 已采集                     |
-| https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts            | 已采集                     |
-| https://github.com/YouMind-OpenLab/awesome-gpt-image-2             | 已采集                     |
-| https://github.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts | 已采集                     |
-| https://github.com/davidwuw0811-boop/awesome-gpt-image2-prompts    | 已采集                     |
+同步脚本读取上游 7 个简体中文分类文件，生成可重复导入的内置种子；旧的多仓库内置种子会被替换，管理员手工维护的公共提示词与用户“我的提示词”不会被删除。上游提示词中的 JSON、`{argument}` 参数模板和转义文本会在同步边界转换为可直接复制使用的可读大纲，页面不会把原始代码结构当作提示词展示。
 
-当前验证可采集约 874 条带可显示远程封面的提示词；`img.shields.io` 徽章、README 头图和统计图会被过滤。
+上游采用 `CC0 1.0 Universal`。当前同步结果以脚本实际校验数量为准；第三方人物肖像、商标、隐私和其他权利不因 CC0 自动获得授权，公开运营前仍需按业务场景审核。
+
+上游图片不会复制进项目或素材库。页面按需通过站内代理读取固定提交下的 GitHub 远程图片，限制文件大小和像素后转换为限宽 WebP，并只使用有限的进程内缓存；加载中或加载失败时显示站点“无限进化”Logo，只有用户主动保存提示词时才创建自己的文本素材记录。

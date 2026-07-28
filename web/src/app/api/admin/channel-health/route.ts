@@ -9,6 +9,8 @@ import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { isSafeOutboundUrl } from "@/lib/server/security";
 import { isProviderBusinessError } from "@/lib/server/provider-task-config";
 import { buildGlobalAiOpcImageRequest, buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPreset, type GlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
+import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
+import { isSeedanceVideoModelName } from "@/lib/model-capability";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -486,7 +488,7 @@ function videoHealthConfig(baseUrl: string, model: string, path: string): Partia
             protocolKey: "openai",
             protocol: "OpenAI Videos",
             createPath: "/videos",
-            queryPath: "/videos/:task_id",
+            queryPath: isAgnesApiBaseUrl(baseUrl) ? "/agnesapi?video_id=:task_id" : "/videos/:task_id",
             requestTemplate: "multipart/form-data: model、prompt、seconds、size、input_reference[]",
             resultField: "/videos/:task_id/content",
             statusField: "status",
@@ -537,8 +539,7 @@ function isGlobalAiOpcVideoHealthTarget(baseUrl: string, model: string) {
 
 function isSeedanceVideoHealthTarget(baseUrl: string, model: string) {
     const url = baseUrl.toLowerCase();
-    const modelName = model.trim().toLowerCase();
-    return url.includes("volces.com") || url.includes("/api/plan/v3") || modelName.includes("seedance") || modelName.includes("doubao-seedance");
+    return url.includes("volces.com") || url.includes("/api/plan/v3") || isSeedanceVideoModelName(model);
 }
 
 function isQingyanVideoHealthTarget(baseUrl: string, model: string) {

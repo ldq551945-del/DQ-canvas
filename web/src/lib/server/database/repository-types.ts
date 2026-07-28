@@ -28,12 +28,23 @@ export type BillingReconciliationSource = "csv" | "provider-api" | "manual";
 export type BillingReconciliationStatementStatus = "paid" | "refunded" | "pending" | "failed" | "unknown";
 export type PlanAssignmentStatus = "active" | "expired" | "canceled";
 export type PlanAssignmentSource = "admin" | "order" | "cdk" | "system";
+export type CouponDiscountType = "fixed" | "percentage";
+export type UserCouponStatus = "available" | "locked" | "redeemed" | "expired" | "revoked";
+export type CouponRedemptionStatus = "redeemed" | "refunded";
+export type ReferralInviteeRewardType = "points" | "coupon";
+export type ReferralRiskStatus = "clear" | "review" | "frozen" | "rejected";
+export type ReferralRewardStatus = "pending" | "settled" | "revoked" | "rejected" | "reversal_pending";
+export type ReferralRewardType = "points" | "coupon";
+export type ReferralBeneficiaryRole = "inviter" | "invitee";
 
 export type UserRecord = {
     id: string;
+    accountId: string;
     username: string;
     email?: string;
     displayName: string;
+    bio: string;
+    avatarStorageKey?: string;
     role: UserRole;
     status: UserStatus;
     planId: string;
@@ -186,6 +197,7 @@ export type CdkListInput = PageInput & {
 };
 
 export type CdkListRedemptionRecord = CdkRedemptionRecord & {
+    accountId?: string;
     username?: string;
     displayName?: string;
 };
@@ -262,6 +274,7 @@ export type GenerationLogRecord = {
     successCount: number;
     failCount: number;
     assets: GenerationLogAssetRecord[];
+    requestSnapshot?: JsonValue;
     taskId?: string;
     error?: string;
     createdAt: string;
@@ -290,10 +303,16 @@ export type BillingOrderRecord = {
     orderNo: string;
     productId?: string;
     userId?: string;
+    userAccountId?: string;
+    userUsername?: string;
+    userDisplayName?: string;
     productKind: BillingProductKind;
     planId?: string;
     status: BillingOrderStatus;
     subject: string;
+    listAmountCents: number;
+    promotionDiscountCents: number;
+    couponDiscountCents: number;
     amountCents: number;
     currency: string;
     pointsAmount: number;
@@ -303,12 +322,169 @@ export type BillingOrderRecord = {
     provider: string;
     providerOrderId?: string;
     providerPaymentId?: string;
+    promotionCampaignId?: string;
+    userCouponId?: string;
     expiresAt?: string;
     paidAt?: string;
     closedAt?: string;
+    pricingSnapshot?: JsonValue;
     metadata?: JsonValue;
     createdAt: string;
     updatedAt: string;
+};
+
+export type PromotionProductRecord = {
+    productId: string;
+    promotionalAmountCents: number;
+};
+
+export type PromotionCampaignRecord = {
+    id: string;
+    name: string;
+    label: string;
+    enabled: boolean;
+    startsAt: string;
+    endsAt: string;
+    createdByUserId?: string;
+    products: PromotionProductRecord[];
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type CouponTemplateRecord = {
+    id: string;
+    code: string;
+    name: string;
+    description: string;
+    discountType: CouponDiscountType;
+    discountValue: number;
+    minimumAmountCents: number;
+    maximumDiscountCents: number;
+    stackWithPromotion: boolean;
+    claimable: boolean;
+    enabled: boolean;
+    startsAt: string;
+    endsAt: string;
+    totalLimit: number;
+    perUserLimit: number;
+    issuedCount: number;
+    redeemedCount: number;
+    createdByUserId?: string;
+    productIds: string[];
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type UserCouponRecord = {
+    id: string;
+    templateId: string;
+    userId: string;
+    status: UserCouponStatus;
+    grantSource: string;
+    claimedAt: string;
+    expiresAt: string;
+    lockedOrderId?: string;
+    lockedAt?: string;
+    redeemedOrderId?: string;
+    redeemedAt?: string;
+    revokedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type UserCouponListItemRecord = UserCouponRecord & {
+    template: CouponTemplateRecord;
+};
+
+export type CouponRedemptionRecord = {
+    id: string;
+    userCouponId: string;
+    orderId: string;
+    userId: string;
+    templateId: string;
+    status: CouponRedemptionStatus;
+    discountCents: number;
+    ruleSnapshot: JsonValue;
+    redeemedAt: string;
+    refundedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ReferralProgramRecord = {
+    id: "default";
+    enabled: boolean;
+    inviterPoints: number;
+    inviteeRewardType: ReferralInviteeRewardType;
+    inviteePoints: number;
+    inviteeCouponTemplateId?: string;
+    minimumPaidCents: number;
+    coolingOffDays: number;
+    inviterMonthlyLimit: number;
+    campaignTotalLimit: number;
+    autoFreezeRisk: boolean;
+    createdByUserId?: string;
+    updatedByUserId?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ReferralCodeRecord = {
+    id: string;
+    userId: string;
+    code: string;
+    enabled: boolean;
+    clickCount: number;
+    lastClickedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type ReferralRelationshipRecord = {
+    id: string;
+    inviterUserId: string;
+    inviteeUserId: string;
+    referralCodeId: string;
+    attributionSource: string;
+    attributionMetadata: JsonValue;
+    registrationIpHash?: string;
+    paymentIdentityHash?: string;
+    riskStatus: ReferralRiskStatus;
+    riskSignals: JsonValue;
+    registeredAt: string;
+    createdAt: string;
+    updatedAt: string;
+    code?: string;
+    inviterUsername?: string;
+    inviterDisplayName?: string;
+    inviterAccountId?: string;
+    inviteeUsername?: string;
+    inviteeDisplayName?: string;
+    inviteeAccountId?: string;
+};
+
+export type ReferralRewardRecord = {
+    id: string;
+    relationshipId: string;
+    beneficiaryUserId: string;
+    beneficiaryRole: ReferralBeneficiaryRole;
+    rewardType: ReferralRewardType;
+    pointsAmount: number;
+    couponTemplateId?: string;
+    triggerOrderId: string;
+    status: ReferralRewardStatus;
+    settleAfter: string;
+    walletRecordId?: string;
+    reversalWalletRecordId?: string;
+    userCouponId?: string;
+    reason?: string;
+    settledAt?: string;
+    revokedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+    beneficiaryUsername?: string;
+    beneficiaryDisplayName?: string;
+    beneficiaryAccountId?: string;
 };
 
 export type BillingProductRecord = {
@@ -457,4 +633,245 @@ export type BillingSummaryRecord = {
         succeededPaymentsWithoutPaidOrder: number;
         amountMismatchPayments: number;
     };
+};
+
+export type PublishedWorkSourceType = "media" | "canvas" | "drama";
+export type PublishedWorkLifecycleStatus = "active" | "revoked";
+export type PublishedWorkVisibility = "private" | "unlisted" | "public";
+export type PublishedWorkModerationStatus = "draft" | "pending" | "approved" | "rejected" | "taken_down";
+export type PublishedWorkAuthorDisplay = "profile" | "custom" | "hidden";
+export type PublishedWorkAssetRole = "cover" | "content";
+export type PublishedWorkCaseType = "report" | "appeal";
+export type PublishedWorkCaseStatus = "open" | "approved" | "rejected";
+export type WorkCommunityRankingWindow = "weekly" | "monthly";
+export type UserNotificationType = "work_like" | "user_follow";
+
+export type PublishedWorkRecord = {
+    id: string;
+    ownerUserId: string;
+    slug: string;
+    sourceType: PublishedWorkSourceType;
+    sourceId: string;
+    lifecycleStatus: PublishedWorkLifecycleStatus;
+    currentVersionId?: string;
+    publishedVersionId?: string;
+    isFeatured: boolean;
+    featuredAt?: string;
+    featuredByUserId?: string;
+    viewCount: number;
+    likeCount: number;
+    lastViewedAt?: string;
+    revokedAt?: string;
+    createdAt: string;
+    updatedAt: string;
+    ownerUsername?: string;
+    ownerDisplayName?: string;
+    ownerAccountId?: string;
+    ownerAvatarStorageKey?: string;
+    ownerAvatarUpdatedAt?: string;
+};
+
+export type PublishedWorkVersionRecord = {
+    id: string;
+    workId: string;
+    versionNumber: number;
+    title: string;
+    description: string;
+    publicPrompt: string;
+    category: string;
+    tags: string[];
+    visibility: PublishedWorkVisibility;
+    authorDisplay: PublishedWorkAuthorDisplay;
+    authorName?: string;
+    moderationStatus: PublishedWorkModerationStatus;
+    rejectionReason?: string;
+    submittedAt?: string;
+    reviewedAt?: string;
+    reviewedByUserId?: string;
+    moderationProvider?: string;
+    moderationSignal?: JsonValue;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type PublishedWorkAssetRecord = {
+    id: string;
+    versionId: string;
+    storageKey: string;
+    mediaType: "image" | "video" | "audio";
+    mimeType: string;
+    role: PublishedWorkAssetRole;
+    sortOrder: number;
+    metadata: JsonValue;
+    createdAt: string;
+};
+
+export type PublishedWorkSummaryRecord = PublishedWorkRecord & {
+    currentVersion?: PublishedWorkVersionRecord;
+    publishedVersion?: PublishedWorkVersionRecord;
+    currentPreview?: PublishedWorkAssetRecord;
+};
+
+export type PublishedGalleryItemRecord = {
+    workId: string;
+    versionId: string;
+    authorUserId: string;
+    slug: string;
+    sourceType: PublishedWorkSourceType;
+    viewCount: number;
+    likeCount: number;
+    isFeatured: boolean;
+    featuredAt?: string;
+    publishedAt: string;
+    title: string;
+    description: string;
+    publicPrompt: string;
+    category: string;
+    tags: string[];
+    authorDisplay: PublishedWorkAuthorDisplay;
+    authorName?: string;
+    authorUsername?: string;
+    authorAvatarStorageKey?: string;
+    authorAvatarUpdatedAt?: string;
+    assetId?: string;
+    assetMediaType?: "image" | "video" | "audio";
+    assetMimeType?: string;
+};
+
+export type PublishedWorkCaseRecord = {
+    id: string;
+    workId: string;
+    versionId: string;
+    submitterUserId: string;
+    caseType: PublishedWorkCaseType;
+    category: string;
+    description: string;
+    status: PublishedWorkCaseStatus;
+    resolution?: string;
+    handledByUserId?: string;
+    handledAt?: string;
+    createdAt: string;
+    updatedAt: string;
+};
+
+export type PublishedWorkCaseSummaryRecord = PublishedWorkCaseRecord & {
+    slug: string;
+    title: string;
+    ownerUserId: string;
+    ownerUsername?: string;
+    ownerDisplayName?: string;
+    ownerAccountId?: string;
+    submitterUsername?: string;
+    submitterDisplayName?: string;
+    submitterAccountId?: string;
+};
+
+export type WorkCommunitySummaryRecord = {
+    workId: string;
+    versionId: string;
+    slug: string;
+    ownerUserId: string;
+    authorDisplay: PublishedWorkAuthorDisplay;
+    likeCount: number;
+    followerCount: number;
+    liked: boolean;
+    followingAuthor: boolean;
+    canFollow: boolean;
+};
+
+export type WorkCommunityRelationResultRecord = {
+    workId: string;
+    versionId: string;
+    ownerUserId: string;
+    changed: boolean;
+    active: boolean;
+    likeCount: number;
+};
+
+export type UserFollowResultRecord = {
+    followedUserId: string;
+    changed: boolean;
+    active: boolean;
+    followerCount: number;
+};
+
+export type UserBlockResultRecord = {
+    blockedUserId: string;
+    changed: boolean;
+    active: boolean;
+    removedFollowCount: number;
+};
+
+export type WorkCommunityRankingCursor = {
+    score: number;
+    windowLikeCount: number;
+    publishedAt: string;
+    id: string;
+};
+
+export type PublishedWorkRankingRecord = PublishedGalleryItemRecord & {
+    score: number;
+    windowLikeCount: number;
+};
+
+export type UserNotificationRecord = {
+    id: string;
+    userId: string;
+    actorUserId?: string;
+    notificationType: UserNotificationType;
+    workId?: string;
+    targetPath: string;
+    summary: string;
+    dedupKey: string;
+    readAt?: string;
+    createdAt: string;
+    actorUsername?: string;
+    actorDisplayName?: string;
+};
+
+export type FollowedUserRecord = {
+    userId: string;
+    username: string;
+    displayName: string;
+    bio: string;
+    avatarStorageKey?: string;
+    avatarUpdatedAt?: string;
+    followerCount: number;
+    followedAt: string;
+    publicProfileAvailable: boolean;
+};
+
+export type CommunityUserRecord = Omit<FollowedUserRecord, "followedAt"> & {
+    relatedAt: string;
+};
+
+export type LikedPublishedWorkRecord = PublishedGalleryItemRecord & {
+    likedAt: string;
+};
+
+export type UserCommunitySummaryRecord = {
+    username: string;
+    publishedWorkCount: number;
+    followingCount: number;
+    followerCount: number;
+    likedWorkCount: number;
+    publicProfileAvailable: boolean;
+};
+
+export type PublicCreatorProfileRecord = {
+    userId: string;
+    username: string;
+    displayName: string;
+    bio: string;
+    avatarStorageKey?: string;
+    avatarUpdatedAt?: string;
+    publishedWorkCount: number;
+    receivedLikeCount: number;
+    followerCount: number;
+    followingCount: number;
+};
+
+export type PublicCreatorWorkCursor = {
+    publishedAt: string;
+    id: string;
 };

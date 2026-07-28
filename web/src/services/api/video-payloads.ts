@@ -4,6 +4,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
+import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
@@ -359,12 +360,7 @@ export async function publishReferenceImage(dataUrl: string) {
 }
 
 function isUnsignedReferenceAssetUrl(value: string) {
-    try {
-        const url = new URL(value, typeof window === "undefined" ? "https://vozeb.invalid" : window.location.origin);
-        return url.pathname.startsWith("/api/reference-assets/") && !url.searchParams.has("signature");
-    } catch {
-        return false;
-    }
+    return isReferenceAssetUrl(value) && !hasProviderReadSignatureShape(value);
 }
 
 export function uniqueStrings(items: string[]) {

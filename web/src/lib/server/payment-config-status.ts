@@ -1,4 +1,13 @@
-import { PAYMENT_PROVIDER_DEFINITIONS, type PaymentConfigRequirement, type PaymentConfigSummary, type PaymentProviderConfig, type PaymentProviderConfigField, type PaymentProviderDefinition } from "@/lib/payment-config-types";
+import {
+    DEFAULT_ALIPAY_PAYMENT_MODE,
+    getAlipayPaymentModePresentation,
+    PAYMENT_PROVIDER_DEFINITIONS,
+    type PaymentConfigRequirement,
+    type PaymentConfigSummary,
+    type PaymentProviderConfig,
+    type PaymentProviderConfigField,
+    type PaymentProviderDefinition,
+} from "@/lib/payment-config-types";
 import { fieldHasRuntimeValue, getFieldRuntimeValue, getPaymentRuntimeConfig, hasPaymentProductionSecret, isPaymentRuntimeProviderEnabled, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 
 export async function getPaymentConfigSummary(origin = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"): Promise<PaymentConfigSummary> {
@@ -17,6 +26,7 @@ export { hasPaymentProductionSecret };
 
 function buildProviderConfig(provider: PaymentProviderDefinition, runtimeConfig: PaymentRuntimeConfig, origin: string): PaymentProviderConfig {
     const fields = provider.fields.map((field) => resolveField(field, runtimeConfig));
+    const presentation = providerPresentation(provider, fields);
     const checkoutRequirements = provider.checkoutFieldKeys.map((key) => resolveRequirement(provider, key, runtimeConfig));
     const webhookRequirements = provider.webhookFieldKeys.map((key) => resolveRequirement(provider, key, runtimeConfig));
     const enabled = isPaymentRuntimeProviderEnabled(runtimeConfig, provider.id);
@@ -27,8 +37,8 @@ function buildProviderConfig(provider: PaymentProviderDefinition, runtimeConfig:
     return {
         id: provider.id,
         name: provider.name,
-        description: provider.description,
-        checkoutKind: provider.checkoutKind,
+        description: presentation.description,
+        checkoutKind: presentation.checkoutKind,
         checkoutReady: provider.id === "manual" || (enabled && checkoutReady),
         webhookReady,
         ready,
@@ -53,6 +63,12 @@ function resolveField(field: PaymentProviderConfigField, runtimeConfig: PaymentR
         value: field.secret ? undefined : runtimeValue,
         sourceLabel: sourceLabelForField(field, runtimeConfig),
     };
+}
+
+function providerPresentation(provider: PaymentProviderDefinition, fields: PaymentProviderConfig["fields"]) {
+    if (provider.id !== "alipay") return provider;
+    const value = fields.find((field) => field.key === "mode")?.value || DEFAULT_ALIPAY_PAYMENT_MODE;
+    return getAlipayPaymentModePresentation(value) || { description: "支付宝接入方式无效，请重新选择官方支付或当面付。", checkoutKind: "待选择" };
 }
 
 function resolveRequirement(provider: PaymentProviderDefinition, key: string, runtimeConfig: PaymentRuntimeConfig): PaymentConfigRequirement {
@@ -82,6 +98,7 @@ function sourceLabelForField(field: PaymentProviderConfigField, runtimeConfig: P
     if (hasPaymentProductionSecret(savedValue) && hasPaymentProductionSecret(envValue)) return "后台 + 环境";
     if (hasPaymentProductionSecret(savedValue)) return "后台";
     if (hasPaymentProductionSecret(envValue)) return "环境";
+    if (hasPaymentProductionSecret(field.defaultValue)) return "系统默认";
     return "未配置";
 }
 

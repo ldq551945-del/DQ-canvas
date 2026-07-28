@@ -160,7 +160,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => ({
             ...current,
-            systemChannels: current.systemChannels.map((channel) => (channel.id === id ? { ...channel, ...patch, apiFormat: "openai", models: patch.models ? uniqueList(patch.models) : channel.models } : channel)),
+            systemChannels: current.systemChannels.map((channel) => (channel.id === id ? { ...channel, ...patch, apiFormat: patch.apiFormat || channel.apiFormat, models: patch.models ? uniqueList(patch.models) : channel.models } : channel)),
         }));
     };
 
@@ -392,7 +392,9 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
         try {
             const result = await requestAdminModels(channel);
             updateChannel(channel.id, adminModelsChannelPatch(channel, result));
-            message.success(`${channel.name || "渠道"} 已拉取 ${result.models.length} 个模型`);
+            const discovered = result.discoveredCount ?? result.models.length;
+            const total = result.totalCount ?? result.models.length;
+            message.success(`${channel.name || "渠道"} 本次发现 ${discovered} 个模型，合并后共 ${total} 个${result.warning ? `；${result.warning}` : ""}`);
         } catch (error) {
             message.error(error instanceof Error ? error.message : "拉取模型失败");
         } finally {
@@ -557,12 +559,25 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
 export type AdminDashboardSettingsActions = ReturnType<typeof useAdminDashboardSettingsActions>;
 
 function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModelsResult): Partial<SystemModelChannel> {
-    if (!result.globalAiOpcPresets?.length) return { models: result.models };
-    const selection = buildGlobalAiOpcSelection(result.globalAiOpcPresets);
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
+    const models = uniqueList([...channel.models, ...result.models]);
+    const modelCapabilities = { ...(advanced.modelCapabilities || {}), ...(result.modelCapabilities || {}) };
+    const modelConfigs = mergeAdminModelConfigs(advanced.modelConfigs, result.modelConfigs);
+    if (!result.globalAiOpcPresets?.length) {
+        return {
+            models,
+            advancedConfig: {
+                ...advanced,
+                ...(result.recommendedConfig || {}),
+                modelCapabilities,
+                modelConfigs,
+            },
+        };
+    }
+    const selection = buildGlobalAiOpcSelection(result.globalAiOpcPresets);
     const onlyPreset = selection.presetIds.length === 1;
     return {
-        models: selection.models,
+        models: uniqueList([...models, ...selection.models]),
         apiFormat: selection.apiFormat,
         advancedConfig: {
             ...advanced,
@@ -580,6 +595,16 @@ function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModel
             supportsReferenceImage: selection.supportsReferenceImage,
             supportsReferenceVideo: selection.supportsReferenceVideo,
             supportsReferenceAudio: selection.supportsReferenceAudio,
+            modelCapabilities,
+            modelConfigs,
         },
     };
+}
+
+function mergeAdminModelConfigs(current: SystemChannelAdvancedConfig["modelConfigs"], discovered: SystemChannelAdvancedConfig["modelConfigs"]) {
+    const merged = { ...(current || {}), ...(discovered || {}) };
+    Object.entries(current || {}).forEach(([model, config]) => {
+        if (config.source === "manual") merged[model] = config;
+    });
+    return merged;
 }

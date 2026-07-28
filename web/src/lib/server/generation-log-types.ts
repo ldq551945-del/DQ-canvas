@@ -1,3 +1,5 @@
+import type { GenerationLogRequestSnapshot } from "@/lib/generation-log-snapshot";
+
 export type GenerationLogKind = "image" | "video";
 export type GenerationLogSource = "agent" | "image-workbench" | "video-workbench" | "canvas" | "drama" | "unknown";
 export type GenerationLogStatus = "pending" | "success" | "failed";
@@ -16,6 +18,7 @@ export type GenerationLogAsset = {
 export type StoredGenerationLog = {
     id: string;
     userId: string;
+    accountId?: string;
     conversationId?: string;
     username: string;
     displayName: string;
@@ -31,6 +34,7 @@ export type StoredGenerationLog = {
     successCount: number;
     failCount: number;
     assets: GenerationLogAsset[];
+    requestSnapshot?: GenerationLogRequestSnapshot;
     taskId?: string;
     error?: string;
     createdAt: string;
@@ -38,7 +42,7 @@ export type StoredGenerationLog = {
     completedAt?: string;
 };
 
-export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskId" | "title" | "summary" | "error">> & {
+export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskId" | "title" | "summary" | "error" | "requestSnapshot">> & {
     userId: string;
     username: string;
     displayName: string;

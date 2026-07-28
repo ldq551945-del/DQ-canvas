@@ -13,6 +13,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { serverMediaUrl } from "@/services/server-media-storage";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
 import { ModelIcon } from "@/components/model-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
@@ -211,7 +212,8 @@ export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
 }
 
 export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
-    const mediaUrl = [metadata?.remoteUrl, metadata?.serverUrl].find((value) => typeof value === "string" && value && !value.startsWith("data:") && !value.startsWith("blob:"));
+    const fallbackUrl = [metadata?.serverUrl, metadata?.content, metadata?.remoteUrl].find((value) => typeof value === "string" && value && !value.startsWith("data:") && !value.startsWith("blob:"));
+    const mediaUrl = serverMediaUrl(metadata?.storageKey, fallbackUrl || "");
     return {
         content: String(metadata?.content || "").slice(0, 500),
         prompt: String(metadata?.prompt || metadata?.composerContent || "").slice(0, 500),
@@ -219,7 +221,7 @@ export function compactMetadata(metadata: CanvasNodeData["metadata"]) {
         generationMode: metadata?.generationMode,
         model: metadata?.model,
         size: metadata?.size,
-        url: mediaUrl,
+        url: mediaUrl || undefined,
     };
 }
 

@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 
 import type { Asset, CreateLibraryAssetInput } from "@/lib/library-asset-contract";
-import { createLibraryAsset, deleteLibraryAsset, listLibraryAssets, updateLibraryAsset } from "@/lib/server/library-asset-store";
+import { createLibraryAsset, deleteLibraryAsset, getLibraryAsset, listLibraryAssetPage, listLibraryAssets, updateLibraryAsset } from "@/lib/server/library-asset-store";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 
 export class LibraryAssetServiceError extends Error {
@@ -17,13 +17,23 @@ export function listLibraryAssetsForUser(userId: string) {
     return listLibraryAssets(userId);
 }
 
+export function listLibraryAssetPageForUser(userId: string, input: { page?: unknown; pageSize?: unknown; kind?: unknown; keyword?: unknown }) {
+    const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" || input.kind === "audio" ? input.kind : undefined;
+    return listLibraryAssetPage(userId, {
+        page: positiveInteger(input.page, 1, 1_000_000),
+        pageSize: positiveInteger(input.pageSize, 20, 100),
+        kind,
+        keyword: cleanText(input.keyword, 160),
+    });
+}
+
 export function createLibraryAssetForUser(userId: string, value: unknown) {
     const now = new Date().toISOString();
     return createLibraryAsset(userId, normalizeAsset(value, { id: `asset-${nanoid()}`, createdAt: now, updatedAt: now }));
 }
 
 export async function updateLibraryAssetForUser(userId: string, id: string, value: unknown) {
-    const current = (await listLibraryAssets(userId)).find((asset) => asset.id === cleanText(id, 160));
+    const current = await getLibraryAsset(userId, cleanText(id, 160));
     if (!current) throw new LibraryAssetServiceError("素材不存在", 404);
     const asset = normalizeAsset(value, { id: current.id, createdAt: current.createdAt, updatedAt: new Date().toISOString() });
     const updated = await updateLibraryAsset(userId, asset);
@@ -32,7 +42,7 @@ export async function updateLibraryAssetForUser(userId: string, id: string, valu
 }
 
 export async function deleteLibraryAssetForUser(userId: string, id: string) {
-    const asset = (await listLibraryAssets(userId)).find((item) => item.id === cleanText(id, 160));
+    const asset = await getLibraryAsset(userId, cleanText(id, 160));
     if (!asset || !(await deleteLibraryAsset(userId, asset.id))) throw new LibraryAssetServiceError("素材不存在", 404);
     if (asset.kind !== "text" && asset.data.storageKey) await deleteUserLocalMediaAssets(userId, [asset.data.storageKey]);
 }
@@ -92,4 +102,9 @@ function object(value: unknown) {
 
 function array(value: unknown): unknown[] {
     return Array.isArray(value) ? value : [];
+}
+
+function positiveInteger(value: unknown, fallback: number, max: number) {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? Math.min(parsed, max) : fallback;
 }

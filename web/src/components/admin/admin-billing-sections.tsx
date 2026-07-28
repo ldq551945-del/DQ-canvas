@@ -114,6 +114,18 @@ export function AdminProductsSection({ controller }: { controller: AdminDashboar
     return <BillingOperations initialTab="products" embedded hideTabs />;
 }
 
+export function AdminPromotionsSection({ controller }: { controller: AdminDashboardController }) {
+    const { activeSection } = controller;
+    if (activeSection !== "promotions") return null;
+    return <BillingOperations initialTab="promotions" embedded hideTabs />;
+}
+
+export function AdminCouponsSection({ controller }: { controller: AdminDashboardController }) {
+    const { activeSection } = controller;
+    if (activeSection !== "coupons") return null;
+    return <BillingOperations initialTab="coupons" embedded hideTabs />;
+}
+
 export function AdminPaymentsSection({ controller }: { controller: AdminDashboardController }) {
     const { paymentConfig, activeSection } = controller;
     if (activeSection !== "payments") return null;

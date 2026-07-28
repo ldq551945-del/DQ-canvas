@@ -1,4 +1,5 @@
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
+import { formatAccountId } from "@/lib/account-id";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
@@ -31,6 +32,7 @@ import {
     type StoredCdkRedemption,
     type StoredCdkCode,
     type PublicAnnouncement,
+    type AnnouncementPage,
     type SiteSettings,
     type SiteShowcaseMode,
     type SiteShowcaseItem,
@@ -165,7 +167,7 @@ export async function readAuthDb(): Promise<AuthDatabase> {
     return normalizeDb(await readJsonDataFile<Partial<AuthDatabase>>(AUTH_DATA_FILE, emptyDb()));
 }
 
-export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise<T>) {
+export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise<T>, options?: { afterPostgresPersist?: (result: T, client: QueryExecutor) => Promise<void> }) {
     const run = mutationQueue.then(async () => {
         if (isPostgresDatabaseEnabled()) {
             await ensurePostgresSchema();
@@ -175,6 +177,7 @@ export async function mutateAuthDb<T>(mutator: (db: AuthDatabase) => T | Promise
                 try {
                     const result = await mutator(db);
                     await writePostgresAuthDbWithExecutor(db, client);
+                    if (options?.afterPostgresPersist) await options.afterPostgresPersist(result, client);
                     return { ok: true as const, result };
                 } catch (error) {
                     if (!(error instanceof EmailCodeAttemptError)) throw error;
@@ -286,11 +289,11 @@ export async function readPostgresCdkListData(input?: { page?: number; pageSize?
                 updatedAt: item.updatedAt,
             }) satisfies StoredCdkCode,
     );
-    const usersById = new Map<string, { id: string; username: string; displayName: string }>();
+    const usersById = new Map<string, { id: string; accountId?: string; username: string; displayName: string }>();
     for (const item of result.items) {
         for (const redemption of item.redemptions) {
             const username = redemption.username || "已删除用户";
-            usersById.set(redemption.userId, { id: redemption.userId, username, displayName: redemption.displayName || username });
+            usersById.set(redemption.userId, { id: redemption.userId, accountId: redemption.accountId, username, displayName: redemption.displayName || username });
         }
     }
     return {
@@ -303,11 +306,34 @@ export async function readPostgresCdkListData(input?: { page?: number; pageSize?
     };
 }
 
-export async function readPostgresAnnouncements(executor?: QueryExecutor) {
+export async function readPostgresAnnouncementsPage(input: { includeDisabled: boolean; page: number; pageSize: number; visibleAt?: string }, executor?: QueryExecutor): Promise<AnnouncementPage> {
     if (!executor) await ensurePostgresSchema();
     const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
-    const result = await query("SELECT * FROM announcements ORDER BY created_at DESC");
-    return result.rows.map(mapPostgresAnnouncement);
+    const page = Number.isSafeInteger(input.page) && input.page > 0 ? input.page : 1;
+    const pageSize = Number.isSafeInteger(input.pageSize) && input.pageSize > 0 ? Math.min(100, input.pageSize) : 20;
+    const visibleAt = input.visibleAt || new Date().toISOString();
+    const result = await query(
+        `SELECT *, count(*) OVER() AS total_count
+         FROM announcements
+         WHERE ($1::boolean = true OR (
+             enabled = true
+             AND (starts_at IS NULL OR starts_at <= $2::timestamptz)
+             AND (ends_at IS NULL OR ends_at > $2::timestamptz)
+         ))
+         ORDER BY created_at DESC, id DESC
+         LIMIT $3 OFFSET $4`,
+        [input.includeDisabled, visibleAt, pageSize, (page - 1) * pageSize],
+    );
+    return {
+        items: result.rows.map(mapPostgresAnnouncement),
+        total: dbNumber(result.rows[0]?.total_count, 0),
+        page,
+        pageSize,
+    };
+}
+
+export async function readPostgresAnnouncements(executor?: QueryExecutor) {
+    return (await readPostgresAnnouncementsPage({ includeDisabled: true, page: 1, pageSize: 100 }, executor)).items;
 }
 
 export async function readPostgresAuthSettings(executor?: QueryExecutor): Promise<AuthSettings> {
@@ -346,6 +372,7 @@ export async function writePostgresAuthDbWithExecutor(db: AuthDatabase, client: 
     await upsertPostgresSystemChannels(client, normalized.settings.systemChannels);
     await insertPostgresUsers(client, normalized.users);
     await client.query("DELETE FROM users WHERE id <> ALL($1::text[])", [normalized.users.map((user) => user.id)]);
+    await syncPostgresUserAccountIdSequence(client);
     await insertPostgresSessions(
         client,
         normalized.sessions.filter((session) => userIds.has(session.userId)),
@@ -417,9 +444,12 @@ export function mapPostgresSettings(settingsRow: Record<string, unknown> | undef
 export function mapPostgresUser(row: Record<string, unknown>): StoredUser {
     return {
         id: dbText(row.id),
+        accountId: formatAccountId(row.account_id),
         username: dbText(row.username),
         email: dbOptionalText(row.email),
         displayName: dbText(row.display_name),
+        bio: dbText(row.bio),
+        avatarStorageKey: dbOptionalText(row.avatar_storage_key),
         role: row.role === "admin" ? "admin" : "user",
         status: row.status === "disabled" ? "disabled" : "active",
         planId: dbText(row.plan_id),
@@ -617,12 +647,15 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
     for (const user of users) {
         await db.query(
             `
-            INSERT INTO users (id, username, email, display_name, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            INSERT INTO users (id, account_id, username, email, display_name, bio, avatar_storage_key, role, status, plan_id, points_balance, password_hash, last_login_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (id) DO UPDATE SET
+                account_id = EXCLUDED.account_id,
                 username = EXCLUDED.username,
                 email = EXCLUDED.email,
                 display_name = EXCLUDED.display_name,
+                bio = EXCLUDED.bio,
+                avatar_storage_key = EXCLUDED.avatar_storage_key,
                 role = EXCLUDED.role,
                 status = EXCLUDED.status,
                 plan_id = EXCLUDED.plan_id,
@@ -632,9 +665,35 @@ export async function insertPostgresUsers(db: QueryExecutor, users: StoredUser[]
                 created_at = EXCLUDED.created_at,
                 updated_at = EXCLUDED.updated_at
             `,
-            [user.id, user.username, user.email || null, user.displayName, user.role, user.status, user.planId, user.pointsBalance, user.passwordHash, user.lastLoginAt || null, user.createdAt, user.updatedAt],
+            [
+                user.id,
+                Number(user.accountId),
+                user.username,
+                user.email || null,
+                user.displayName,
+                user.bio,
+                user.avatarStorageKey || null,
+                user.role,
+                user.status,
+                user.planId,
+                user.pointsBalance,
+                user.passwordHash,
+                user.lastLoginAt || null,
+                user.createdAt,
+                user.updatedAt,
+            ],
         );
     }
+}
+
+async function syncPostgresUserAccountIdSequence(db: QueryExecutor) {
+    await db.query(`
+        SELECT setval(
+            'user_account_id_seq',
+            greatest((SELECT last_value FROM user_account_id_seq), coalesce((SELECT max(account_id) FROM users), 1)),
+            (SELECT is_called FROM user_account_id_seq) OR EXISTS (SELECT 1 FROM users)
+        )
+    `);
 }
 
 export async function insertPostgresSessions(db: QueryExecutor, sessions: StoredSession[]) {

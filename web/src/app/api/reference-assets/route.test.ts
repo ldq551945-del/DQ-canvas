@@ -48,6 +48,12 @@ describe("reference asset upload boundary", () => {
             }),
         );
 
-        await expect(response.json()).resolves.toMatchObject({ token: "permanent/asset.png", key: "permanent/asset.png", storage: "object", upstreamUrl: "https://drama.example/api/reference-assets/permanent/asset.mp4?expires=1&signature=test" });
+        await expect(response.json()).resolves.toMatchObject({
+            url: "/api/reference-assets/permanent/asset.png",
+            token: "permanent/asset.png",
+            key: "permanent/asset.png",
+            storage: "object",
+            upstreamUrl: "https://drama.example/api/reference-assets/permanent/asset.mp4?expires=1&signature=test",
+        });
     });
 });

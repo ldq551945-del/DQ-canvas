@@ -17,6 +17,9 @@ export default function DramaPage() {
     const hydrate = useDramaStore((state) => state.hydrate);
     const syncError = useDramaStore((state) => state.syncError);
     const projects = useDramaStore((state) => state.summaries);
+    const projectTotal = useDramaStore((state) => state.summaryTotal);
+    const loadingMore = useDramaStore((state) => state.summaryLoadingMore);
+    const loadMore = useDramaStore((state) => state.loadMore);
     const createProject = useDramaStore((state) => state.createProject);
     const userId = useUserStore((state) => state.user?.id || "");
     const [open, setOpen] = useState(false);
@@ -56,7 +59,7 @@ export default function DramaPage() {
                         </div>
                         <h1 className="mt-1.5 text-xl font-semibold sm:mt-2 sm:text-2xl">短剧项目</h1>
                         <p className="mt-1.5 text-xs leading-5 text-muted-foreground sm:mt-2 sm:text-sm">
-                            {projects.length} 个项目 · {episodeCount} 集 · {pendingCount} 个执行中任务
+                            共 {projectTotal} 个项目 · 已加载 {projects.length} 个 / {episodeCount} 集 · {pendingCount} 个执行中任务
                         </p>
                     </div>
                     <Button type="primary" className="!h-9 !shrink-0 !px-3 sm:!px-4" icon={<Plus className="size-4" />} disabled={!hydrated} onClick={() => setOpen(true)}>
@@ -67,11 +70,20 @@ export default function DramaPage() {
                 {!hydrated ? (
                     <div className="grid min-h-16 place-items-center text-sm text-muted-foreground sm:min-h-32">正在加载短剧项目…</div>
                 ) : projects.length ? (
-                    <section className="grid gap-1.5 py-1 sm:grid-cols-2 sm:gap-4 sm:py-6 xl:grid-cols-3">
-                        {projects.map((project) => (
-                            <DramaProjectCard key={project.id} project={project} />
-                        ))}
-                    </section>
+                    <>
+                        <section className="grid gap-1.5 py-1 sm:grid-cols-2 sm:gap-4 sm:py-6 xl:grid-cols-3">
+                            {projects.map((project) => (
+                                <DramaProjectCard key={project.id} project={project} />
+                            ))}
+                        </section>
+                        {projects.length < projectTotal ? (
+                            <div className="flex justify-center pb-4 sm:pb-8">
+                                <Button loading={loadingMore} onClick={() => void loadMore()}>
+                                    加载更多
+                                </Button>
+                            </div>
+                        ) : null}
+                    </>
                 ) : (
                     <CompactEmptyState
                         title="还没有短剧项目"

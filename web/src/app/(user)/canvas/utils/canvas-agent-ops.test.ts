@@ -17,6 +17,18 @@ describe("Agent 产物排版", () => {
         expect(replay.nodes[0].title).toBe("已更新");
     });
 
+    it("sizes image outputs from their natural dimensions", () => {
+        const created = applyCanvasAgentOps(snapshot, [{ type: "add_node", id: "output-agent-run-0-0", nodeType: CanvasNodeType.Image, position: { x: 400, y: 20 }, metadata: { content: "/image.png", naturalWidth: 1024, naturalHeight: 1024 } }]);
+
+        expect(created.nodes[0]).toMatchObject({ width: 340, height: 340, metadata: { naturalWidth: 1024, naturalHeight: 1024 } });
+    });
+
+    it("uses the requested image ratio before natural dimensions are available", () => {
+        const created = applyCanvasAgentOps(snapshot, [{ type: "add_node", id: "output-agent-run-0-0", nodeType: CanvasNodeType.Image, position: { x: 400, y: 20 }, metadata: { content: "/image.png", size: "1:1" } }]);
+
+        expect(created.nodes[0]).toMatchObject({ width: 340, height: 340 });
+    });
+
     it("applies node, connection, selection, movement, resize, viewport, and delete ops", () => {
         const created = applyCanvasAgentOps(snapshot, [
             { type: "add_node", id: "one", nodeType: CanvasNodeType.Text, position: { x: 10, y: 20 } },

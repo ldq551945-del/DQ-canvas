@@ -74,13 +74,17 @@ export function AgentChatMessage({
             <div className={`min-w-0 max-w-[82%] text-sm leading-6 ${isUser ? "text-right" : "text-left"}`} style={{ color }}>
                 <div className="whitespace-pre-wrap break-words text-left">{item.text}</div>
                 {!isUser && objectStringArray(item.detail, "nodeIds").length && objectField(item.detail, "taskType") !== "text" ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                        {objectStringArray(item.detail, "nodeIds").map((nodeId, index, nodeIds) => (
-                            <button key={nodeId} type="button" className="inline-flex items-center gap-1.5 text-xs font-medium opacity-65 transition hover:opacity-100" onClick={() => onLocateNode?.(nodeId)}>
-                                <Crosshair className="size-3.5" />
-                                {nodeIds.length > 1 ? `定位结果 ${index + 1}` : "定位到画布结果"}
-                            </button>
-                        ))}
+                    <div className="mt-1 flex flex-wrap justify-end gap-0.5">
+                        {objectStringArray(item.detail, "nodeIds").map((nodeId, index, nodeIds) => {
+                            const locateLabel = nodeIds.length > 1 ? `定位结果 ${index + 1}` : "定位到画布结果";
+                            return (
+                                <Tooltip key={nodeId} title={locateLabel} placement="top" mouseEnterDelay={0.2}>
+                                    <button type="button" className="grid size-7 place-items-center opacity-55 transition hover:opacity-100 focus-visible:opacity-100" onClick={() => onLocateNode?.(nodeId)} aria-label={locateLabel}>
+                                        <Crosshair className="size-4" />
+                                    </button>
+                                </Tooltip>
+                            );
+                        })}
                     </div>
                 ) : null}
                 {!isUser && objectField(item.detail, "runId") && objectField(item.detail, "taskId") ? (

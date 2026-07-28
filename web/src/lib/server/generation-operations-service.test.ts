@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     listStoredGenerationTaskRecords: vi.fn(),
     generationTaskPointsCost: vi.fn(() => 3),
+    findPublicUserIdsByKeyword: vi.fn(),
     getPublicUsersByIds: vi.fn(),
     getAuthSettings: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-store", () => ({ listStoredGenerationTaskRecords: mocks.listStoredGenerationTaskRecords, generationTaskPointsCost: mocks.generationTaskPointsCost }));
-vi.mock("@/lib/auth/store", () => ({ getPublicUsersByIds: mocks.getPublicUsersByIds, getAuthSettings: mocks.getAuthSettings }));
+vi.mock("@/lib/auth/store", () => ({ findPublicUserIdsByKeyword: mocks.findPublicUserIdsByKeyword, getPublicUsersByIds: mocks.getPublicUsersByIds, getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/channel-runtime-health", () => ({
     getChannelRuntimeHealth: vi.fn(() => ({ channelId: "channel-one", capability: "image", consecutiveFailures: 0 })),
     isChannelRuntimeCooling: vi.fn(() => false),
@@ -19,7 +20,8 @@ import { listAdminGenerationOperations } from "./generation-operations-service";
 describe("generation operations aggregation", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", username: "creator", displayName: "创作者" }]);
+        mocks.findPublicUserIdsByKeyword.mockResolvedValue(["user-one"]);
+        mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
         mocks.listStoredGenerationTaskRecords.mockResolvedValue({
             items: [task()],
             all: [task()],
@@ -35,11 +37,12 @@ describe("generation operations aggregation", () => {
     });
 
     it("returns traceable task, point and channel summaries without inventing currency cost", async () => {
-        const result = await listAdminGenerationOperations({ page: 1 });
+        const result = await listAdminGenerationOperations({ page: 1, search: "0001" });
 
         expect(result.items[0]).toMatchObject({
             id: "task-one",
             displayName: "创作者",
+            accountId: "0001",
             surface: "chat",
             conversationId: "conversation-one",
             model: "image-model",
@@ -49,7 +52,8 @@ describe("generation operations aggregation", () => {
         expect(result.summary).toMatchObject({ total: 1, failed: 1, totalPointsCost: 3 });
         expect(result.channels).toEqual([expect.objectContaining({ id: "channel-one", capability: "image", enabled: true, runtimeHealth: { status: "healthy", consecutiveFailures: 0 } })]);
         expect(mocks.getPublicUsersByIds).toHaveBeenCalledWith(["user-one"]);
-        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenCalledWith({ page: 1, includeAll: false });
+        expect(mocks.findPublicUserIdsByKeyword).toHaveBeenCalledWith("0001");
+        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenCalledWith({ page: 1, search: "0001", searchUserIds: ["user-one"], includeAll: false });
         expect(JSON.stringify(result)).not.toContain("amountCents");
     });
 });

@@ -3,7 +3,13 @@ import { AuditLogsRepository } from "./audit-log-repository";
 import { BillingOrderRepository } from "./billing-order-repository";
 import { BillingPaymentRepository } from "./billing-payment-repository";
 import { BillingProductRepository } from "./billing-product-repository";
+import { CouponRepository } from "./coupon-repository";
 import { PointsWalletRepository } from "./points-wallet-repository";
+import { PromotionRepository } from "./promotion-repository";
+import { ReferralRepository } from "./referral-repository";
+import { WorkPublicationRepository } from "./work-publication-repository";
+import { WorkGovernanceRepository } from "./work-governance-repository";
+import { WorkCommunityRepository } from "./work-community-repository";
 import { AnnouncementsRepository, GenerationLogsRepository, PromptsRepository } from "./content-repository";
 import { CdkRepository, PointsRepository, SessionsRepository, UsersRepository } from "./user-repository";
 import type { AppSettingsRecord, EntitlementPlanRecord, JsonValue, SystemModelChannelRecord } from "./repository-shared";
@@ -16,8 +22,48 @@ export type {
     BillingProductRecord,
     BillingReconciliationRowRecord,
     BillingReconciliationRunRecord,
+    CouponRedemptionRecord,
+    CouponTemplateRecord,
     JsonValue,
     PaymentTransactionRecord,
+    PromotionCampaignRecord,
+    PromotionProductRecord,
+    ReferralCodeRecord,
+    ReferralProgramRecord,
+    ReferralRelationshipRecord,
+    ReferralRewardRecord,
+    ReferralRewardStatus,
+    ReferralRiskStatus,
+    PublishedWorkAssetRecord,
+    PublishedWorkAuthorDisplay,
+    PublishedWorkLifecycleStatus,
+    PublishedWorkModerationStatus,
+    PublishedWorkRecord,
+    PublishedWorkSourceType,
+    PublishedWorkSummaryRecord,
+    PublishedWorkVersionRecord,
+    PublishedWorkVisibility,
+    PublishedWorkCaseRecord,
+    PublishedWorkCaseStatus,
+    PublishedWorkCaseSummaryRecord,
+    PublishedWorkCaseType,
+    PublishedGalleryItemRecord,
+    PublishedWorkRankingRecord,
+    UserNotificationRecord,
+    UserNotificationType,
+    WorkCommunityRankingCursor,
+    WorkCommunityRankingWindow,
+    WorkCommunityRelationResultRecord,
+    WorkCommunitySummaryRecord,
+    UserFollowResultRecord,
+    FollowedUserRecord,
+    CommunityUserRecord,
+    LikedPublishedWorkRecord,
+    PublicCreatorProfileRecord,
+    PublicCreatorWorkCursor,
+    UserCommunitySummaryRecord,
+    UserCouponListItemRecord,
+    UserCouponRecord,
     UserSummaryRecord,
     UserPlanAssignmentRecord,
 } from "./repository-shared";
@@ -27,6 +73,8 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
     const billingOrder = new BillingOrderRepository(executor);
     const pointsWallet = new PointsWalletRepository(executor);
     const billingPayment = new BillingPaymentRepository(executor);
+    const promotion = new PromotionRepository(executor);
+    const coupons = new CouponRepository(executor);
 
     return {
         settings: new SettingsRepository(executor),
@@ -41,6 +89,7 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
         billing: {
             listProducts: billingProduct.listProducts.bind(billingProduct),
             getProductById: billingProduct.getProductById.bind(billingProduct),
+            getProductsByIds: billingProduct.getProductsByIds.bind(billingProduct),
             upsertProduct: billingProduct.upsertProduct.bind(billingProduct),
             updateProduct: billingProduct.updateProduct.bind(billingProduct),
             deleteProductIfUnused: billingProduct.deleteProductIfUnused.bind(billingProduct),
@@ -68,6 +117,12 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
             markProviderEventProcessed: billingPayment.markProviderEventProcessed.bind(billingPayment),
             releaseProviderEvent: billingPayment.releaseProviderEvent.bind(billingPayment),
         },
+        promotions: promotion,
+        coupons,
+        referrals: new ReferralRepository(executor),
+        workPublications: new WorkPublicationRepository(executor),
+        workGovernance: new WorkGovernanceRepository(executor),
+        workCommunity: new WorkCommunityRepository(executor),
         auditLogs: new AuditLogsRepository(executor),
     };
 }

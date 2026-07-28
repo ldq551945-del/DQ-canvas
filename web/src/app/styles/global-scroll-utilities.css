@@ -120,4 +120,16 @@
     .hover-scrollbar-hint:hover::after {
         opacity: 1;
     }
+
+    /* Keep every scroll surface usable while removing browser-drawn tracks and thumbs. */
+    :where(*) {
+        -ms-overflow-style: none !important;
+        scrollbar-width: none !important;
+    }
+
+    :where(*)::-webkit-scrollbar {
+        display: none !important;
+        height: 0 !important;
+        width: 0 !important;
+    }
 }

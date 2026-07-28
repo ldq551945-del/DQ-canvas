@@ -6,6 +6,7 @@ import type { TableColumnsType } from "antd";
 import { Check, RefreshCw, Search, X } from "lucide-react";
 
 import type { AccountDeletionRequestStatus, AdminAccountDeletionRequest } from "@/lib/account-deletion-contract";
+import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import { listAdminAccountDeletionRequests, reviewAdminAccountDeletionRequest } from "@/services/api/account-deletion";
 
 import { Panel, PanelHeader } from "./admin-panel";
@@ -73,15 +74,7 @@ export function AdminAccountDeletionSection({ active }: { active: boolean }) {
         {
             title: "用户",
             key: "user",
-            render: (_, item) => (
-                <div className="min-w-0">
-                    <div className="font-medium text-zinc-950 dark:text-zinc-100">{item.displayName || item.username}</div>
-                    <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                        @{item.username}
-                        {item.email ? ` · ${item.email}` : ""}
-                    </div>
-                </div>
-            ),
+            render: (_, item) => <AdminUserIdentity displayName={item.displayName} username={item.username} accountId={item.accountId} />,
         },
         { title: "状态", dataIndex: "status", width: 90, render: (value: AccountDeletionRequestStatus) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag> },
         { title: "申请时间", dataIndex: "requestedAt", width: 170, render: formatTime },
@@ -122,7 +115,7 @@ export function AdminAccountDeletionSection({ active }: { active: boolean }) {
                 }
             />
             <div className="grid gap-3 border-b border-zinc-200 bg-zinc-50/50 p-3 sm:grid-cols-[minmax(0,1fr)_180px_auto] sm:p-5 dark:border-zinc-800 dark:bg-zinc-900/20">
-                <Input allowClear prefix={<Search className="size-4 text-zinc-400" />} placeholder="搜索用户名、昵称或邮箱" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => void load(1)} />
+                <Input allowClear prefix={<Search className="size-4 text-zinc-400" />} placeholder="搜索用户名、昵称、邮箱或用户 ID" value={keyword} onChange={(event) => setKeyword(event.target.value)} onPressEnter={() => void load(1)} />
                 <Select
                     allowClear
                     placeholder="全部状态"
@@ -147,10 +140,7 @@ export function AdminAccountDeletionSection({ active }: { active: boolean }) {
                     {items.map((item) => (
                         <article key={item.id} className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
                             <div className="flex min-w-0 items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                    <div className="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-100">{item.displayName || item.username}</div>
-                                    <div className="mt-1 truncate text-xs text-zinc-500 dark:text-zinc-400">@{item.username}</div>
-                                </div>
+                                <AdminUserIdentity displayName={item.displayName} username={item.username} accountId={item.accountId} className="min-w-0" />
                                 <Tag color={statusColor(item.status)}>{statusLabel(item.status)}</Tag>
                             </div>
                             <div className="mt-3 text-xs leading-5 text-zinc-500 dark:text-zinc-400">

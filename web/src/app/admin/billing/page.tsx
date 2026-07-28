@@ -14,9 +14,9 @@ type AdminBillingPageProps = {
     searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
-type BillingTab = "orders" | "products" | "payments";
+type BillingTab = "orders" | "products" | "promotions" | "coupons" | "payments";
 
-const billingTabs = new Set<BillingTab>(["orders", "products", "payments"]);
+const billingTabs = new Set<BillingTab>(["orders", "products", "promotions", "coupons", "payments"]);
 
 export default async function AdminBillingPage({ searchParams }: AdminBillingPageProps) {
     const params = searchParams ? await searchParams : {};
@@ -35,9 +35,11 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
         <AuthUserHydrator
             user={{
                 id: currentUser.id,
+                accountId: currentUser.accountId,
                 username: currentUser.username,
                 email: currentUser.email,
                 displayName: currentUser.displayName,
+                bio: currentUser.bio,
                 role: currentUser.role,
                 status: currentUser.status,
                 planId: currentUser.planId,
@@ -66,7 +68,7 @@ export default async function AdminBillingPage({ searchParams }: AdminBillingPag
                             </span>
                             <div className="min-w-0">
                                 <h1 className="text-2xl font-semibold tracking-normal text-stone-950 dark:text-stone-100">财务钱包</h1>
-                                <p className="mt-1.5 max-w-2xl text-sm leading-6 text-stone-500 dark:text-stone-400">管理充值套餐、支付配置、订单收款、退款标记和基础对账异常。</p>
+                                <p className="mt-1.5 max-w-2xl text-sm leading-6 text-stone-500 dark:text-stone-400">管理套餐商品、限时促销、优惠券、支付配置、订单收款和退款对账。</p>
                             </div>
                         </div>
                         <Link

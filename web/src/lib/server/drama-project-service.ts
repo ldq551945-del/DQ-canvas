@@ -18,8 +18,8 @@ export class DramaProjectServiceError extends Error {
     }
 }
 
-export function listDramaProjectSummariesForUser(userId: string) {
-    return listDramaProjectSummaries(userId);
+export function listDramaProjectSummariesForUser(userId: string, input: { page?: number; pageSize?: number } = {}) {
+    return listDramaProjectSummaries(userId, input);
 }
 
 export async function getDramaProjectForUser(userId: string, id: string) {

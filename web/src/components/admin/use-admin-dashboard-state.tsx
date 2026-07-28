@@ -160,6 +160,7 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const userRequestIdRef = useRef(0);
     const generationLogRequestIdRef = useRef(0);
     const operationsSummaryRequestIdRef = useRef(0);
+    const announcementRequestIdRef = useRef(0);
     const [users, setUsers] = useState(initialUsers);
     const [userSummary, setUserSummary] = useState(initialUserSummary);
     const [usersLoading, setUsersLoading] = useState(false);
@@ -224,6 +225,8 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
     const [selectedCdkIds, setSelectedCdkIds] = useState<string[]>([]);
     const [bulkDeletingCdk, setBulkDeletingCdk] = useState(false);
     const [announcements, setAnnouncements] = useState<PublicAnnouncement[]>([]);
+    const [announcementPage, setAnnouncementPage] = useState(1);
+    const [announcementTotal, setAnnouncementTotal] = useState(0);
     const [announcementsLoading, setAnnouncementsLoading] = useState(false);
     const [announcementSaving, setAnnouncementSaving] = useState(false);
     const [announcementModalOpen, setAnnouncementModalOpen] = useState(false);
@@ -280,6 +283,7 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         userRequestIdRef,
         generationLogRequestIdRef,
         operationsSummaryRequestIdRef,
+        announcementRequestIdRef,
         users,
         setUsers,
         userSummary,
@@ -408,6 +412,10 @@ export function useAdminDashboardState({ initialUsers, initialUserSummary, initi
         setBulkDeletingCdk,
         announcements,
         setAnnouncements,
+        announcementPage,
+        setAnnouncementPage,
+        announcementTotal,
+        setAnnouncementTotal,
         announcementsLoading,
         setAnnouncementsLoading,
         announcementSaving,

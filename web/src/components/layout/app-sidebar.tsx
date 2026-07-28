@@ -22,7 +22,7 @@ export function AppSidebar({ activeToolSlug, expanded }: { activeToolSlug?: Navi
                 {expanded ? <span className="ml-3 min-w-0 truncate text-sm font-semibold">{site.title || "VOZEB PRO"}</span> : null}
             </Link>
 
-            <nav className={cn("thin-scrollbar min-h-0 flex-1 overflow-y-auto py-4", expanded ? "px-3" : "px-2")} aria-label="工作空间导航">
+            <nav className={cn("hide-scrollbar min-h-0 flex-1 overflow-y-auto py-4", expanded ? "px-3" : "px-2")} aria-label="工作空间导航">
                 {navigationGroups.map((group, groupIndex) => {
                     const tools = navigationTools.filter((tool) => tool.group === group.id);
                     return (

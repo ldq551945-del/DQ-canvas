@@ -6,7 +6,8 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent }
 import { useCallback } from "react";
 
 import { getDataUrlByteSize } from "@/lib/image-utils";
-import { originalImageDownloadUrl, originalImageExtension } from "@/lib/media-image-url";
+import { mediaDownloadFileName } from "@/lib/media-file";
+import { originalImageDownloadUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { type UploadedImage } from "@/services/image-storage";
 import { defaultConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
@@ -25,7 +26,7 @@ const loadAssetPickerModal = () => import("../components/asset-picker-modal").th
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { IMAGE_PROMPT_REVERSE_PRESET, NODE_STATUS_ERROR, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, createCanvasNode } from "./canvas-page-elements";
-import { applyNodeConfigPatch, audioExtension, buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, canvasNodeReferenceImage, imageMetadata, isGenerationCanceled, uploadCanvasImage } from "./canvas-page-utils";
+import { applyNodeConfigPatch, buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, canvasNodeReferenceImage, imageMetadata, isGenerationCanceled, uploadCanvasImage } from "./canvas-page-utils";
 
 import type { CanvasInteractions } from "./use-canvas-interactions";
 import type { CanvasPageState } from "./use-canvas-page-state";
@@ -174,8 +175,8 @@ export function useCanvasNodeMediaActions({ state, tasks, interactions }: { stat
     const downloadNodeImage = useCallback((node: CanvasNodeData) => {
         if ((!isCanvasImageNodeType(node.type) && node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio) || !node.metadata?.content) return;
         const image = isCanvasImageNodeType(node.type);
-        const url = image ? originalImageDownloadUrl(node.metadata.content) : node.metadata.content;
-        saveAs(url, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : node.type === CanvasNodeType.Audio ? audioExtension(node.metadata.mimeType) : originalImageExtension(node.metadata.content)}`);
+        const url = image ? originalImageDownloadUrl(node.metadata.content) : originalMediaDownloadUrl(node.metadata.content);
+        saveAs(url, mediaDownloadFileName(node.id, node.metadata.mimeType, node.metadata.storageKey || node.metadata.serverUrl || node.metadata.content));
     }, []);
 
     const saveNodeAsset = useCallback(

@@ -4,6 +4,7 @@ import { Button, Checkbox, Popconfirm, Tag } from "antd";
 import { Eye, Film, Image as ImageIcon, Trash2 } from "lucide-react";
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import { AdminAccountId } from "@/components/admin/admin-user-identity";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 
@@ -41,6 +42,7 @@ export function GenerationLogMobileCard({ log, selected, onSelectedChange, onVie
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
                         <span>{formatAdminLogTime(log.createdAt)}</span>
                         <span>{log.displayName || log.username}</span>
+                        <AdminAccountId accountId={log.accountId} />
                         <span>{formatAdminLogDuration(log.durationMs)}</span>
                     </div>
                 </div>
@@ -64,7 +66,7 @@ export function GenerationLogDetail({ log }: { log: StoredGenerationLog }) {
     return (
         <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-                <InfoBox label="用户" value={`${log.displayName || log.username} / ${log.username || "-"}`} />
+                <InfoBox label="用户" value={`${log.displayName || log.username} / ${log.username || "-"}${log.accountId ? ` / ID：${log.accountId}` : ""}`} />
                 <InfoBox label="入口" value={generationSourceLabel(log.source)} />
                 <InfoBox label="类型" value={generationKindLabel(log.kind)} />
                 <InfoBox label="状态" value={generationStatusLabel(log.status)} />

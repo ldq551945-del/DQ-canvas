@@ -1,18 +1,23 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { createSession, createUser, isAuthInputError } from "@/lib/auth/store";
 import { readJsonBody } from "@/lib/auth/request";
 import { serializeCurrentUser, setSessionCookie } from "@/lib/auth/session";
 import { checkRateLimit, getClientIp } from "@/lib/server/security";
 import { getInstallStatus } from "@/lib/server/install-status";
+import { REFERRAL_COOKIE_NAME } from "@/lib/server/referral-service";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
     try {
         const install = await getInstallStatus();
         if (!install.ready && !install.firstAdminRequired) return NextResponse.json({ error: "请先完成数据库初始化并配置加密密钥" }, { status: 503 });
-        const body = await readJsonBody<{ username?: string; email?: string; emailCode?: string; displayName?: string; password?: string }>(request);
+        const body = await readJsonBody<{ username?: string; email?: string; emailCode?: string; displayName?: string; password?: string; referralCode?: string; referralSource?: string }>(request);
+        const referralCodeProvided = Object.prototype.hasOwnProperty.call(body, "referralCode");
+        const cookieReferralCode = request.cookies.get(REFERRAL_COOKIE_NAME)?.value;
+        const referralCode = install.firstAdminRequired ? undefined : referralCodeProvided ? body.referralCode?.trim() || undefined : cookieReferralCode;
+        const referralSource = referralCode ? body.referralSource?.trim() || (referralCodeProvided ? "registration-form" : "invite-link") : undefined;
         const registrationIdentity = String(body.username || body.email || "unknown")
             .trim()
             .toLowerCase()
@@ -25,10 +30,14 @@ export async function POST(request: Request) {
             emailCode: body.emailCode,
             displayName: body.displayName,
             password: body.password || "",
+            referralCode,
+            referralSource,
+            referralClientIp: getClientIp(request),
         });
         const sessionValue = await createSession(user.id);
         const response = NextResponse.json({ user: serializeCurrentUser(user) });
         setSessionCookie(response, sessionValue, request);
+        response.cookies.set(REFERRAL_COOKIE_NAME, "", { path: "/", maxAge: 0 });
         return response;
     } catch (error) {
         return authErrorResponse(error);

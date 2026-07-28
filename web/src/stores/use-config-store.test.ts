@@ -43,28 +43,28 @@ describe("applyPublicSystemSettings", () => {
         expect(config.audioModel).toBe("speech-v1");
     });
 
-    it("keeps short Stable Diffusion model names out of video and text candidates", () => {
-        expect(modelMatchesCapability("sd2", "image")).toBe(true);
-        expect(modelMatchesCapability("sd2", "video")).toBe(false);
+    it("routes SD2.0 aliases to video while retaining full Stable Diffusion names as image", () => {
+        expect(modelMatchesCapability("sd2", "image")).toBe(false);
+        expect(modelMatchesCapability("sd2", "video")).toBe(true);
         expect(modelMatchesCapability("sd2", "text")).toBe(false);
+        expect(modelMatchesCapability("sd_2.0_fast_discount_720p", "video")).toBe(true);
+        expect(modelMatchesCapability("stable-diffusion-2.0", "image")).toBe(true);
         expect(modelMatchesCapability("sd3-medium", "image")).toBe(true);
     });
 
     it("falls back from a persisted image model to the administrator video default", () => {
-        const config = applyPublicSystemSettings({ ...defaultConfig, model: "sd2", videoModel: "sd2" }, rawModelSettings());
+        const config = applyPublicSystemSettings({ ...defaultConfig, model: "stable-diffusion-2.0", videoModel: "stable-diffusion-2.0" }, rawModelSettings());
 
-        expect(config.imageModels).toEqual(["sd2"]);
+        expect(config.imageModels).toEqual(["stable-diffusion-2.0"]);
         expect(config.videoModels).toEqual(["video-v1"]);
         expect(config.videoModel).toBe("video-v1");
     });
 
-    it("normalizes public logical models before building video candidates", () => {
-        const config = applyPublicSystemSettings({ ...defaultConfig, model: "sd2", videoModel: "sd2" }, mislabeledLogicalSettings());
+    it("preserves the server-provided logical capability instead of guessing from its name", () => {
+        const config = applyPublicSystemSettings(defaultConfig, explicitLogicalSettings());
 
-        expect(config.logicalModels.find((model) => model.id === "sd2")?.capability).toBe("image");
-        expect(config.imageModels).toEqual(["sd2"]);
-        expect(config.videoModels).toEqual(["video-v1"]);
-        expect(config.videoModel).toBe("video-v1");
+        expect(config.logicalModels.find((model) => model.id === "stable-diffusion-2.0")?.capability).toBe("video");
+        expect(config.videoModels).toEqual(["stable-diffusion-2.0", "video-v1"]);
     });
 
     it("does not expose misleading image-like names on public video models", () => {
@@ -112,7 +112,7 @@ function rawModelSettings(): PublicSystemSettings {
                 baseUrl: "https://api.example.com/v1",
                 apiKey: "",
                 apiFormat: "openai",
-                models: ["sd2", "video-v1"],
+                models: ["stable-diffusion-2.0", "video-v1"],
                 enabled: true,
                 hasApiKey: true,
             },
@@ -121,16 +121,16 @@ function rawModelSettings(): PublicSystemSettings {
     };
 }
 
-function mislabeledLogicalSettings(): PublicSystemSettings {
+function explicitLogicalSettings(): PublicSystemSettings {
     return {
         ...rawModelSettings(),
         logicalModels: [
             {
-                id: "sd2",
-                name: "Stable Diffusion",
+                id: "stable-diffusion-2.0",
+                name: "自定义视频能力",
                 capability: "video",
                 enabled: true,
-                bindings: [{ id: "sd-binding", channelId: "mixed-channel", upstreamModel: "sd2", enabled: true, priority: 1 }],
+                bindings: [{ id: "sd-binding", channelId: "mixed-channel", upstreamModel: "stable-diffusion-2.0", enabled: true, priority: 1 }],
             },
             {
                 id: "video-v1",

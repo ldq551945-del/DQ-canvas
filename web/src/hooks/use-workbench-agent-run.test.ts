@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildWorkbenchAgentFailureUpdate, mergeWorkbenchAgentPatch, workbenchRequiresManualModel } from "./use-workbench-agent-run";
+import { acceptWorkbenchGenerationSubmission, buildWorkbenchAgentFailureUpdate, mergeWorkbenchAgentPatch, workbenchRequiresManualModel } from "./use-workbench-agent-run";
 
 describe("workbench Agent failure update", () => {
     it("marks planning errors as failed with a text-model recovery hint", () => {
@@ -61,5 +61,10 @@ describe("workbench Agent failure update", () => {
         expect(workbenchRequiresManualModel(false, [])).toBe(true);
         expect(workbenchRequiresManualModel(false, ["video-v1"])).toBe(false);
         expect(workbenchRequiresManualModel(true, [])).toBe(false);
+    });
+
+    it("accepts only generation submissions that return a persisted record id", () => {
+        expect(acceptWorkbenchGenerationSubmission("record-1", "图片")).toBe("record-1");
+        expect(() => acceptWorkbenchGenerationSubmission(null, "图片")).toThrow("图片生成任务未能创建");
     });
 });

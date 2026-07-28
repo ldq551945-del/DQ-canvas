@@ -35,7 +35,6 @@ type ImageToolDefinition = {
 
 type ImageQuickToolsConfig = {
     ids: ImageQuickToolId[];
-    showLabels: boolean;
 };
 
 export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v6";
@@ -165,12 +164,11 @@ function normalizeImageQuickToolIds(value: unknown[]) {
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
-    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value), showLabels: true };
-    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, showLabels: true };
+    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value) };
+    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds };
     const data = value as Partial<ImageQuickToolsConfig>;
     return {
         ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
-        showLabels: data.showLabels !== false,
     };
 }
 

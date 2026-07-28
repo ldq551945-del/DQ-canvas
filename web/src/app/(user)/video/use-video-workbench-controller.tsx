@@ -8,12 +8,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
+import { workbenchAttachmentsFromReferences } from "@/components/agent/workbench-agent-references";
 import { findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
 import { preloadWorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { requestCreditCost } from "@/constant/credits";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
+import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
+import { closestImageAspectRatio } from "@/lib/image-size";
+import { mediaDownloadFileName } from "@/lib/media-file";
+import { originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { SEEDANCE_REFERENCE_LIMITS, seedanceVideoReferenceError, seedanceVideoReferenceHint } from "@/lib/seedance-video";
 import { referenceImageFromAsset, referenceVideoFromAsset, videoAssetData } from "@/lib/workbench-asset-reference";
@@ -333,7 +338,7 @@ export function useVideoWorkbenchController() {
         }
     };
 
-    const { agentRunning, runAgentGenerate, cancelAgentRun, creativeReviewContext } = useWorkbenchAgentRun({
+    const { agentRunning, runAgentGenerate, retryAgentMessage, cancelAgentRun, creativeReviewContext } = useWorkbenchAgentRun({
         workspace: "video",
         prompt,
         previousPrompt: lastAgentPrompt,
@@ -341,9 +346,16 @@ export function useVideoWorkbenchController() {
         modelIds: selectedModelIds,
         skillIds: selectedSkill ? [selectedSkill.id] : [],
         smartPlanning,
-        currentConfig: { videoModel: model, size: effectiveConfig.size, vquality: effectiveConfig.vquality, videoSeconds: effectiveConfig.videoSeconds },
+        currentConfig: {
+            videoModel: model,
+            size: effectiveConfig.size,
+            vquality: effectiveConfig.vquality,
+            videoSeconds: effectiveConfig.videoSeconds,
+            referenceAspectRatio: closestImageAspectRatio(references[0]?.width || videoReferences[0]?.width, references[0]?.height || videoReferences[0]?.height),
+        },
         hasReferences: references.length + videoReferences.length + audioReferences.length > 0,
         referenceTypes: [...(references.length ? (["image"] as const) : []), ...(videoReferences.length ? (["video"] as const) : []), ...(audioReferences.length ? (["audio"] as const) : [])],
+        attachments: workbenchAttachmentsFromReferences({ images: references, videos: videoReferences, audio: audioReferences }),
         conversationId: activeCreativeConversationId,
         ensureCreativeConversation,
         setPrompt,
@@ -359,6 +371,11 @@ export function useVideoWorkbenchController() {
             }
         },
         submitGeneration: ({ promptOverride, signal, parameterPatch, conversationId }) => generate({ throwOnFailure: true, keepFailedResult: false, promptOverride, signal, parameterPatch, conversationId }),
+        onRequestSent: () => {
+            setReferences([]);
+            setVideoReferences([]);
+            setAudioReferences([]);
+        },
         onManualModelRequired: requestModelSelection,
     });
     useWorkbenchCreativeReview({
@@ -401,60 +418,46 @@ export function useVideoWorkbenchController() {
             return;
         }
 
-        const retryConfigSource = { ...effectiveConfig, ...currentLog.config };
-        const retryModel = selectVideoModel(retryConfigSource, selectableModelsByCapability(retryConfigSource, "video"), currentLog.config.videoModel || currentLog.model || model);
-        if (!isAiConfigReady(retryConfigSource, retryModel)) {
+        const currentResults = resultsFromLog(currentLog);
+        const retryResultId = currentResults.findLast((result) => result.status === "failed")?.id || currentLog.taskResultId || currentLog.id;
+        const retrySnapshot = snapshotFromLog(currentLog, effectiveConfig, retryResultId);
+        const retryModel = retrySnapshot.config.videoModel || retrySnapshot.config.model;
+        if (!isAiConfigReady(retrySnapshot.config, retryModel)) {
             message.warning("请联系管理员在后台配置可用视频模型");
             openConfigDialog(true);
             return;
         }
-        const retryConfig = buildVideoConfig(retryConfigSource, retryModel);
         const retryStartedAt = Date.now();
-        const pendingLog: GenerationLog = {
-            ...currentLog,
-            createdAt: retryStartedAt,
-            time: new Date(retryStartedAt).toLocaleString("zh-CN", { hour12: false }),
-            config: normalizeLogConfig({ ...currentLog, config: retryConfig }),
-            size: retryConfig.size,
-            resolution: normalizeResolution(retryConfig.vquality),
-            seconds: retryConfig.videoSeconds,
-            status: "生成中",
-            task: undefined,
-            video: undefined,
-            error: undefined,
-            durationMs: 0,
-            resultDeleted: false,
-        };
+        const pendingResults = replaceResult(currentResults, retryResultId, { id: retryResultId, status: "pending" });
+        const pendingLog = buildLogFromVideoResults(currentLog, retrySnapshot, pendingResults, currentLog.durationMs || 0);
 
         beginStartingVideoTask();
         deletedResultLogIdsRef.current.delete(currentLog.id);
         removeQueuedVideoLog(currentLog.id);
         activeLogIdRef.current = currentLog.id;
         setPreviewLog(pendingLog);
-        setResults([{ id: currentLog.id, status: "pending" }]);
+        setResults(pendingResults);
         setSelectedResultIds([]);
 
         try {
-            const retryReferences = currentLog.references || [];
-            const retryVideoReferences = currentLog.videoReferences || [];
-            const retryAudioReferences = currentLog.audioReferences || [];
-            const task = await createServerVideoGenerationTask(retryConfig, currentLog.prompt, retryReferences, retryVideoReferences, retryAudioReferences, {
+            const task = await createServerVideoGenerationTask(retrySnapshot.config, retrySnapshot.text, retrySnapshot.references, retrySnapshot.videoReferences, retrySnapshot.audioReferences, {
                 conversationId: currentLog.creativeConversationId,
                 surface: "chat",
                 source: "video-workbench",
-                attemptNo: 1,
-                clientRequestId: `video-workbench-retry:${currentLog.id}:${retryStartedAt}`,
+                ...createFreshGenerationTaskContext("video-workbench-retry", [currentLog.id, retryResultId]),
             });
-            const nextLog = { ...pendingLog, task };
+            const nextLog = buildLogFromVideoResults(currentLog, retrySnapshot, pendingResults, currentLog.durationMs || 0, undefined, { task, taskResultId: retryResultId });
+            setPreviewLog(nextLog);
             await saveLog(nextLog, { refresh: false });
             finishStartingVideoTask();
-            scheduleVideoLog(nextLog, retryConfig);
+            scheduleVideoLog(nextLog, retrySnapshot.config);
         } catch (error) {
             finishStartingVideoTask();
             const errorMessage = error instanceof Error ? error.message : "生成失败";
-            const failedLog: GenerationLog = { ...pendingLog, status: "失败", task: undefined, error: errorMessage, durationMs: Date.now() - retryStartedAt };
+            const failedResults = replaceResult(pendingResults, retryResultId, { id: retryResultId, status: "failed", error: errorMessage });
+            const failedLog = buildLogFromVideoResults(currentLog, retrySnapshot, failedResults, (currentLog.durationMs || 0) + Date.now() - retryStartedAt, errorMessage);
             setPreviewLog(failedLog);
-            setResults([{ id: currentLog.id, status: "failed", error: errorMessage }]);
+            setResults(failedResults);
             await saveLog(failedLog);
             message.error(errorMessage);
             startQueuedVideoLogs();
@@ -462,7 +465,7 @@ export function useVideoWorkbenchController() {
     };
 
     const downloadVideo = (video: GeneratedVideo) => {
-        saveAs(video.url, "video.mp4");
+        saveAs(originalMediaDownloadUrl(video.url), mediaDownloadFileName(video.id, video.mimeType, video.storageKey || video.serverUrl || video.url));
     };
 
     const saveResultToAssets = async (video: GeneratedVideo) => {
@@ -499,12 +502,11 @@ export function useVideoWorkbenchController() {
     };
 
     const selectVideoModelOption = (value: string) => {
-        setSelectedModelIds((current) => {
-            const next = current.includes(value) ? current.filter((id) => id !== value) : [...current, value].slice(-6);
-            if (next.length) updateConfig("videoModel", current.includes(value) ? next[0] : value);
-            setSmartPlanning(next.length === 0);
-            return next;
-        });
+        const selected = selectedModelIds.includes(value);
+        const next = selected ? selectedModelIds.filter((id) => id !== value) : [...selectedModelIds, value].slice(-6);
+        setSelectedModelIds(next);
+        if (next.length) updateConfig("videoModel", selected ? next[0] : value);
+        setSmartPlanning(next.length === 0);
     };
 
     const enableSmartPlanning = () => {
@@ -633,7 +635,7 @@ export function useVideoWorkbenchController() {
         const taskConfigSource = { ...effectiveConfig, ...log.config };
         const taskConfig = buildVideoConfig(taskConfigSource, selectVideoModel(taskConfigSource, selectableModelsByCapability(taskConfigSource, "video"), log.task.model || log.model));
         const resultId = log.taskResultId || log.id;
-        const snapshot = snapshotFromLog(log, taskConfig);
+        const snapshot = snapshotFromLog(log, taskConfig, resultId);
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 if (deletedResultLogIdsRef.current.has(log.id)) return;
@@ -647,6 +649,7 @@ export function useVideoWorkbenchController() {
                     }
                     const nextVideo: GeneratedVideo = {
                         id: nanoid(),
+                        slotId: resultId,
                         url: stored.url,
                         remoteUrl: stored.remoteUrl,
                         serverUrl: stored.serverUrl,
@@ -658,7 +661,7 @@ export function useVideoWorkbenchController() {
                         mimeType: stored.mimeType,
                     };
                     const latestLog = getLatestLog(log.id) || log;
-                    const nextResults = replaceResult(resultsFromLog(latestLog), resultId, { id: nextVideo.id, status: "success", video: nextVideo });
+                    const nextResults = replaceResult(resultsFromLog(latestLog), resultId, { id: resultId, status: "success", video: nextVideo });
                     const nextLog = buildLogFromVideoResults(latestLog, snapshot, nextResults, (latestLog.durationMs || 0) + nextVideo.durationMs);
                     if (activeLogIdRef.current === log.id) setResults(nextResults);
                     await saveLog(nextLog);
@@ -707,9 +710,9 @@ export function useVideoWorkbenchController() {
         setLastAgentPrompt(session?.lastPrompt || log.prompt);
         setSelectedSkill(undefined);
         resetPlanningToDefault(false);
-        setReferences(log.references || []);
-        setVideoReferences(log.videoReferences || []);
-        setAudioReferences(log.audioReferences || []);
+        setReferences([]);
+        setVideoReferences([]);
+        setAudioReferences([]);
         const historyModel = selectVideoModel(effectiveConfig, videoModelOptions, log.config.videoModel || log.model);
         if (historyModel) updateConfig("videoModel", historyModel);
         if (log.config.size) updateConfig("size", log.config.size);
@@ -887,6 +890,7 @@ export function useVideoWorkbenchController() {
         generate,
         agentRunning,
         runAgentGenerate,
+        retryAgentMessage,
         cancelAgentRun,
         buildRequestSnapshot,
         retryResult,

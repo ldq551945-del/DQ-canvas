@@ -8,12 +8,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
+import { workbenchAttachmentsFromReferences } from "@/components/agent/workbench-agent-references";
 import { findWorkbenchAgentSessionForRecord, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
 import { preloadWorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { requestCreditCost } from "@/constant/credits";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
+import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
+import { closestImageAspectRatio } from "@/lib/image-size";
+import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalImageExtension } from "@/lib/media-image-url";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { resolveImageGenerationCount } from "@/lib/server/image-task-config";
@@ -145,7 +149,7 @@ export function useImageWorkbenchController() {
     const imageTaskQueue = imageTaskQueueRef.current;
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
-    const canGenerate = Boolean(prompt.trim());
+    const canGenerate = Boolean(prompt.trim()) && references.every((reference) => !reference.uploadStatus);
     const generationCount = resolveImageGenerationCount(effectiveConfig.count);
     const imageConcurrencyLimit = Math.max(1, Math.min(10, Math.floor(Number(effectiveConfig.generationConcurrency?.image) || 4)));
     const previewPendingCount = results.filter((result) => result.status === "pending").length;
@@ -215,7 +219,12 @@ export function useImageWorkbenchController() {
         };
     }, [imageTaskQueue]);
 
-    const { addReferences, addReferencesFromClipboard, handleReferenceDragOver, handleReferenceDragLeave, handleReferenceDrop } = useImageReferenceInputs({ references, setReferences, setDragActive: setIsReferenceDragActive, notice: message });
+    const { addReferences, retryReferenceUpload, addReferencesFromClipboard, handleReferenceDragOver, handleReferenceDragLeave, handleReferenceDrop } = useImageReferenceInputs({
+        references,
+        setReferences,
+        setDragActive: setIsReferenceDragActive,
+        notice: message,
+    });
 
     function replaceLogs(nextLogs: GenerationLog[]) {
         const visibleLogs = nextLogs.filter((log) => !deletedLogIdsRef.current.has(log.id));
@@ -304,8 +313,8 @@ export function useImageWorkbenchController() {
 
     function resumePendingLogs(nextLogs: GenerationLog[]) {
         nextLogs.forEach((log) => {
-            const snapshot = snapshotFromLog(log, effectiveConfig);
             (log.imageTasks || []).forEach((pendingTask) => {
+                const snapshot = snapshotFromLog(log, effectiveConfig, pendingTask.resultId);
                 if (taskControllersRef.current.has(log.id, pendingTask.resultId, pendingTask.taskId)) return;
                 const controller = taskControllersRef.current.create(log.id, pendingTask.resultId, pendingTask.taskId);
                 void runQueuedImageTask(log.id, pendingTask.resultId, () => completeGenerationTask(log.id, pendingTask.resultId, pendingTask.index, snapshot, pendingTask, controller))
@@ -410,7 +419,7 @@ export function useImageWorkbenchController() {
         return logId;
     };
 
-    const { agentRunning, runAgentGenerate, cancelAgentRun, creativeReviewContext } = useWorkbenchAgentRun({
+    const { agentRunning, runAgentGenerate, retryAgentMessage, cancelAgentRun, creativeReviewContext } = useWorkbenchAgentRun({
         workspace: "image",
         prompt,
         previousPrompt: lastAgentPrompt,
@@ -418,9 +427,16 @@ export function useImageWorkbenchController() {
         modelIds: selectedModelIds,
         skillIds: selectedSkill ? [selectedSkill.id] : [],
         smartPlanning,
-        currentConfig: { imageModel: effectiveConfig.imageModel, size: effectiveConfig.size, quality: effectiveConfig.quality, count: effectiveConfig.count },
+        currentConfig: {
+            imageModel: effectiveConfig.imageModel,
+            size: effectiveConfig.size,
+            quality: effectiveConfig.quality,
+            count: effectiveConfig.count,
+            referenceAspectRatio: closestImageAspectRatio(references[0]?.width, references[0]?.height),
+        },
         hasReferences: references.length > 0,
         referenceTypes: references.length ? ["image"] : [],
+        attachments: workbenchAttachmentsFromReferences({ images: references }),
         conversationId: activeCreativeConversationId,
         ensureCreativeConversation,
         setPrompt,
@@ -433,6 +449,10 @@ export function useImageWorkbenchController() {
             if (patch.model) updateConfig("imageModel", String(patch.model));
         },
         submitGeneration: ({ promptOverride, signal, parameterPatch, conversationId }) => generate({ promptOverride, signal, parameterPatch, conversationId }),
+        onRequestSent: () => {
+            setReferences([]);
+            updateConfig("count", "1");
+        },
         onManualModelRequired: requestModelSelection,
     });
     useWorkbenchCreativeReview({
@@ -452,7 +472,7 @@ export function useImageWorkbenchController() {
             message.error("图片不可用，无法下载");
             return;
         }
-        saveAs(originalImageDownloadUrl(image.dataUrl), `image-${index + 1}.${originalImageExtension(image.dataUrl)}`);
+        saveAs(originalImageDownloadUrl(image.dataUrl), mediaDownloadFileName(image.id || `image-${index + 1}`, image.mimeType, image.storageKey || image.serverUrl || image.dataUrl));
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
@@ -465,13 +485,15 @@ export function useImageWorkbenchController() {
             ...value,
             {
                 id: nanoid(),
-                name: `result-${index + 1}.png`,
+                name: `result-${index + 1}.${originalImageExtension(stored.url, stored.mimeType)}`,
                 type: stored.mimeType,
                 dataUrl: stored.url,
                 storageKey: stored.storageKey,
                 url: image.remoteUrl || image.serverUrl,
                 remoteUrl: image.remoteUrl,
                 serverUrl: image.serverUrl,
+                width: stored.width,
+                height: stored.height,
             },
         ]);
         message.success("已加入参考图");
@@ -516,12 +538,11 @@ export function useImageWorkbenchController() {
     };
 
     const selectImageModel = (value: string) => {
-        setSelectedModelIds((current) => {
-            const next = current.includes(value) ? current.filter((id) => id !== value) : [...current, value].slice(-6);
-            if (next.length) updateConfig("imageModel", current.includes(value) ? next[0] : value);
-            setSmartPlanning(next.length === 0);
-            return next;
-        });
+        const selected = selectedModelIds.includes(value);
+        const next = selected ? selectedModelIds.filter((id) => id !== value) : [...selectedModelIds, value].slice(-6);
+        setSelectedModelIds(next);
+        if (next.length) updateConfig("imageModel", selected ? next[0] : value);
+        setSmartPlanning(next.length === 0);
     };
 
     const enableSmartPlanning = () => {
@@ -540,6 +561,7 @@ export function useImageWorkbenchController() {
         setPrompt("");
         setSelectedSkill(undefined);
         resetPlanningToDefault(true);
+        updateConfig("count", "1");
         setReferences([]);
         setResults([]);
         setSelectedLogIds([]);
@@ -618,12 +640,12 @@ export function useImageWorkbenchController() {
         setLastAgentPrompt(session?.lastPrompt || currentLog.prompt);
         setSelectedSkill(undefined);
         resetPlanningToDefault(false);
-        setReferences(currentLog.references || []);
+        setReferences([]);
         setSelectedResultIds([]);
         if (currentLog.config.imageModel || currentLog.model) updateConfig("imageModel", currentLog.config.imageModel || currentLog.model);
         if (currentLog.config.quality) updateConfig("quality", currentLog.config.quality);
         if (currentLog.config.size) updateConfig("size", currentLog.config.size);
-        if (currentLog.config.count) updateConfig("count", currentLog.config.count);
+        updateConfig("count", "1");
         setLogResults(currentLog.id, getLogResults(currentLog));
         if (session && !session.loaded)
             void loadAgentSession(session)
@@ -656,7 +678,7 @@ export function useImageWorkbenchController() {
         return { text, config: { ...requestConfig, model: requestModel, count: "1" }, references: [...references], count: resolveImageGenerationCount(requestConfig.count) };
     };
 
-    const runGenerationSlot = async (logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, batchStartedAt: number, baseDurationMs: number) => {
+    const runGenerationSlot = async (logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, batchStartedAt: number, baseDurationMs: number, retryRequest = false) => {
         const itemStartedAt = Date.now();
         try {
             const latestTitle = getLatestLog(logId)?.title || snapshot.text.slice(0, 36) || "生图工作台";
@@ -666,7 +688,7 @@ export function useImageWorkbenchController() {
                 logTitle: latestTitle,
                 conversationId,
                 surface: "chat",
-                clientRequestId: `image-workbench:${logId}:${resultId}`,
+                ...(retryRequest ? createFreshGenerationTaskContext("image-workbench-retry", [logId, resultId]) : { clientRequestId: `image-workbench:${logId}:${resultId}` }),
             });
             const pendingTask: PendingImageTask = { resultId, taskId: task.id, kind: task.kind, model: task.model, index, startedAt: itemStartedAt };
             const controller = taskControllersRef.current.create(logId, resultId, task.id);
@@ -681,12 +703,12 @@ export function useImageWorkbenchController() {
     const retryResult = (index: number) => {
         const currentLog = previewLog ? getLatestLog(previewLog.id) || previewLog : null;
         if (!currentLog) return;
-        const snapshot = snapshotFromLog(currentLog, effectiveConfig);
         const currentResult = getLogResults(currentLog)[index];
         if (!currentResult) return;
+        const snapshot = snapshotFromLog(currentLog, effectiveConfig, currentResult.id);
         const batchStartedAt = performance.now();
         patchLogResultAt(currentLog.id, index, { status: "pending", error: undefined, image: undefined, task: undefined }, snapshot, currentLog.durationMs || 0);
-        void runQueuedImageTask(currentLog.id, currentResult.id, () => runGenerationSlot(currentLog.id, currentResult.id, index, snapshot, batchStartedAt, currentLog.durationMs || 0))
+        void runQueuedImageTask(currentLog.id, currentResult.id, () => runGenerationSlot(currentLog.id, currentResult.id, index, snapshot, batchStartedAt, currentLog.durationMs || 0, true))
             .then((image) => {
                 if (image) message.success("图片已重新生成");
             })
@@ -836,6 +858,7 @@ export function useImageWorkbenchController() {
         previewPendingCount,
         pointsCost,
         addReferences,
+        retryReferenceUpload,
         handleReferenceDragOver,
         handleReferenceDragLeave,
         handleReferenceDrop,
@@ -855,6 +878,7 @@ export function useImageWorkbenchController() {
         generate,
         agentRunning,
         runAgentGenerate,
+        retryAgentMessage,
         cancelAgentRun,
         downloadImage,
         addResultToReferences,

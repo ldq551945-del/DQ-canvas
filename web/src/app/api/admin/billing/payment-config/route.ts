@@ -6,6 +6,7 @@ import type { PaymentProviderId } from "@/lib/payment-config-types";
 import { PAYMENT_PROVIDER_DEFINITIONS } from "@/lib/payment-config-types";
 import { savePaymentProviderConfig } from "@/lib/server/payment-config-store";
 import { getPaymentConfigSummary } from "@/lib/server/payment-config-status";
+import { BillingInputError } from "@/lib/server/billing-errors";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,7 @@ export async function PATCH(request: Request) {
         return NextResponse.json({ paymentConfig: await getPaymentConfigSummary(origin) });
     } catch (error) {
         console.error("Payment config save failed", error);
-        return NextResponse.json({ error: error instanceof Error ? error.message : "保存支付配置失败" }, { status: 500 });
+        return NextResponse.json({ error: error instanceof Error ? error.message : "保存支付配置失败" }, { status: error instanceof BillingInputError ? error.status : 500 });
     }
 }
 

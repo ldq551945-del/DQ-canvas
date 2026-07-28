@@ -19,7 +19,7 @@ export function videoAssetData(stored: StoredVideo, source: RemoteSource): Video
 export function referenceImageFromAsset(payload: PickedImage, stored: StoredImage, id: string): ReferenceImage {
     const remoteUrl = clean(payload.remoteUrl);
     const serverUrl = clean(payload.serverUrl);
-    return { id, name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, url: serverUrl || remoteUrl, remoteUrl, serverUrl };
+    return { id, name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, url: serverUrl || remoteUrl, remoteUrl, serverUrl, width: stored.width, height: stored.height };
 }
 
 export function referenceVideoFromAsset(payload: PickedVideo, id: string): ReferenceVideo {

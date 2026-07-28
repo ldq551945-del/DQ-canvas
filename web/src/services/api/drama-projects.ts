@@ -1,7 +1,10 @@
 import type { CreateDramaProjectInput, DramaCostSummary, DramaEpisode, DramaProject, DramaProjectSummary, DramaProjectVersion, DramaVisualReview } from "@/lib/drama-project-contract";
 
-export async function listDramaProjectSummaries() {
-    return request<{ projects: DramaProjectSummary[] }>("/api/drama/projects").then((data) => data.projects);
+export type DramaProjectSummaryResponse = { projects: DramaProjectSummary[]; total: number; page: number; pageSize: number };
+
+export function listDramaProjectSummaries(input: { page?: number; pageSize?: number } = {}) {
+    const query = new URLSearchParams({ page: String(input.page || 1), pageSize: String(input.pageSize || 12) });
+    return request<DramaProjectSummaryResponse>(`/api/drama/projects?${query}`);
 }
 
 export async function getDramaProject(id: string) {

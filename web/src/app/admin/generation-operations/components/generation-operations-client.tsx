@@ -6,6 +6,7 @@ import { Activity, CircleStop, Clock3, Coins, RefreshCw, RotateCcw, Route, Serve
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Panel } from "@/components/admin/admin-panel";
+import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
 
 const PAGE_SIZE = 20;
@@ -106,13 +107,8 @@ export function GenerationOperationsClient() {
             },
             {
                 title: "用户",
-                width: 150,
-                render: (_, task) => (
-                    <div>
-                        <div className="text-sm font-medium">{task.displayName}</div>
-                        <div className="mt-1 truncate text-xs text-zinc-500">{task.username || task.userId}</div>
-                    </div>
-                ),
+                width: 210,
+                render: (_, task) => <AdminUserIdentity displayName={task.displayName} username={task.username} accountId={task.accountId} fallback="用户信息不可用" />,
             },
             {
                 title: "模型 / 入口",
@@ -165,7 +161,7 @@ export function GenerationOperationsClient() {
     const summary = data?.summary;
     return (
         <Panel>
-            <section className="grid grid-cols-2 gap-px border-b border-zinc-200 bg-zinc-200 p-px dark:border-zinc-800 dark:bg-zinc-800 sm:grid-cols-3 xl:grid-cols-5">
+            <section className="grid grid-cols-2 gap-px border-b border-zinc-200 bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-800 sm:grid-cols-3 xl:grid-cols-5">
                 <Metric icon={<Activity />} label="任务总数" value={summary?.total || 0} />
                 <Metric icon={<Route />} label="执行中" value={summary?.active || 0} />
                 <Metric icon={<CircleStop />} label="失败" value={summary?.failed || 0} />
@@ -174,12 +170,12 @@ export function GenerationOperationsClient() {
             </section>
 
             <section className="p-3 sm:p-5">
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(130px,180px))_auto] md:gap-3">
+                <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(130px,180px))_auto] xl:gap-3">
                     <Input.Search
-                        className="col-span-2 md:col-span-1"
+                        className="col-span-2 xl:col-span-1"
                         value={search}
                         allowClear
-                        placeholder="任务、用户、模型、会话或项目"
+                        placeholder="任务、用户或用户 ID、模型、会话或项目"
                         enterButton="筛选"
                         onChange={(event) => setSearch(event.target.value)}
                         onSearch={(value) => {
@@ -207,21 +203,23 @@ export function GenerationOperationsClient() {
                             setStatus(value || "");
                         }}
                     />
-                    <Select
-                        className="col-span-2 md:col-span-1"
-                        value={surface || undefined}
-                        allowClear
-                        placeholder="创作入口"
-                        options={[
-                            { value: "chat", label: "创作对话" },
-                            { value: "canvas", label: "Canvas" },
-                            { value: "drama", label: "短剧" },
-                        ]}
-                        onChange={(value) => {
-                            setPage(1);
-                            setSurface(value || "");
-                        }}
-                    />
+                    <div className="col-span-2 min-w-0 xl:col-span-1">
+                        <Select
+                            className="w-full"
+                            value={surface || undefined}
+                            allowClear
+                            placeholder="创作入口"
+                            options={[
+                                { value: "chat", label: "创作对话" },
+                                { value: "canvas", label: "Canvas" },
+                                { value: "drama", label: "短剧" },
+                            ]}
+                            onChange={(value) => {
+                                setPage(1);
+                                setSurface(value || "");
+                            }}
+                        />
+                    </div>
                     <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
                         刷新
                     </Button>
@@ -301,9 +299,10 @@ function TaskCard({ task, actingId, onAction }: { task: AdminGenerationTask; act
                 </div>
             </div>
             <div className="mt-3 font-mono text-xs text-zinc-500">{task.id}</div>
-            <div className="mt-2 text-sm">
-                {task.displayName} · {task.model || "未记录模型"}
+            <div className="mt-3">
+                <AdminUserIdentity displayName={task.displayName} username={task.username} accountId={task.accountId} fallback="用户信息不可用" />
             </div>
+            <div className="mt-2 text-sm">{task.model || "未记录模型"}</div>
             <p className="mt-2 line-clamp-3 text-sm leading-5 text-zinc-600 dark:text-zinc-300">{task.prompt || task.error || "无请求摘要"}</p>
             <div className="mt-3 text-xs text-zinc-500">
                 {surfaceLabel(task.surface)} · {formatDuration(task.durationMs)} · {task.pointsCost} 积分

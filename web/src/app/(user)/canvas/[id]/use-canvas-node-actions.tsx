@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback } from "react";
 
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
+import { resizeImageNodeToNaturalRatio } from "../utils/canvas-node-size";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -113,6 +114,19 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setConnections((prev) => prev.filter((conn) => conn.id !== connectionId));
         setSelectedConnectionId((current) => (current === connectionId ? null : current));
         setContextMenu((current) => (current?.type === "connection" && current.connectionId === connectionId ? null : current));
+    }, []);
+
+    const handleImageDimensions = useCallback((nodeId: string, naturalWidth: number, naturalHeight: number) => {
+        setNodes((prev) => {
+            let changed = false;
+            const next = prev.map((node) => {
+                if (node.id !== nodeId || node.type !== CanvasNodeType.Image) return node;
+                const resized = resizeImageNodeToNaturalRatio(node, naturalWidth, naturalHeight);
+                if (resized !== node) changed = true;
+                return resized;
+            });
+            return changed ? next : prev;
+        });
     }, []);
 
     const deselectCanvas = useCallback(() => {
@@ -236,6 +250,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         createNode,
         deleteNodes,
         deleteConnection,
+        handleImageDimensions,
         deselectCanvas,
         clearCanvas,
         duplicateNode,

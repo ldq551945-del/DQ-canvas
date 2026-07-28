@@ -3,6 +3,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { QueryExecutor } from "./postgres";
 import { BillingOrderRepository } from "./billing-order-repository";
 
+describe("BillingOrderRepository.listOrders", () => {
+    it("searches orders by padded public account id", async () => {
+        const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
+        const repository = new BillingOrderRepository({ query } as unknown as QueryExecutor);
+
+        await repository.listOrders({ keyword: "0001", page: 1, pageSize: 20 });
+
+        expect(String(query.mock.calls[0]?.[0])).toContain("lpad(users.account_id::text, 4, '0') LIKE $6");
+        expect(query.mock.calls[0]?.[1]).toEqual([null, null, null, null, "0001", "%0001%", 20, 0]);
+    });
+});
+
 describe("BillingOrderRepository.getSummary", () => {
     it("returns the financial summary with one bounded aggregate query", async () => {
         const query = vi.fn(async (..._args: unknown[]) => ({
@@ -87,5 +99,21 @@ describe("BillingOrderRepository.getSummary", () => {
         expect(String(sql)).toContain("order_row.status NOT IN ('paid', 'refunded')");
         expect(String(sql)).not.toMatch(/SELECT\s+\*/i);
         expect(params).toEqual(["2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z"]);
+    });
+});
+
+describe("BillingOrderRepository.expirePendingOrders", () => {
+    it("closes a locked batch and releases only coupons owned by those orders", async () => {
+        const query = vi.fn(async (..._args: unknown[]) => ({ rows: [] }));
+        const repository = new BillingOrderRepository({ query } as unknown as QueryExecutor);
+
+        await repository.expirePendingOrders({ expiredAt: "2026-07-26T00:00:00.000Z", limit: 100 });
+
+        const [sql, params] = query.mock.calls[0] || [];
+        expect(String(sql)).toContain("FOR UPDATE SKIP LOCKED");
+        expect(String(sql)).toContain("released_coupons AS");
+        expect(String(sql)).toContain("coupon.locked_order_id = orders.id");
+        expect(String(sql)).toContain("CASE WHEN coupon.expires_at <= $1 THEN 'expired' ELSE 'available' END");
+        expect(params).toEqual(["2026-07-26T00:00:00.000Z", 100, null, "订单超时自动关闭", "expiration-job"]);
     });
 });

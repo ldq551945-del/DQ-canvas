@@ -16,6 +16,7 @@ import { resolveAudioTaskOptions } from "@/lib/server/audio-task-config";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { mediaTaskSource } from "@/lib/media-management-contract";
+import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -148,7 +149,7 @@ async function runAudioTask(task: AudioTask, origin: string, cookie: string) {
 async function createAudioUpstream(task: AudioTask, origin: string, cookie: string, payload: Record<string, unknown>) {
     let lastError = "";
     for (const path of providerCreatePaths(task.config.advancedConfig, ["/audio/speech"])) {
-        const response = await providerFetch(task, origin, cookie, path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(3 * 60 * 1000) });
+        const response = await providerFetch(task, origin, cookie, path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(task.config, "audio")) });
         if (response.ok) return { response, path };
         lastError = readAudioError(await response.text(), response.status);
     }
@@ -156,12 +157,12 @@ async function createAudioUpstream(task: AudioTask, origin: string, cookie: stri
 }
 
 async function pollAudioUpstream(task: AudioTask, origin: string, cookie: string, id: string, createPath: string) {
-    for (let attempt = 0; attempt < 180; attempt += 1) {
+    for (let attempt = 0; attempt < resolveModelPollingAttempts(task.config, "audio", 2_500, 180); attempt += 1) {
         const latest = await getAudioTask(task.id);
         if (!latest || latest.status === "cancelled") throw new Error("任务已取消");
         let lastError = "";
         for (const path of providerQueryPaths(task.config.advancedConfig, id, [`${createPath.replace(/\/+$/, "")}/${encodeURIComponent(id)}`])) {
-            const response = await providerFetch(task, origin, cookie, path, { cache: "no-store", signal: AbortSignal.timeout(60 * 1000) });
+            const response = await providerFetch(task, origin, cookie, path, { cache: "no-store", signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "audio"), 60_000)) });
             const text = await response.text();
             if (!response.ok) {
                 lastError = readAudioError(text, response.status);
@@ -207,7 +208,7 @@ async function persistRemoteAudio(task: AudioTask, origin: string, cookie: strin
         return;
     }
     const path = /^https?:\/\//i.test(remoteUrl) ? `/_media?url=${encodeURIComponent(remoteUrl)}` : `/${remoteUrl.replace(/^\/+/, "")}`;
-    const response = await providerFetch(task, origin, cookie, path, { signal: AbortSignal.timeout(3 * 60 * 1000) });
+    const response = await providerFetch(task, origin, cookie, path, { signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(task.config, "audio")) });
     if (!response.ok) throw new Error(readAudioError(await response.text(), response.status));
     await persistAudioBytes(task, origin, Buffer.from(await response.arrayBuffer()), response.headers.get("content-type")?.split(";")[0] || "");
 }

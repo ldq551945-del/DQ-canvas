@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquare, ClipboardPaste, Download, FolderPlus, ImagePlus, PenLine, Sparkles, Square, Trash2, Upload } from "lucide-react";
+import { CheckSquare, CircleAlert, ClipboardPaste, Download, FolderPlus, ImagePlus, LoaderCircle, PenLine, Sparkles, Square, Trash2, Upload } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { App, Button, Drawer, Image, Modal, Tooltip, Typography } from "antd";
@@ -16,6 +16,7 @@ import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-d
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
+import { workbenchReferencesFromAttachments } from "@/components/agent/workbench-agent-references";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
@@ -151,6 +152,7 @@ export default function ImagePage() {
         previewPendingCount,
         pointsCost,
         addReferences,
+        retryReferenceUpload,
         handleReferenceDragOver,
         handleReferenceDragLeave,
         handleReferenceDrop,
@@ -170,6 +172,7 @@ export default function ImagePage() {
         generate,
         agentRunning,
         runAgentGenerate,
+        retryAgentMessage,
         cancelAgentRun,
         downloadImage,
         addResultToReferences,
@@ -239,10 +242,12 @@ export default function ImagePage() {
                                     if (choice.action === "upload") fileInputRef.current?.click();
                                     else setPrompt(choice.prompt || choice.description);
                                 }}
-                                onEditMessage={(text) => {
-                                    setPrompt(text);
+                                onEditMessage={(editedMessage) => {
+                                    setPrompt(editedMessage.text);
+                                    setReferences(workbenchReferencesFromAttachments(editedMessage.attachments).images);
                                     message.info("已回填消息，可修改后重新发送");
                                 }}
+                                onRetryMessage={retryAgentMessage}
                             />
                         ) : (
                             <WorkbenchSkillEmptyState skills={availableSkills} onSelect={selectSkill} />
@@ -292,7 +297,9 @@ export default function ImagePage() {
                                 value={prompt}
                                 placeholder="今天我们要创作什么，可直接粘贴文字或图片"
                                 onChange={setPrompt}
-                                onSubmit={() => void runAgentGenerate()}
+                                onSubmit={() => {
+                                    if (canGenerate) void runAgentGenerate();
+                                }}
                                 onPasteFiles={(files) => void addReferences(files)}
                                 onOpenPrompts={() => setPromptDialogOpen(true)}
                                 onOpenAssets={() => setAssetPickerOpen(true)}
@@ -327,12 +334,29 @@ export default function ImagePage() {
                                 >
                                     {references.map((item, index) => (
                                         <div key={item.id} className="group relative size-16 shrink-0 overflow-hidden rounded-xl border border-stone-200 dark:border-stone-800">
-                                            <img src={imagePreviewUrl(item.dataUrl, 256)} alt={item.name} className="size-full object-cover" />
+                                            <img src={item.previewUrl || imagePreviewUrl(item.dataUrl, 256)} alt={item.name} className="size-full object-cover" />
                                             <span className="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">{imageReferenceLabel(index)}</span>
+                                            {item.uploadStatus === "uploading" ? (
+                                                <span className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-black/45 text-[10px] font-medium text-white backdrop-blur-[1px]" title={item.uploadError}>
+                                                    <LoaderCircle className="size-4 animate-spin" />
+                                                    上传中
+                                                </span>
+                                            ) : item.uploadStatus === "failed" ? (
+                                                <button
+                                                    type="button"
+                                                    className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-red-950/70 text-[10px] font-medium text-white backdrop-blur-[1px] transition hover:bg-red-950/80"
+                                                    title={item.uploadError || "参考图上传失败"}
+                                                    onClick={() => void retryReferenceUpload(item.id)}
+                                                    aria-label={`重试上传参考图：${item.name}`}
+                                                >
+                                                    <CircleAlert className="size-4" />
+                                                    点击重试
+                                                </button>
+                                            ) : null}
                                             <ReferenceOrderButtons index={index} total={references.length} onMove={(offset) => setReferences((value) => moveListItem(value, index, offset))} />
                                             <button
                                                 type="button"
-                                                className="absolute right-1 top-1 flex size-6 items-center justify-center rounded bg-white/95 text-red-600 opacity-90 shadow-sm ring-1 ring-red-200 transition hover:opacity-100 dark:bg-black/70 dark:text-red-200 dark:ring-red-900/60"
+                                                className="absolute right-1 top-1 z-20 flex size-6 items-center justify-center rounded bg-white/95 text-red-600 opacity-90 shadow-sm ring-1 ring-red-200 transition hover:opacity-100 dark:bg-black/70 dark:text-red-200 dark:ring-red-900/60"
                                                 onClick={() => setReferences((value) => value.filter((ref) => ref.id !== item.id))}
                                                 aria-label="移除参考图"
                                             >

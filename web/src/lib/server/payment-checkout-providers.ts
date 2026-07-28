@@ -1,9 +1,11 @@
 import { createSign, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
+import { DEFAULT_ALIPAY_PAYMENT_MODE, isAlipayPaymentMode } from "@/lib/payment-config-types";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 import type { BillingOrderRecord, JsonValue } from "@/lib/server/database";
+import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
 import type { CreatePaymentCheckoutOptions, PaymentCheckoutKind, PaymentCheckoutResult } from "./payment-checkout-types";
 
 export async function createProviderCheckout(provider: string, order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
@@ -77,29 +79,33 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
     };
 }
 
-function createAlipayCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): PaymentCheckoutResult {
+async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+    if (order.currency.toUpperCase() !== "CNY") throw new BillingInputError("支付宝仅支持人民币 CNY 订单", 400);
     const appId = requiredConfig(paymentConfig, "VOZEB_PRO_ALIPAY_APP_ID");
     const privateKey = loadPrivateKey(paymentConfig, "VOZEB_PRO_ALIPAY_PRIVATE_KEY", "VOZEB_PRO_ALIPAY_PRIVATE_KEY_PATH");
     const origin = resolveOrigin(options.origin);
     const gateway = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_GATEWAY_URL") || "https://openapi.alipay.com/gateway.do";
+    const modeValue = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_MODE") || DEFAULT_ALIPAY_PAYMENT_MODE;
+    if (!isAlipayPaymentMode(modeValue)) throw new BillingInputError("支付宝接入方式配置无效", 500);
     const params: Record<string, string> = {
         app_id: appId,
-        method: "alipay.trade.page.pay",
+        method: modeValue === "face_to_face" ? "alipay.trade.precreate" : "alipay.trade.page.pay",
         charset: "utf-8",
         sign_type: "RSA2",
         timestamp: alipayTimestamp(),
         version: "1.0",
         notify_url: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/alipay`,
-        return_url: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_RETURN_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}`,
         biz_content: JSON.stringify({
             out_trade_no: order.orderNo,
             total_amount: centsToDecimal(order.amountCents),
             subject: order.subject,
-            product_code: "FAST_INSTANT_TRADE_PAY",
+            product_code: modeValue === "face_to_face" ? "FACE_TO_FACE_PAYMENT" : "FAST_INSTANT_TRADE_PAY",
             passback_params: order.id,
         }),
     };
+    if (modeValue === "official") params.return_url = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_RETURN_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}`;
     params.sign = signAlipayParams(params, privateKey);
+    if (modeValue === "face_to_face") return createAlipayFaceToFaceCheckout(gateway, params, order, paymentConfig);
     return {
         provider: "alipay",
         orderId: order.id,
@@ -110,6 +116,79 @@ function createAlipayCheckout(order: BillingOrderRecord, options: CreatePaymentC
         providerOrderId: order.orderNo,
         expiresAt: order.expiresAt,
     };
+}
+
+async function createAlipayFaceToFaceCheckout(gateway: string, params: Record<string, string>, order: BillingOrderRecord, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
+    const response = await fetch(gateway, {
+        method: "POST",
+        headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(params),
+    });
+    const rawBody = await response.text();
+    const payload = parseJsonObject(rawBody);
+    const result = readPath(payload, "alipay_trade_precreate_response");
+    const resultObject = result && typeof result === "object" && !Array.isArray(result) ? (result as Record<string, unknown>) : {};
+    if (!response.ok) {
+        throw new BillingInputError(readAlipayPrecreateError(payload), response.status >= 500 ? 502 : 400);
+    }
+    const resultCode = normalizeText(resultObject.code, "", 20);
+    if (!resultCode) throw new BillingInputError("支付宝当面付返回格式无效", 502);
+    if (resultCode !== "10000") throw new BillingInputError(readAlipayPrecreateError(payload), 400);
+    const responseSign = normalizeText(payload.sign, "", 2000);
+    const signContent = extractJsonObjectValue(rawBody, "alipay_trade_precreate_response");
+    const publicKey = loadPaymentPublicKey(paymentConfig, "VOZEB_PRO_ALIPAY_PUBLIC_KEY", "VOZEB_PRO_ALIPAY_PUBLIC_KEY_PATH");
+    if (!responseSign || !signContent || !verifyRsaSha256(signContent, responseSign, publicKey)) throw new BillingInputError("支付宝当面付响应验签失败", 502);
+    const responseOrderNo = normalizeText(resultObject.out_trade_no, "", 160);
+    if (!responseOrderNo || responseOrderNo !== order.orderNo) throw new BillingInputError("支付宝当面付返回的订单号不匹配", 502);
+    const qrCode = normalizeText(resultObject.qr_code, "", 2000);
+    if (!qrCode) throw new BillingInputError("支付宝当面付未返回有效二维码", 502);
+    return {
+        provider: "alipay",
+        orderId: order.id,
+        orderNo: order.orderNo,
+        kind: "qr",
+        url: qrCode,
+        qrContent: qrCode,
+        providerOrderId: responseOrderNo,
+        providerPaymentId: normalizeOptionalText(resultObject.trade_no, 160),
+        expiresAt: order.expiresAt,
+    };
+}
+
+function parseJsonObject(value: string) {
+    try {
+        const parsed = JSON.parse(value) as unknown;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+        return {};
+    }
+}
+
+function extractJsonObjectValue(rawBody: string, key: string) {
+    const keyIndex = rawBody.indexOf(JSON.stringify(key));
+    if (keyIndex < 0) return "";
+    const separatorIndex = rawBody.indexOf(":", keyIndex + key.length + 2);
+    if (separatorIndex < 0) return "";
+    let start = separatorIndex + 1;
+    while (/\s/.test(rawBody[start] || "")) start += 1;
+    if (rawBody[start] !== "{") return "";
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < rawBody.length; index += 1) {
+        const character = rawBody[index];
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (character === "\\") escaped = true;
+            else if (character === '"') inString = false;
+            continue;
+        }
+        if (character === '"') inString = true;
+        else if (character === "{") depth += 1;
+        else if (character === "}" && --depth === 0) return rawBody.slice(start, index + 1);
+    }
+    return "";
 }
 
 async function createWechatNativeCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
@@ -329,6 +408,12 @@ function readStripeError(payload: Record<string, unknown>) {
 
 function readWechatError(payload: Record<string, unknown>) {
     return normalizeText(payload.message || payload.code, "微信支付下单失败", 300);
+}
+
+function readAlipayPrecreateError(payload: Record<string, unknown>) {
+    const result = readPath(payload, "alipay_trade_precreate_response");
+    const item = result && typeof result === "object" && !Array.isArray(result) ? (result as Record<string, unknown>) : {};
+    return normalizeText(item.sub_msg || item.msg || item.sub_code || item.code || readPath(payload, "message"), "支付宝当面付下单失败", 300);
 }
 
 function readPayplyError(payload: Record<string, unknown>) {

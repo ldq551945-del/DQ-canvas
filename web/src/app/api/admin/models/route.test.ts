@@ -20,8 +20,69 @@ describe("admin models route", () => {
         const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: "gpt-test" }] }), { status: 200, headers: { "content-type": "application/json" } }));
         vi.stubGlobal("fetch", fetchMock);
         const response = await POST(request({ channelId: "saved" }));
-        expect(await response.json()).toEqual({ models: ["gpt-test"] });
+        expect(await response.json()).toMatchObject({ models: ["gpt-test"], modelCapabilities: { "gpt-test": "text" }, discoveredCount: 1, totalCount: 1 });
         expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", expect.objectContaining({ headers: { authorization: "Bearer test-secret-value" } }));
+    });
+
+    it("loads every paginated provider model page and returns capability metadata", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(Response.json({ data: [{ id: "writer-v1", type: "text" }], has_more: true, last_id: "writer-v1" }))
+            .mockResolvedValueOnce(Response.json({ data: [{ id: "image-v1", type: "image" }], has_more: false }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved" }));
+        const payload = await response.json();
+
+        expect(payload).toMatchObject({ models: ["image-v1", "writer-v1"], modelCapabilities: { "image-v1": "image", "writer-v1": "text" }, discoveredCount: 2, totalCount: 2 });
+        expect(fetchMock.mock.calls[1][0]).toBe("https://api.example.com/v1/models?after=writer-v1");
+    });
+
+    it("merges the complete Agnes official catalog when its models endpoint only returns video", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ data: [{ id: "agnes-video-v2.0", type: "video" }] })),
+        );
+
+        const response = await POST(request({ channelId: "saved", baseUrl: "https://apihub.agnes-ai.com/v1" }));
+        const payload = await response.json();
+
+        expect(payload.models).toEqual(expect.arrayContaining(["agnes-2.0-flash", "agnes-image-2.0-flash", "agnes-image-2.1-flash", "agnes-video-v2.0"]));
+        expect(payload.modelCapabilities).toMatchObject({ "agnes-2.0-flash": "text", "agnes-image-2.0-flash": "image", "agnes-image-2.1-flash": "image", "agnes-video-v2.0": "video" });
+        expect(payload).toMatchObject({
+            provider: "agnes",
+            recommendedConfig: { textModel: "agnes-2.0-flash", imageModel: "agnes-image-2.1-flash", videoModel: "agnes-video-v2.0" },
+            modelConfigs: { "agnes-video-v2.0": { capability: "video", createPath: "/videos", queryPath: "/agnesapi?video_id=:task_id" } },
+        });
+    });
+
+    it("keeps manually configured models when the provider returns a partial catalog", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ data: [{ id: "video-only", type: "video" }] })),
+        );
+
+        const response = await POST(request({ channelId: "saved", configuredModels: ["manual-text"], modelCapabilities: { "manual-text": "text" } }));
+
+        expect(await response.json()).toMatchObject({ models: ["manual-text", "video-only"], modelCapabilities: { "manual-text": "text", "video-only": "video" }, discoveredCount: 1, totalCount: 2 });
+    });
+
+    it("merges company-specific text and video catalog paths", async () => {
+        const fetchMock = vi.fn(async (url: string | URL | Request) => {
+            const value = String(url);
+            if (value.endsWith("/v1/text-models")) return Response.json({ data: { text: ["openai-text"] } });
+            if (value.endsWith("/v1/video-models")) return Response.json({ data: { video: [{ id: "sd2.0", endpoint: "/videos", query_path: "/videos/:task_id" }] } });
+            return Response.json({ detail: "Not Found" }, { status: 404 });
+        });
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved", modelCatalogPaths: ["/v1/text-models", "/v1/video-models"] }));
+
+        expect(await response.json()).toMatchObject({
+            models: ["openai-text", "sd2.0"],
+            modelCapabilities: { "openai-text": "text", "sd2.0": "video" },
+            modelConfigs: { "sd2.0": { capability: "video", createPath: "/videos", queryPath: "/videos/:task_id" } },
+        });
     });
 
     it("returns the complete built-in GlobalAiOpc vendor catalog without requesting an unavailable models endpoint", async () => {
@@ -73,7 +134,7 @@ describe("admin models route", () => {
         const response = await POST(request({ channelId: "saved" }));
 
         expect(response.status).toBe(422);
-        expect(await response.json()).toEqual({ error: "该上游未提供模型列表接口，请在高级设置的“模型列表”手动填写模型名称；不影响已配置的视频生成接口。" });
+        expect(await response.json()).toEqual({ error: "该上游未提供模型列表接口，请在高级设置的“模型列表”手动填写模型名称；手工模型会在后续拉取时保留。" });
     });
 
     it("returns an explicit timeout diagnosis", async () => {

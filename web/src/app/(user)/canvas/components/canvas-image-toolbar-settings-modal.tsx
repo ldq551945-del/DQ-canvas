@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Button, Card, Form, Modal, Space, Switch, Tag, Tooltip, Typography, theme as antdTheme } from "antd";
+import { Button, Card, Form, Modal, Space, Tag, Tooltip, Typography, theme as antdTheme } from "antd";
 import { Check, Ellipsis, Image as ImageIcon, Settings2 } from "lucide-react";
 
 import type { ImageQuickToolId } from "./canvas-image-toolbar-tools";
@@ -37,18 +37,14 @@ export function ImageToolSettingsModal({
     open,
     tools,
     selectedIds,
-    showLabels,
     onToggle,
-    onShowLabelsChange,
     onCancel,
     onSave,
 }: {
     open: boolean;
     tools: ImageToolbarSettingsTool[];
     selectedIds: ImageQuickToolId[];
-    showLabels: boolean;
     onToggle: (id: ImageQuickToolId, visible: boolean) => void;
-    onShowLabelsChange: (value: boolean) => void;
     onCancel: () => void;
     onSave: () => void;
 }) {
@@ -107,7 +103,7 @@ export function ImageToolSettingsModal({
             resizeObserver?.disconnect();
             window.removeEventListener("resize", syncPreviewScroll);
         };
-    }, [open, selectedIds, showLabels, previewTools.length, syncPreviewScroll]);
+    }, [open, selectedIds, previewTools.length, syncPreviewScroll]);
 
     const scrollbarWidth = scrollbarTrackRef.current?.clientWidth || previewScroll.viewport;
     const scrollbarThumbWidth = previewScroll.max > 0 ? Math.min(scrollbarWidth, Math.max(64, (previewScroll.viewport / previewScroll.content) * scrollbarWidth)) : scrollbarWidth;
@@ -122,11 +118,7 @@ export function ImageToolSettingsModal({
             onCancel={onCancel}
             destroyOnHidden
             footer={
-                <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                        <span>显示按钮文字</span>
-                        <Switch checked={showLabels} onChange={onShowLabelsChange} />
-                    </div>
+                <div className="flex justify-end">
                     <Space>
                         <Button onClick={onCancel}>取消</Button>
                         <Button type="primary" onClick={onSave}>
@@ -158,7 +150,7 @@ export function ImageToolSettingsModal({
                         onScroll={syncPreviewScroll}
                     >
                         {previewTools.map((tool) => (
-                            <PreviewToolbarItem key={tool.id} tool={tool} showLabels={showLabels} />
+                            <PreviewToolbarItem key={tool.id} tool={tool} />
                         ))}
                     </div>
                     <div
@@ -221,14 +213,11 @@ export function ImageToolSettingsModal({
     );
 }
 
-function PreviewToolbarItem({ tool, showLabels }: { tool: PreviewTool; showLabels: boolean }) {
+function PreviewToolbarItem({ tool }: { tool: PreviewTool }) {
     return (
         <Tooltip title={tool.title}>
             <span className="flex h-12 shrink-0 items-center px-1.5" style={{ color: tool.danger ? "#ef4444" : undefined }}>
-                <span className={`flex h-9 items-center rounded-lg px-2 ${showLabels ? "gap-2" : "justify-center"}`}>
-                    {tool.icon}
-                    {showLabels ? <span className="whitespace-nowrap">{tool.label}</span> : null}
-                </span>
+                <span className="flex size-9 items-center justify-center rounded-lg">{tool.icon}</span>
             </span>
         </Tooltip>
     );

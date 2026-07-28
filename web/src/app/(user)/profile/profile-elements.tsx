@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { Button, Input, Pagination, Select, Spin, Tag } from "antd";
-import { CreditCard, History, ReceiptText, RefreshCw, Save, ShieldCheck, UserCircle, WalletCards } from "lucide-react";
+import { CreditCard, History, ReceiptText, RefreshCw, Save, ShieldCheck, TicketPercent, UserCircle, UserPlus, WalletCards } from "lucide-react";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { BillingPlanGrid } from "@/components/billing/billing-plan-grid";
@@ -11,20 +11,23 @@ import { cn } from "@/lib/utils";
 import { type BillingOrder, type BillingOrderStatus, type BillingProduct } from "@/services/api/billing";
 import type { PointRecord } from "@/services/api/points";
 import { useUserStore } from "@/stores/use-user-store";
+import { ProfileAvatarUploader } from "@/components/profile/profile-avatar-uploader";
 
-export type ProfileSectionKey = "overview" | "profile" | "billing" | "orders" | "consume" | "points" | "security";
+export type ProfileSectionKey = "overview" | "profile" | "billing" | "coupons" | "referrals" | "orders" | "consume" | "points" | "security";
 
 export const RECORD_PAGE_SIZE = 8;
 export const ORDER_PAGE_SIZE = 8;
 
 export const profileSections: Array<{ key: ProfileSectionKey; label: string; description: string; shortDescription: string; icon: ReactNode }> = [
     { key: "overview", label: "账户概览", description: "查看当前套餐、积分余额、最近订单和最近积分流水。", shortDescription: "资产摘要", icon: <WalletCards className="size-4" /> },
-    { key: "profile", label: "个人资料", description: "维护登录用户名、显示昵称和绑定邮箱。", shortDescription: "资料与邮箱", icon: <UserCircle className="size-4" /> },
+    { key: "profile", label: "个人资料", description: "维护头像、显示昵称和个人简介。", shortDescription: "头像与资料", icon: <UserCircle className="size-4" /> },
     { key: "billing", label: "套餐中心", description: "在个人中心内选择套餐，支付时进入独立安全结算页。", shortDescription: "购买套餐", icon: <CreditCard className="size-4" /> },
+    { key: "coupons", label: "我的优惠券", description: "领取优惠券并查看可用、锁定、已使用和过期状态。", shortDescription: "领取与状态", icon: <TicketPercent className="size-4" /> },
     { key: "orders", label: "订单记录", description: "查看所有充值订单、支付状态和开通结果。", shortDescription: "收款状态", icon: <ReceiptText className="size-4" /> },
-    { key: "consume", label: "消费记录", description: "查看模型调用、生成任务和接口消费扣除。", shortDescription: "积分扣除", icon: <History className="size-4" /> },
     { key: "points", label: "积分记录", description: "查看每日积分、充值赠送、退款退回和管理员调整流水。", shortDescription: "余额流水", icon: <CreditSymbol className="text-sm" /> },
-    { key: "security", label: "账号安全", description: "修改登录密码，修改后需要重新登录。", shortDescription: "密码设置", icon: <ShieldCheck className="size-4" /> },
+    { key: "consume", label: "消费记录", description: "查看模型调用、生成任务和接口消费扣除。", shortDescription: "积分扣除", icon: <History className="size-4" /> },
+    { key: "referrals", label: "邀请有礼", description: "复制邀请码和邀请链接，查看注册、首单与奖励进度。", shortDescription: "拉新与奖励", icon: <UserPlus className="size-4" /> },
+    { key: "security", label: "账户与安全", description: "管理绑定邮箱、登录密码和个人数据。", shortDescription: "邮箱与密码", icon: <ShieldCheck className="size-4" /> },
 ];
 
 export const profilePrimaryButtonClass = "profile-primary-button";
@@ -110,28 +113,63 @@ export function BillingCenterSection({ products, productsLoading, onRefresh, onC
 
 export function ProfileForm({
     user,
+    displayName,
+    bio,
+    savingProfile,
+    onDisplayNameChange,
+    onBioChange,
+    onSave,
+}: {
+    user: ReturnType<typeof useUserStore.getState>["user"];
+    displayName: string;
+    bio: string;
+    savingProfile: boolean;
+    onDisplayNameChange: (value: string) => void;
+    onBioChange: (value: string) => void;
+    onSave: () => void;
+}) {
+    return (
+        <div className="max-w-2xl">
+            <ProfileAvatarUploader />
+            <div className="mt-3 grid gap-3 sm:mt-4 sm:grid-cols-2 sm:gap-4">
+                <label className="block min-w-0 space-y-2">
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">登录用户名</span>
+                    <Input value={user?.username || ""} disabled />
+                </label>
+                <label className="block min-w-0 space-y-2">
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">显示昵称</span>
+                    <Input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} />
+                </label>
+                <label className="block min-w-0 space-y-2 sm:col-span-2">
+                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">个人简介</span>
+                    <Input.TextArea value={bio} maxLength={160} showCount autoSize={{ minRows: 3, maxRows: 5 }} placeholder="介绍你的创作方向、擅长领域或常用风格" onChange={(event) => onBioChange(event.target.value)} />
+                </label>
+                <Button className={`${profilePrimaryButtonClass} w-fit sm:col-span-2`} type="primary" icon={<Save className="size-4" />} loading={savingProfile} onClick={onSave}>
+                    保存资料
+                </Button>
+            </div>
+        </div>
+    );
+}
+
+export function AccountEmailForm({
     boundEmail,
     emailChanged,
-    displayName,
     email,
     emailCode,
     sendingCode,
-    savingProfile,
-    onDisplayNameChange,
+    savingEmail,
     onEmailChange,
     onEmailCodeChange,
     onSendEmailCode,
     onSave,
 }: {
-    user: ReturnType<typeof useUserStore.getState>["user"];
     boundEmail: string;
     emailChanged: boolean;
-    displayName: string;
     email: string;
     emailCode: string;
     sendingCode: boolean;
-    savingProfile: boolean;
-    onDisplayNameChange: (value: string) => void;
+    savingEmail: boolean;
     onEmailChange: (value: string) => void;
     onEmailCodeChange: (value: string) => void;
     onSendEmailCode: () => void;
@@ -139,24 +177,16 @@ export function ProfileForm({
 }) {
     return (
         <div className="max-w-2xl">
-            <div className="rounded-xl border border-stone-200 bg-stone-50/80 p-3 text-sm leading-6 text-stone-700 dark:border-stone-800 dark:bg-stone-900/70 dark:text-stone-200">
-                <div className="font-medium">{boundEmail ? "当前绑定邮箱" : "当前未绑定邮箱"}</div>
-                <div className="mt-1 break-all text-stone-500 dark:text-stone-400">{boundEmail || "绑定邮箱后可用于找回密码和接收验证码。"}</div>
+            <div>
+                <h3 className="text-sm font-semibold text-stone-950 dark:text-white">绑定邮箱</h3>
+                <p className="mt-1 break-all text-sm leading-6 text-stone-500 dark:text-stone-400">{boundEmail || "绑定邮箱后可用于找回密码和接收验证码。"}</p>
             </div>
-            <div className="mt-3 space-y-3 sm:mt-4 sm:space-y-4">
-                <label className="block space-y-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">登录用户名</span>
-                    <Input value={user?.username || ""} disabled />
-                </label>
-                <label className="block space-y-2">
-                    <span className="text-sm font-medium text-stone-700 dark:text-stone-200">显示昵称</span>
-                    <Input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} />
-                </label>
-                <label className="block space-y-2">
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <label className="block min-w-0 space-y-2">
                     <span className="text-sm font-medium text-stone-700 dark:text-stone-200">{boundEmail ? "修改邮箱" : "绑定邮箱"}</span>
-                    <Input value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="csyqlz@gmail.com" />
+                    <Input value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="请输入邮箱地址" />
                 </label>
-                <label className="block space-y-2">
+                <label className="block min-w-0 space-y-2">
                     <span className="text-sm font-medium text-stone-700 dark:text-stone-200">邮箱验证码</span>
                     <Input.Search
                         className="profile-email-code-search"
@@ -169,8 +199,8 @@ export function ProfileForm({
                         onSearch={onSendEmailCode}
                     />
                 </label>
-                <Button className={profilePrimaryButtonClass} type="primary" icon={<Save className="size-4" />} loading={savingProfile} onClick={onSave}>
-                    保存资料
+                <Button className={`${profilePrimaryButtonClass} w-fit sm:col-span-2`} type="primary" icon={<Save className="size-4" />} loading={savingEmail} disabled={!emailChanged || !email.trim()} onClick={onSave}>
+                    保存邮箱
                 </Button>
             </div>
         </div>

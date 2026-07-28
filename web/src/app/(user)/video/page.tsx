@@ -26,6 +26,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
+import { workbenchReferencesFromAttachments } from "@/components/agent/workbench-agent-references";
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
@@ -169,6 +170,7 @@ export default function VideoPage() {
         generate,
         agentRunning,
         runAgentGenerate,
+        retryAgentMessage,
         cancelAgentRun,
         buildRequestSnapshot,
         retryResult,
@@ -236,10 +238,15 @@ export default function VideoPage() {
                                     if (choice.action === "upload") fileInputRef.current?.click();
                                     else setPrompt(choice.prompt || choice.description);
                                 }}
-                                onEditMessage={(text) => {
-                                    setPrompt(text);
+                                onEditMessage={(editedMessage) => {
+                                    const restored = workbenchReferencesFromAttachments(editedMessage.attachments);
+                                    setPrompt(editedMessage.text);
+                                    setReferences(restored.images);
+                                    setVideoReferences(restored.videos);
+                                    setAudioReferences(restored.audio);
                                     message.info("已回填消息，可修改后重新发送");
                                 }}
+                                onRetryMessage={retryAgentMessage}
                             />
                         ) : (
                             <WorkbenchSkillEmptyState skills={availableSkills} onSelect={selectSkill} />

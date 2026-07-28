@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
+import { Select } from "antd";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { audioFormatOptions, audioSpeedLabel, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
@@ -57,19 +58,9 @@ export function AudioSettingsPanel({ config, onConfigChange, theme, showTitle = 
 
 function AudioSelect({ value, options, theme, onChange }: { value: string; options: Array<{ value: string; label: string }>; theme: CanvasTheme; onChange: (value: string) => void }) {
     return (
-        <select
-            className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm outline-none"
-            style={{ borderColor: theme.node.stroke, color: theme.node.text }}
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            onMouseDown={(event) => event.stopPropagation()}
-        >
-            {options.map((item) => (
-                <option key={item.value} value={item.value}>
-                    {item.label}
-                </option>
-            ))}
-        </select>
+        <span className="block [&_.ant-select]:w-full" onMouseDown={(event) => event.stopPropagation()}>
+            <Select value={value} options={options} onChange={onChange} />
+        </span>
     );
 }
 

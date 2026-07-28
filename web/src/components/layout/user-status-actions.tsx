@@ -57,24 +57,28 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
     const avatarUrl = user?.avatarUrl?.trim();
     const avatarFallback = userAvatarFallback(user?.displayName || user?.username || "用户");
     const accountName = user?.displayName || user?.username || "用户";
-    const accountSecondary = user?.email?.trim() || (user?.username && user.username !== accountName ? user.username : "");
+    const accountSecondary = user ? `ID：${user.accountId}` : "";
     const accountItems: MenuProps["items"] = [
         {
             type: "group",
             label: (
-                <div className="min-w-64 py-1">
-                    <div className="flex items-center gap-3">
+                <div className="w-full py-0.5">
+                    <div className="flex items-center gap-2.5">
                         {avatarUrl ? (
-                            <img src={avatarUrl} alt="" className="size-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
+                            <img src={avatarUrl} alt="" className="size-9 rounded-lg object-cover" referrerPolicy="no-referrer" />
                         ) : (
-                            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#66758e] text-xs font-semibold text-white dark:bg-[#d8dee8] dark:text-[#252b33]">{avatarFallback}</span>
+                            <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#66758e] text-[11px] font-semibold text-white dark:bg-[#d8dee8] dark:text-[#252b33]">{avatarFallback}</span>
                         )}
                         <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-semibold text-stone-950 dark:text-stone-100">{accountName}</div>
-                            {accountSecondary ? <div className="mt-0.5 truncate text-xs text-stone-400 dark:text-stone-500">{accountSecondary}</div> : <div className="mt-0.5 text-xs text-stone-400 dark:text-stone-500">VOZEB 创作账户</div>}
+                            {accountSecondary ? (
+                                <div className="mt-0.5 truncate text-xs text-stone-400 dark:text-stone-500" title={accountSecondary}>
+                                    {accountSecondary}
+                                </div>
+                            ) : null}
                         </div>
                     </div>
-                    <div className="mt-3 rounded-xl border border-stone-200 bg-stone-50 p-3 dark:border-stone-800 dark:bg-stone-900/70">
+                    <div className="mt-2.5 rounded-lg border border-stone-200 bg-stone-50 p-2.5 dark:border-stone-800 dark:bg-stone-900/70">
                         <div className="flex items-center justify-between gap-3">
                             <div className="min-w-0">
                                 <div className="text-[11px] text-stone-400 dark:text-stone-500">当前套餐</div>
@@ -82,7 +86,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                             </div>
                             <button
                                 type="button"
-                                className="account-upgrade-button inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-stone-950 px-3 text-xs font-semibold shadow-sm transition hover:bg-black dark:bg-white dark:hover:bg-stone-100"
+                                className="account-upgrade-button inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-stone-950 px-2.5 text-[11px] font-semibold transition hover:bg-black dark:bg-white dark:hover:bg-stone-100"
                                 aria-label="升级套餐"
                                 title="升级套餐"
                                 onClick={(event) => {
@@ -95,7 +99,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                                 <Crown className="size-3.5" /> 升级套餐
                             </button>
                         </div>
-                        <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-stone-200 pt-2.5 text-xs dark:border-stone-800">
+                        <div className="mt-2 flex items-center justify-between gap-3 border-t border-stone-200 pt-2 text-xs dark:border-stone-800">
                             <span className="text-stone-500 dark:text-stone-400">积分余额</span>
                             <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-stone-900 dark:text-stone-100">
                                 <CreditSymbol className="text-sm text-[#66758e] dark:text-[#d8dee8]" />

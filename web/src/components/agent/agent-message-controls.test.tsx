@@ -36,14 +36,14 @@ describe("agent message controls", () => {
         );
         const video = renderToStaticMarkup(
             <App>
-                <AgentMediaPreview type="video" url="/generated/video.mp4" title="生成视频" />
+                <AgentMediaPreview type="video" url="/generated/video.mp4" title="生成视频" fit="contain" />
             </App>,
         );
 
         expect(image).toContain("查看大图");
         expect(image).toContain('src="/generated/image.png"');
         expect(image).toContain("object-contain");
-        expect(image).toContain("max-h-[min(42dvh,360px)]");
+        expect(image).toContain("!size-full object-contain");
         expect(image).not.toContain("object-cover");
         expect(agentMediaPreviewPopupStyles.popup.root).toMatchObject({ position: "fixed", inset: 0, width: "100vw", height: "100dvh" });
         expect(agentMediaPreviewPopupStyles.popup.mask).toMatchObject({ position: "fixed", inset: 0 });
@@ -51,11 +51,18 @@ describe("agent message controls", () => {
         expect(image).not.toContain("rootClassName");
         expect(video).toContain('aria-label="打开视频：生成视频"');
         expect(video).toContain('src="/generated/video.mp4"');
+        expect(video).toContain("object-contain");
+        expect(video).not.toContain("object-cover");
     });
 
     it("builds safe download names and hides upstream JSON errors", () => {
-        expect(agentMediaDownloadName("image", "小狗/竖版", "/generated/image.webp?token=1")).toBe("小狗-竖版.webp");
-        expect(agentMediaDownloadName("video", "短片.mp4", "/generated/video.mp4")).toBe("短片.mp4");
+        const imageName = agentMediaDownloadName("image", "小狗/竖版", "/generated/image.webp?token=1");
+        const videoName = agentMediaDownloadName("video", "短片.mp4", "/generated/video.mp4");
+        expect(imageName).toMatch(/^\d{8}-\d{6}-[a-f0-9]{8}\.png$/);
+        expect(videoName).toMatch(/^\d{8}-\d{6}-[a-f0-9]{8}\.mp4$/);
+        expect(agentMediaDownloadName("video", "短片", "/api/reference-assets/video.mp4", "video/quicktime")).toMatch(/^\d{8}-\d{6}-[a-f0-9]{8}\.mov$/);
+        expect(agentMediaDownloadName("image", "海报.webp", "/api/reference-assets/image.webp", "image/png")).toMatch(/^\d{8}-\d{6}-[a-f0-9]{8}\.png$/);
+        expect(imageName).not.toBe(videoName);
         expect(formatAgentMessageText('{"error":{"message":"/backend-anon/conversation failed: status=403"}}')).toBe("当前模型暂不可用，请切换模型或稍后重试。");
         expect(formatAgentMessageText('{"code":400,"data":null,"msg":"积分不足，无法生成"}')).toBe("积分不足");
     });

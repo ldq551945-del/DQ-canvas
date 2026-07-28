@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DramaProject } from "@/lib/drama-project-contract";
 
-const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>() }));
+const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>(), provider: "file" as "file" | "postgres", postgresQuery: vi.fn(), ensurePostgresSchema: vi.fn() }));
 
 vi.mock("@/lib/server/database", () => ({
-    ensurePostgresSchema: vi.fn(),
-    getDatabaseProvider: vi.fn(() => "file"),
-    postgresQuery: vi.fn(),
+    ensurePostgresSchema: mocks.ensurePostgresSchema,
+    getDatabaseProvider: vi.fn(() => mocks.provider),
+    postgresQuery: mocks.postgresQuery,
 }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async (name: string, fallback: unknown) => structuredClone(mocks.files.has(name) ? mocks.files.get(name) : fallback)),
@@ -19,22 +19,63 @@ vi.mock("@/lib/server/data-adapter", () => ({
 import { createDramaProject, deleteDramaProject, getDramaProject, listDramaProjectSummaries, updateDramaProject } from "./drama-project-store";
 
 describe("drama project file provider", () => {
-    beforeEach(() => mocks.files.clear());
+    beforeEach(() => {
+        mocks.files.clear();
+        mocks.provider = "file";
+        mocks.postgresQuery.mockReset();
+        mocks.ensurePostgresSchema.mockReset();
+    });
 
     it("keeps projects isolated by user across create, update and delete", async () => {
         await createDramaProject("user-one", project("one", "项目一"));
         await createDramaProject("user-two", project("two", "项目二"));
 
-        const summaries = await listDramaProjectSummaries("user-one");
-        expect(summaries).toMatchObject([{ id: "one", title: "项目一", episodeCount: 1, shotCount: 0 }]);
-        expect(summaries[0]).not.toHaveProperty("episodes");
+        const summaries = await listDramaProjectSummaries("user-one", { page: 1, pageSize: 10 });
+        expect(summaries).toMatchObject({ items: [{ id: "one", title: "项目一", episodeCount: 1, shotCount: 0 }], total: 1, page: 1, pageSize: 10 });
+        expect(summaries.items[0]).not.toHaveProperty("episodes");
         expect(await getDramaProject("two", "user-one")).toBeNull();
 
         await expect(updateDramaProject("user-one", project("two", "越权修改"))).rejects.toMatchObject({ status: 404 });
         expect(await deleteDramaProject("user-one", "two")).toBe(false);
         expect(await deleteDramaProject("user-one", "one")).toBe(true);
-        expect(await listDramaProjectSummaries("user-one")).toEqual([]);
-        expect(await listDramaProjectSummaries("user-two")).toHaveLength(1);
+        expect(await listDramaProjectSummaries("user-one")).toMatchObject({ items: [], total: 0 });
+        expect((await listDramaProjectSummaries("user-two")).items).toHaveLength(1);
+    });
+
+    it("paginates lightweight summaries in the file provider", async () => {
+        await createDramaProject("user-one", { ...project("one", "项目一"), updatedAt: "2026-07-28T01:00:00.000Z" });
+        await createDramaProject("user-one", { ...project("two", "项目二"), updatedAt: "2026-07-28T02:00:00.000Z" });
+        await createDramaProject("user-one", { ...project("three", "项目三"), updatedAt: "2026-07-28T03:00:00.000Z" });
+
+        await expect(listDramaProjectSummaries("user-one", { page: 2, pageSize: 2 })).resolves.toMatchObject({ items: [{ id: "one" }], total: 3, page: 2, pageSize: 2 });
+    });
+
+    it("uses a bounded PostgreSQL summary query", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValue({
+            rows: [
+                {
+                    id: "drama-one",
+                    title: "项目一",
+                    status: "active",
+                    summary: "",
+                    style: "电影感",
+                    ratio: "9:16",
+                    episode_count: 1,
+                    character_count: 0,
+                    scene_count: 0,
+                    shot_count: 0,
+                    pending_task_count: 0,
+                    failed_task_count: 0,
+                    total_count: 25,
+                    created_at: "2026-07-28T01:00:00.000Z",
+                    updated_at: "2026-07-28T02:00:00.000Z",
+                },
+            ],
+        });
+
+        await expect(listDramaProjectSummaries("user-one", { page: 2, pageSize: 12 })).resolves.toMatchObject({ total: 25, page: 2, pageSize: 12, items: [{ id: "drama-one" }] });
+        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringMatching(/COUNT\(\*\) OVER\(\)[\s\S]*LIMIT \$2 OFFSET \$3/), ["user-one", 12, 12]);
     });
 
     it("persists multi-episode task state in the aggregate snapshot", async () => {

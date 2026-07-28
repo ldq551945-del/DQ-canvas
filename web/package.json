@@ -7,7 +7,7 @@
         "dev": "next dev --webpack -H 0.0.0.0 -p 3000",
         "build": "next build",
         "start": "next start",
-        "start:standalone": "node scripts/start-standalone.mjs",
+        "start:standalone": "node --env-file-if-exists=.env.local scripts/start-standalone.mjs",
         "test": "vitest run",
         "sync:prompt-library": "node scripts/sync-awesome-gpt-image-2-prompts.mjs",
         "reset:admin-password": "node scripts/reset-admin-password.mjs",

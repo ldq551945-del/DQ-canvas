@@ -102,11 +102,13 @@ CREATE TABLE IF NOT EXISTS system_model_channels (
     models jsonb NOT NULL DEFAULT '[]'::jsonb,
     enabled boolean NOT NULL DEFAULT true,
     advanced_config jsonb,
+    health_results jsonb NOT NULL DEFAULT '{}'::jsonb,
     sort_order integer NOT NULL DEFAULT 0,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT system_model_channels_api_format CHECK (api_format IN ('openai', 'gemini'))
 );
+ALTER TABLE system_model_channels ADD COLUMN IF NOT EXISTS health_results jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE SEQUENCE IF NOT EXISTS user_account_id_seq START WITH 1;
 

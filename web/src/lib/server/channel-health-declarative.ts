@@ -1,4 +1,5 @@
 import type { SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol } from "@/lib/auth/store";
+import type { ChannelHealthKind as SharedChannelHealthKind, ChannelHealthResult as SharedChannelHealthResult } from "@/lib/channel-health-result";
 import { channelProtocolDefinition, protocolAuthHeaders, protocolModelConfig } from "@/lib/channel-protocol-registry";
 import { normalizeModelId } from "@/lib/model-capability";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
@@ -6,43 +7,8 @@ import { normalizeModelConfigs } from "@/lib/server/admin-model-catalog";
 import { sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
 import { buildProviderRequest, isProviderBusinessError, readProviderString } from "@/lib/server/provider-task-config";
 
-export type ChannelHealthKind = "text" | "image" | "video" | "audio";
-
-export type ChannelHealthResult = {
-    ok: boolean;
-    kind: ChannelHealthKind;
-    model: string;
-    status: number;
-    protocolKey?: SystemChannelProtocol;
-    protocol?: string;
-    referenceHint?: string;
-    createPath?: string;
-    editPath?: string;
-    imageToVideoPath?: string;
-    queryPath?: string;
-    cancelPath?: string;
-    cancelMethod?: "POST" | "DELETE";
-    requestTemplate?: string;
-    resultField?: string;
-    statusField?: string;
-    durationRange?: string;
-    referenceRule?: string;
-    supportsReferenceImage?: boolean;
-    supportsReferenceVideo?: boolean;
-    supportsReferenceAudio?: boolean;
-    referenceImageTest?: {
-        ok: boolean;
-        status: number;
-        taskId?: string;
-        remoteUrl?: string;
-        error?: string;
-    };
-    pointsCost?: number;
-    pointsRemaining?: number;
-    taskId?: string;
-    remoteUrl?: string;
-    error?: string;
-};
+export type ChannelHealthKind = SharedChannelHealthKind;
+export type ChannelHealthResult = SharedChannelHealthResult;
 
 const HEALTH_REQUEST_TIMEOUT_MS = 60_000;
 

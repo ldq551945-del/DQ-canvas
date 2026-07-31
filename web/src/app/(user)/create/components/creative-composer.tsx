@@ -416,7 +416,6 @@ function useHorizontalMouseDragScroll<T extends HTMLElement>() {
     const onPointerDown: PointerEventHandler<T> = (event) => {
         if (event.pointerType !== "mouse" || event.button !== 0) return;
         dragRef.current = { pointerId: event.pointerId, startX: event.clientX, startScrollLeft: event.currentTarget.scrollLeft, moved: false };
-        event.currentTarget.setPointerCapture(event.pointerId);
     };
 
     const onPointerMove: PointerEventHandler<T> = (event) => {
@@ -424,7 +423,10 @@ function useHorizontalMouseDragScroll<T extends HTMLElement>() {
         if (drag.pointerId !== event.pointerId) return;
         const distance = event.clientX - drag.startX;
         if (!drag.moved && Math.abs(distance) < 4) return;
-        drag.moved = true;
+        if (!drag.moved) {
+            drag.moved = true;
+            event.currentTarget.setPointerCapture(event.pointerId);
+        }
         event.preventDefault();
         event.currentTarget.scrollLeft = drag.startScrollLeft - distance;
     };

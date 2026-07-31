@@ -9,49 +9,15 @@ import { formatCreditAmount } from "@/constant/credits";
 import { parseChannelExampleConfig } from "@/lib/channel-example-parser";
 import { buildGlobalAiOpcSelection, GLOBAL_AIOPC_PRESETS, globalAiOpcPresetOptions, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPresets } from "@/lib/globalaiopc-catalog";
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
+import type { ChannelHealthKind as SharedChannelHealthKind, ChannelHealthResult as SharedChannelHealthResult } from "@/lib/channel-health-result";
 import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
 import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
 import { applyModelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
-export type ChannelHealthKind = "text" | "image" | "video" | "audio";
-
-export type ChannelHealthResult = {
-    ok: boolean;
-    kind: ChannelHealthKind;
-    model: string;
-    status: number;
-    protocolKey?: SystemChannelProtocol;
-    protocol?: string;
-    referenceHint?: string;
-    createPath?: string;
-    editPath?: string;
-    imageToVideoPath?: string;
-    queryPath?: string;
-    cancelPath?: string;
-    cancelMethod?: "POST" | "DELETE";
-    requestTemplate?: string;
-    resultField?: string;
-    statusField?: string;
-    durationRange?: string;
-    referenceRule?: string;
-    supportsReferenceImage?: boolean;
-    supportsReferenceVideo?: boolean;
-    supportsReferenceAudio?: boolean;
-    referenceImageTest?: {
-        ok: boolean;
-        status: number;
-        taskId?: string;
-        remoteUrl?: string;
-        error?: string;
-    };
-    pointsCost?: number;
-    pointsRemaining?: number;
-    taskId?: string;
-    remoteUrl?: string;
-    error?: string;
-};
+export type ChannelHealthKind = SharedChannelHealthKind;
+export type ChannelHealthResult = SharedChannelHealthResult;
 
 const protocolOptions = channelProtocolOptions().map(({ value, label }) => ({ value, label }));
 const ALL_GLOBAL_AIOPC_PRESETS = "__all_globalaiopc_presets__";
@@ -93,7 +59,7 @@ export function SystemChannelEditor({
     const [apiKeyVisible, setApiKeyVisible] = useState(false);
     const [apiKeyLoading, setApiKeyLoading] = useState(false);
     const healthKinds = channelHealthKinds(channel);
-    const visibleHealthResults = healthKinds.map((kind) => healthResults[`${channel.id}:${kind}`]).filter((item): item is ChannelHealthResult => Boolean(item));
+    const visibleHealthResults = healthKinds.map((kind) => healthResults[`${channel.id}:${kind}`] || channel.healthResults?.[kind]).filter((item): item is ChannelHealthResult => Boolean(item));
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
     const protocolDefinition = channelProtocolDefinition(advanced.protocol);
     const capabilitySummary = channelCapabilitySummary(channel);

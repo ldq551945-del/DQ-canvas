@@ -42,7 +42,7 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     const [setAsDefault, setSetAsDefault] = useState(true);
     const { upstreamModel: selectedUpstreamModel, logicalId: selectedLogicalId, newLogicalId, newLogicalName } = bindingDraft;
     const channel = settings.systemChannels.find((item) => item.id === draftId);
-    const validations = draftId ? channelHealthEntries(draftId, healthResults) : [];
+    const validations = draftId ? channelHealthEntries(draftId, healthResults, channel?.healthResults) : [];
     const verified = validations.some(({ result }) => result.ok);
     const bound = Boolean(channel && settings.logicalModels.some((model) => model.bindings.some((binding) => binding.channelId === channel.id)));
 

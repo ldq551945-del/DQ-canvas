@@ -125,6 +125,7 @@ import {
     normalizeLinkUrl,
     normalizeSystemChannel,
     normalizeSystemChannelAdvancedConfig,
+    normalizeSystemChannelHealthResults,
     normalizeApiPath,
     textOrEmpty,
     normalizePoints,
@@ -425,16 +426,20 @@ export function mapPostgresSettings(settingsRow: Record<string, unknown> | undef
         },
         generationConcurrency: dbJson(settingsRow?.generation_concurrency, fallback.generationConcurrency),
         generationDefaults: normalizeGenerationDefaults(dbJson(settingsRow?.generation_defaults, fallback.generationDefaults)),
-        systemChannels: channelRows.map((row) => ({
-            id: dbText(row.id),
-            name: dbText(row.name),
-            baseUrl: dbText(row.base_url),
-            apiKey: dbText(row.api_key_ciphertext),
-            apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
-            models: dbJson(row.models, []),
-            enabled: dbBool(row.enabled, true),
-            advancedConfig: dbJson(row.advanced_config, undefined),
-        })),
+        systemChannels: channelRows.map((row) => {
+            const healthResults = normalizeSystemChannelHealthResults(row.health_results);
+            return {
+                id: dbText(row.id),
+                name: dbText(row.name),
+                baseUrl: dbText(row.base_url),
+                apiKey: dbText(row.api_key_ciphertext),
+                apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
+                models: dbJson(row.models, []),
+                enabled: dbBool(row.enabled, true),
+                advancedConfig: dbJson(row.advanced_config, undefined),
+                ...(Object.keys(healthResults).length ? { healthResults } : {}),
+            };
+        }),
         logicalModels: dbJson(settingsRow?.logical_models, fallback.logicalModels),
         defaultModels: dbJson(settingsRow?.default_models, fallback.defaultModels),
         agentSkills: dbJson(settingsRow?.agent_skills, fallback.agentSkills),
@@ -635,10 +640,10 @@ export async function upsertPostgresSystemChannels(db: QueryExecutor, channels: 
     for (const [index, channel] of channels.entries()) {
         await db.query(
             `
-            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, api_format, models, enabled, advanced_config, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             `,
-            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), index],
+            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), dbJsonParam(channel.healthResults || {}), index],
         );
     }
 }

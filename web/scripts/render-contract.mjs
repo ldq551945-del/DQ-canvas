@@ -36,9 +36,11 @@ export function validateRenderBlueprint({ repoRoot, source, dockerfile: dockerfi
     ensure(worker?.dockerCommand === "node /app/web/scripts/generation-worker.mjs", "Render Worker 启动命令不正确");
     ensure(dockerfile.includes("COPY web/scripts/generation-worker.mjs /app/web/scripts/generation-worker.mjs"), "生产镜像缺少 generation worker");
     ensure(dockerfile.includes("COPY web/scripts/generation-runtime.mjs /app/web/scripts/generation-runtime.mjs"), "生产镜像缺少 Worker 运行时 helper");
-    ensure(dockerfile.includes("find node_modules/.pnpm -type d -path '*/node_modules/@img/sharp-*' -exec cp -a {} /app/sharp-runtime/node_modules/@img/"), "生产镜像缺少 Sharp 原生依赖收集步骤");
-    ensure(dockerfile.includes('test -n "$(find /app/sharp-runtime/node_modules/@img -mindepth 1 -maxdepth 1 -type d -print -quit)"'), "生产镜像缺少 Sharp 原生依赖存在性检查");
-    ensure(dockerfile.includes("COPY --from=web-build /app/sharp-runtime/node_modules/@img /app/web/node_modules/@img"), "生产镜像缺少 Sharp 原生依赖");
+    ensure(!dockerfile.includes("/app/sharp-runtime/node_modules/@img"), "生产镜像必须保留 Sharp 的 pnpm 虚拟目录结构");
+    ensure(dockerfile.includes("find node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-*' -exec cp -a {} /app/sharp-runtime/node_modules/.pnpm/"), "生产镜像缺少 Sharp 原生依赖收集步骤");
+    ensure(dockerfile.includes("test -n \"$(find /app/sharp-runtime/node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-linux-*' -print -quit)\""), "生产镜像缺少 Sharp 原生依赖存在性检查");
+    ensure(dockerfile.includes("test -n \"$(find /app/sharp-runtime/node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-libvips-linux-*' -print -quit)\""), "生产镜像缺少 Sharp libvips 依赖存在性检查");
+    ensure(dockerfile.includes("COPY --from=web-build /app/sharp-runtime/node_modules/.pnpm /app/web/node_modules/.pnpm"), "生产镜像缺少 Sharp 原生依赖");
     ensure(dockerfile.includes("RUN cd /app/web && node -e \"require('sharp')\""), "生产镜像缺少 Sharp 运行时检查");
     ensure(hasGroup(web?.envVars, "vozeb-pro-runtime") && hasGroup(worker?.envVars, "vozeb-pro-runtime"), "Web 与 Worker 必须引用同一运行时环境组");
     ensure(environmentMap(runtimeGroup?.envVars).VOZEB_PRO_MAINTENANCE_TOKEN?.generateValue === true, "运行时环境组必须生成共享维护令牌");

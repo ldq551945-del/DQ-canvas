@@ -20,6 +20,10 @@ describe("create Agent home layout", () => {
         expect(page).toContain("usePublicImage");
         expect(composer).toContain('centered ? "max-w-[960px]"');
         expect(composer).not.toContain("CreativeImageSizeControl");
+        const pointerDownHandler = composer.slice(composer.indexOf("const onPointerDown"), composer.indexOf("const onPointerMove"));
+        const pointerMoveHandler = composer.slice(composer.indexOf("const onPointerMove"), composer.indexOf("const finishDrag"));
+        expect(pointerDownHandler).not.toContain("setPointerCapture");
+        expect(pointerMoveHandler).toContain("setPointerCapture");
         expect(inspiration).toContain("灵感发现");
         expect(inspiration).toContain("使用提示词");
         expect(inspiration).toContain("复制提示词");

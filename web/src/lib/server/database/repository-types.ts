@@ -124,6 +124,7 @@ export type SystemModelChannelRecord = {
     models: JsonValue;
     enabled: boolean;
     advancedConfig?: JsonValue;
+    healthResults?: JsonValue;
     sortOrder: number;
     createdAt: string;
     updatedAt: string;

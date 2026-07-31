@@ -407,7 +407,7 @@ function ProtocolCenter({ settings, onCreate, onOpenChannel }: { settings: Chann
 }
 
 function ValidationRecords({ settings, healthResults, onOpen }: { settings: ChannelWorkspaceSettings; healthResults: Record<string, ChannelHealthResult>; onOpen: (id: string) => void }) {
-    const records = settings.systemChannels.flatMap((channel) => channelHealthEntries(channel.id, healthResults).map((entry) => ({ ...entry, channel })));
+    const records = settings.systemChannels.flatMap((channel) => channelHealthEntries(channel.id, healthResults, channel.healthResults).map((entry) => ({ ...entry, channel })));
     return (
         <div>
             <div className="mb-3 flex items-center gap-2 text-xs text-stone-500 dark:text-stone-400">

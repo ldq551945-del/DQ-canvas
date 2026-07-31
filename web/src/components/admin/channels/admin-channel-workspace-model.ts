@@ -22,7 +22,7 @@ const capabilityLabels: Record<LogicalModelCapability, string> = { text: "文本
 
 export function channelWorkspaceStatus(channel: SystemModelChannel, healthResults: Record<string, ChannelHealthResult>): ChannelWorkspaceStatus {
     if (!channel.enabled) return channel.baseUrl.trim() ? "disabled" : "draft";
-    const results = channelHealthEntries(channel.id, healthResults).map((entry) => entry.result);
+    const results = channelHealthEntries(channel.id, healthResults, channel.healthResults).map((entry) => entry.result);
     if (!results.length) return "untested";
     return results.every((result) => result.ok) ? "healthy" : "warning";
 }
@@ -43,8 +43,12 @@ export function channelProtocolLabel(channel: SystemModelChannel) {
     return channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").label;
 }
 
-export function channelHealthEntries(channelId: string, healthResults: Record<string, ChannelHealthResult>) {
-    return Object.entries(healthResults).flatMap(([key, result]) => (key.startsWith(`${channelId}:`) ? [{ key, result }] : []));
+export function channelHealthEntries(channelId: string, healthResults: Record<string, ChannelHealthResult>, persistedResults?: SystemModelChannel["healthResults"]) {
+    const entries = new Map(Object.entries(persistedResults || {}).map(([kind, result]) => [`${channelId}:${kind}`, result]));
+    Object.entries(healthResults).forEach(([key, result]) => {
+        if (key.startsWith(`${channelId}:`)) entries.set(key, result);
+    });
+    return Array.from(entries, ([key, result]) => ({ key, result }));
 }
 
 export function removeChannelFromWorkspace(settings: ChannelWorkspaceSettings, channelId: string): ChannelWorkspaceSettings {

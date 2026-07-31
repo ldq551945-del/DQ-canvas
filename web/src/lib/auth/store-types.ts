@@ -78,11 +78,28 @@ export type SystemModelChannel = {
     models: string[];
     enabled: boolean;
     advancedConfig?: SystemChannelAdvancedConfig;
+    healthResults?: Partial<Record<LogicalModelCapability, SystemChannelHealthSnapshot>>;
     hasApiKey?: boolean;
     clearApiKey?: boolean;
 };
 
 export type LogicalModelCapability = "text" | "image" | "video" | "audio";
+
+export type SystemChannelHealthSnapshot = {
+    ok: boolean;
+    kind: LogicalModelCapability;
+    model: string;
+    status: number;
+    checkedAt?: string;
+    protocolKey?: SystemChannelProtocol;
+    protocol?: string;
+    referenceImageTest?: {
+        ok: boolean;
+        status: number;
+        error?: string;
+    };
+    error?: string;
+};
 
 export type LogicalModelCapabilityProfile = {
     supportsReferenceImage?: boolean;

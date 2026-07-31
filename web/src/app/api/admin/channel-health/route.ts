@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
-import { getAuthSettings } from "@/lib/auth/store";
+import { getAuthSettings, setSystemChannelHealthResult } from "@/lib/auth/store";
+import { channelHealthSnapshot } from "@/lib/channel-health-result";
 import { isProviderTimeoutError, resolveAdminChannelCredentials, sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
@@ -126,14 +127,20 @@ export async function POST(request: Request) {
     try {
         textProtocol = kind === "text" ? resolveTextProtocol({ model, apiFormat, advancedConfig, throughSystemProxy: false }) : undefined;
     } catch (error) {
-        return NextResponse.json({ result: { ok: false, kind, model, status: 0, error: error instanceof Error ? error.message : "文本协议配置无效" } satisfies HealthResult });
+        const result = { ok: false, kind, model, status: 0, error: error instanceof Error ? error.message : "文本协议配置无效" } satisfies HealthResult;
+        await persistHealthResult(savedChannel?.id, result);
+        return NextResponse.json({ result });
     }
     const healthUrl = textProtocol
         ? textProtocolUrl(providerBaseUrl, textProtocol, advancedConfig)
         : isDeclarativeHealthProtocol(protocol) && advancedConfig.createPath
           ? literalChannelHealthUrl(providerBaseUrl, advancedConfig.createPath)
           : apiUrl(providerBaseUrl, "/models");
-    if (!(await isSafeOutboundUrl(healthUrl))) return NextResponse.json({ result: { ok: false, kind, model, status: 0, error: "Base URL 不允许访问内网或保留地址" } satisfies HealthResult }, { status: 200 });
+    if (!(await isSafeOutboundUrl(healthUrl))) {
+        const result = { ok: false, kind, model, status: 0, error: "Base URL 不允许访问内网或保留地址" } satisfies HealthResult;
+        await persistHealthResult(savedChannel?.id, result);
+        return NextResponse.json({ result }, { status: 200 });
+    }
 
     const cooldownKey = `${currentUser.id}:${baseUrl.toLowerCase()}:${kind}`;
     const waitMs = (healthCooldowns.get(cooldownKey) || 0) - Date.now();
@@ -141,7 +148,7 @@ export async function POST(request: Request) {
     healthCooldowns.set(cooldownKey, Date.now() + HEALTH_COOLDOWN_MS);
 
     try {
-        const result =
+        const result = applySelectedProtocolLabel(
             kind === "text"
                 ? await testText(providerBaseUrl, apiKey, model, protocol, advancedConfig, textProtocol!)
                 : isDeclarativeHealthProtocol(protocol)
@@ -150,11 +157,25 @@ export async function POST(request: Request) {
                     ? await testImage(providerBaseUrl, apiKey, model, globalPreset, protocol, advancedConfig)
                     : kind === "audio"
                       ? await testAudio(providerBaseUrl, apiKey, model)
-                      : await testVideo(providerBaseUrl, apiKey, model, globalPreset);
-        return NextResponse.json({ result: applySelectedProtocolLabel(result, protocol) });
+                      : await testVideo(providerBaseUrl, apiKey, model, globalPreset),
+            protocol,
+        );
+        await persistHealthResult(savedChannel?.id, result);
+        return NextResponse.json({ result });
     } catch (error) {
         const message = isProviderTimeoutError(error) ? "上游接口请求超时" : sanitizeProviderMessage(error instanceof Error ? error.message : "接口测试失败", [apiKey]);
-        return NextResponse.json({ result: { ok: false, kind, model, status: 0, error: message } satisfies HealthResult }, { status: 200 });
+        const result = { ok: false, kind, model, status: 0, error: message } satisfies HealthResult;
+        await persistHealthResult(savedChannel?.id, result);
+        return NextResponse.json({ result }, { status: 200 });
+    }
+}
+
+async function persistHealthResult(channelId: string | undefined, result: HealthResult) {
+    if (!channelId) return;
+    try {
+        await setSystemChannelHealthResult(channelId, channelHealthSnapshot(result));
+    } catch (error) {
+        console.error("Persisting channel health result failed", { channelId, kind: result.kind, error });
     }
 }
 

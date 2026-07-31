@@ -34,6 +34,7 @@ import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItem
 import { channelHealthKinds, createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import { normalizeModelId } from "@/lib/model-capability";
+import { channelHealthSnapshot } from "@/lib/channel-health-result";
 import { channelConnectionReady, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
@@ -162,7 +163,24 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
         setSettings((current) => ({
             ...current,
-            systemChannels: current.systemChannels.map((channel) => (channel.id === id ? { ...channel, ...patch, apiFormat: patch.apiFormat || channel.apiFormat, models: patch.models ? uniqueList(patch.models) : channel.models } : channel)),
+            systemChannels: current.systemChannels.map((channel) => {
+                if (channel.id !== id) return channel;
+                const invalidatesHealth = patch.healthResults === undefined && ["baseUrl", "apiKey", "apiFormat", "models", "advancedConfig"].some((key) => key in patch);
+                return {
+                    ...channel,
+                    ...patch,
+                    ...(invalidatesHealth ? { healthResults: undefined } : {}),
+                    apiFormat: patch.apiFormat || channel.apiFormat,
+                    models: patch.models ? uniqueList(patch.models) : channel.models,
+                };
+            }),
+        }));
+    };
+
+    const updateChannelHealth = (id: string, result: ChannelHealthResult) => {
+        setSettings((current) => ({
+            ...current,
+            systemChannels: current.systemChannels.map((channel) => (channel.id === id ? { ...channel, healthResults: { ...(channel.healthResults || {}), [result.kind]: channelHealthSnapshot(result) } } : channel)),
         }));
     };
 
@@ -481,6 +499,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const payload = (await response.json()) as { result?: ChannelHealthResult; error?: string };
             if (!response.ok || !payload.result) throw new Error(payload.error || "接口测试失败");
             setChannelHealthResults((current) => ({ ...current, [resultKey]: payload.result! }));
+            updateChannelHealth(channel.id, payload.result);
             if (!options?.quiet) {
                 if (payload.result.ok) message.success(`${channel.name || "渠道"} ${healthKindLabel(kind)}测试成功`);
                 else message.warning(payload.result.error || `${healthKindLabel(kind)}测试失败`);
@@ -492,6 +511,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                 ...current,
                 [resultKey]: { ok: false, kind, model, status: 0, error: messageText },
             }));
+            updateChannelHealth(channel.id, { ok: false, kind, model, status: 0, error: messageText });
             if (!options?.quiet) message.error(messageText);
             return { ok: false, kind, model, status: 0, error: messageText } satisfies ChannelHealthResult;
         } finally {
@@ -536,6 +556,7 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             updateChannel(channel.id, {
                 models: uniqueList([...detectedModels, ...results.map((result) => result.model).filter(Boolean)]),
                 advancedConfig,
+                healthResults: Object.fromEntries(results.map((result) => [result.kind, channelHealthSnapshot(result)])),
             });
             const okKinds: string[] = results.filter((result) => result.ok).map((result) => healthKindLabel(result.kind));
             const failedKinds: string[] = results.filter((result) => !result.ok).map((result) => healthKindLabel(result.kind));

@@ -14,6 +14,7 @@ import {
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
+    type SystemChannelHealthSnapshot,
     type LogicalModelCapability,
     type LogicalModelCapabilityProfile,
     type LogicalModelBinding,
@@ -234,6 +235,28 @@ export async function getAuthSettings() {
 export async function setAuthSettings(patch: Partial<AuthSettings>) {
     const settings = await mutateAuthDb((db) => {
         db.settings = normalizeSettings({ ...db.settings, ...patch });
+        return db.settings;
+    });
+    if (isPostgresDatabaseEnabled()) {
+        postgresAuthSettingsVersion += 1;
+        postgresAuthSettingsCache = { value: settings, expiresAt: Date.now() + AUTH_SETTINGS_CACHE_TTL_MS };
+    }
+    return settings;
+}
+
+export async function setSystemChannelHealthResult(channelId: string, result: SystemChannelHealthSnapshot) {
+    const settings = await mutateAuthDb((db) => {
+        db.settings = normalizeSettings({
+            ...db.settings,
+            systemChannels: db.settings.systemChannels.map((channel) =>
+                channel.id === channelId
+                    ? {
+                          ...channel,
+                          healthResults: { ...(channel.healthResults || {}), [result.kind]: result },
+                      }
+                    : channel,
+            ),
+        });
         return db.settings;
     });
     if (isPostgresDatabaseEnabled()) {

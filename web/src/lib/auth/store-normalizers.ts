@@ -7,7 +7,7 @@ import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
 import { deriveLogicalModelsConfig, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
 import { resolveConfiguredModelPointCost } from "@/lib/model-point-cost";
-import { normalizeSystemChannelAdvancedConfig } from "./store-normalizers-channel";
+import { normalizeSystemChannelAdvancedConfig, normalizeSystemChannelHealthResults } from "./store-normalizers-channel";
 import {
     type UserRole,
     type UserStatus,
@@ -74,7 +74,7 @@ import {
     AUTH_DATA_FILE,
 } from "./store-foundation";
 
-export { normalizeApiPath, normalizeSystemChannelAdvancedConfig, textOrEmpty } from "./store-normalizers-channel";
+export { normalizeApiPath, normalizeSystemChannelAdvancedConfig, normalizeSystemChannelHealthResults, textOrEmpty } from "./store-normalizers-channel";
 import { currentQuotaDate, hashToken, normalizeEmail, normalizeUserBio } from "./store-auth-utils";
 
 export { currentQuotaDate, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, normalizeUsername, parseSessionCookie, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-auth-utils";
@@ -577,6 +577,7 @@ export function normalizeLinkUrl(value: unknown, fallback: string) {
 }
 
 export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): SystemModelChannel {
+    const healthResults = normalizeSystemChannelHealthResults(channel.healthResults);
     return {
         id: channel.id?.trim() || randomUUID(),
         name: repairKnownMojibakeText(channel.name?.trim() || "") || "通用接口",
@@ -586,6 +587,7 @@ export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): Sy
         models: Array.from(new Set((channel.models || []).map((model) => model.trim()).filter(Boolean))),
         enabled: channel.enabled !== false,
         advancedConfig: normalizeSystemChannelAdvancedConfig(channel.advancedConfig),
+        ...(Object.keys(healthResults).length ? { healthResults } : {}),
     };
 }
 

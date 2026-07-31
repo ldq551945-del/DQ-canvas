@@ -1,7 +1,7 @@
 import { safeProtocolDocumentationUrl } from "@/lib/channel-protocol-security";
 import { isGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 
-import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelProtocol } from "./store-types";
+import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelHealthSnapshot, SystemChannelProtocol } from "./store-types";
 
 const CHANNEL_PROTOCOLS: SystemChannelProtocol[] = ["auto", "openai", "sub2api", "newapi", "qingyan", "globalaiopc", "seedance", "stable-diffusion", "volcengine-video", "seedance-special", "custom", "compatible"];
 
@@ -57,6 +57,43 @@ export function normalizeApiPath(value: unknown) {
 
 export function textOrEmpty(value: unknown, maxLength: number) {
     return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+export function normalizeSystemChannelHealthResults(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {} as Partial<Record<LogicalModelCapability, SystemChannelHealthSnapshot>>;
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).flatMap(([kind, raw]) => {
+            if (!isModelCapability(kind) || !raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+            const result = raw as Record<string, unknown>;
+            const protocolKey = CHANNEL_PROTOCOLS.includes(String(result.protocolKey || "") as SystemChannelProtocol) ? (result.protocolKey as SystemChannelProtocol) : undefined;
+            const checkedAt = textOrEmpty(result.checkedAt, 40);
+            const referenceImageTest = result.referenceImageTest && typeof result.referenceImageTest === "object" && !Array.isArray(result.referenceImageTest) ? (result.referenceImageTest as Record<string, unknown>) : undefined;
+            return [
+                [
+                    kind,
+                    {
+                        ok: result.ok === true,
+                        kind,
+                        model: textOrEmpty(result.model, 200),
+                        status: Math.max(0, Math.min(999, Math.floor(Number(result.status) || 0))),
+                        ...(checkedAt && Number.isFinite(Date.parse(checkedAt)) ? { checkedAt: new Date(checkedAt).toISOString() } : {}),
+                        ...(protocolKey ? { protocolKey } : {}),
+                        ...(textOrEmpty(result.protocol, 120) ? { protocol: textOrEmpty(result.protocol, 120) } : {}),
+                        ...(textOrEmpty(result.error, 500) ? { error: textOrEmpty(result.error, 500) } : {}),
+                        ...(referenceImageTest
+                            ? {
+                                  referenceImageTest: {
+                                      ok: referenceImageTest.ok === true,
+                                      status: Math.max(0, Math.min(999, Math.floor(Number(referenceImageTest.status) || 0))),
+                                      ...(textOrEmpty(referenceImageTest.error, 500) ? { error: textOrEmpty(referenceImageTest.error, 500) } : {}),
+                                  },
+                              }
+                            : {}),
+                    } satisfies SystemChannelHealthSnapshot,
+                ] as const,
+            ];
+        }),
+    ) as Partial<Record<LogicalModelCapability, SystemChannelHealthSnapshot>>;
 }
 
 function normalizeChannelModelCapabilities(value: unknown) {

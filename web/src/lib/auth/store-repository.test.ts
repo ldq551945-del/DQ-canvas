@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { QueryExecutor } from "@/lib/server/database";
+import { POSTGRESQL_SCHEMA_SQL } from "@/lib/server/database/schema";
 import { encryptSecretValue } from "@/lib/server/secret-crypto";
-import { mapPostgresSettings, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, readPostgresPublicUserData } from "./store-repository";
+import { mapPostgresSettings, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, readPostgresPublicUserData, upsertPostgresSystemChannels } from "./store-repository";
 
 const originalEncryptionKey = process.env.VOZEB_PRO_ENCRYPTION_KEY;
 
@@ -35,6 +36,19 @@ describe("PostgreSQL auth read paths", () => {
 
         expect(settings.systemChannels[0].apiKey).toBe("provider-secret");
         expect(settings.systemChannels[0].apiKey).not.toContain("vozeb-pro-secret:v1:");
+    });
+
+    it("round-trips channel health snapshots through PostgreSQL", async () => {
+        const healthResults = { text: { ok: true, kind: "text" as const, model: "gpt-test", status: 200, checkedAt: "2026-08-01T00:00:00.000Z" } };
+        const settings = mapPostgresSettings({ id: "default" }, [], [{ id: "channel-one", name: "主渠道", base_url: "https://api.example.com/v1", api_format: "openai", models: ["gpt-test"], enabled: true, health_results: healthResults }]);
+        expect(settings.systemChannels[0].healthResults).toEqual(healthResults);
+
+        const { executor, query } = mockExecutor([[]]);
+        await upsertPostgresSystemChannels(executor, [{ id: "channel-one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "encrypted", apiFormat: "openai", models: ["gpt-test"], enabled: true, healthResults }]);
+        const [statement, values] = query.mock.calls[0];
+        expect(statement).toContain("health_results");
+        expect(JSON.parse(String(values?.[8]))).toEqual(healthResults);
+        expect(POSTGRESQL_SCHEMA_SQL).toContain("health_results jsonb NOT NULL DEFAULT '{}'::jsonb");
     });
 
     it("loads public users with only plans, users and today's wallets", async () => {

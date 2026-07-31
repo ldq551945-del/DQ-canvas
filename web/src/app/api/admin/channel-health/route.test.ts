@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({ setSystemChannelHealthResult: vi.fn() }));
 const savedChannel = { id: "saved", name: "已保存", baseUrl: "https://api.example.com/v1", apiKey: "test-secret-value", apiFormat: "openai", models: ["gpt-test", "tts-test"], enabled: true };
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin", role: "admin" })) }));
-vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(async () => ({ systemChannels: [savedChannel] })) }));
+vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(async () => ({ systemChannels: [savedChannel] })), setSystemChannelHealthResult: mocks.setSystemChannelHealthResult }));
 vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: vi.fn(async () => true) }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
@@ -13,6 +14,7 @@ import { protocolModelConfig } from "@/lib/channel-protocol-registry";
 describe("admin channel health route", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
+        mocks.setSystemChannelHealthResult.mockReset();
         (globalThis as typeof globalThis & { __vozebProChannelHealthCooldowns?: Map<string, number> }).__vozebProChannelHealthCooldowns?.clear();
     });
 
@@ -34,6 +36,19 @@ describe("admin channel health route", () => {
         const payload = await response.json();
         expect(payload.result).toMatchObject({ ok: true, kind: "text", model: "gpt-test", status: 200 });
         expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/chat/completions", expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer test-secret-value" }) }));
+        expect(mocks.setSystemChannelHealthResult).toHaveBeenCalledWith("saved", expect.objectContaining({ ok: true, model: "gpt-test", kind: "text", checkedAt: expect.any(String) }));
+    });
+
+    it("does not turn a successful upstream check into a failure when persistence is temporarily unavailable", async () => {
+        mocks.setSystemChannelHealthResult.mockRejectedValueOnce(new Error("database unavailable"));
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ choices: [{ message: { content: "OK" } }] })),
+        );
+
+        const response = await POST(request({ channelId: "saved", model: "gpt-test", kind: "text" }));
+
+        expect((await response.json()).result).toMatchObject({ ok: true, kind: "text", status: 200 });
     });
 
     it("tests a newly discovered model with its capability-level custom operation", async () => {

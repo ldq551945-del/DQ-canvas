@@ -29,7 +29,7 @@ type Props = {
 
 export function AdminChannelDetailDrawer({ open, channel, settings, fetching, testingKey, healthResults, onClose, onChange, onDelete, onFetchModels, onTestHealth, onTestAll }: Props) {
     if (!channel) return null;
-    const entries = channelHealthEntries(channel.id, healthResults);
+    const entries = channelHealthEntries(channel.id, healthResults, channel.healthResults);
     const status = channelWorkspaceStatus(channel, healthResults);
     return (
         <Drawer title={channel.name || "渠道详情"} size="large" open={open} destroyOnHidden onClose={onClose}>

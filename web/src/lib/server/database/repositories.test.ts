@@ -85,6 +85,44 @@ describe("split Postgres repositories", () => {
         expect(String(queryArgs(query, 0)[0])).not.toContain("system_model_channels");
     });
 
+    it("persists channel health snapshots with the channel record", async () => {
+        const timestamp = "2026-08-01T00:00:00.000Z";
+        const healthResults = { text: { ok: true, kind: "text", model: "gpt-test", status: 200, checkedAt: timestamp } };
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    id: "channel-one",
+                    name: "主渠道",
+                    base_url: "https://api.example.com/v1",
+                    api_key_ciphertext: "ciphertext",
+                    api_format: "openai",
+                    models: ["gpt-test"],
+                    enabled: true,
+                    health_results: healthResults,
+                    sort_order: 0,
+                    created_at: timestamp,
+                    updated_at: timestamp,
+                },
+            ],
+        ]);
+
+        const channel = await createPostgresRepositories(executor).settings.upsertSystemModelChannel({
+            id: "channel-one",
+            name: "主渠道",
+            baseUrl: "https://api.example.com/v1",
+            apiKeyCiphertext: "ciphertext",
+            apiFormat: "openai",
+            models: ["gpt-test"],
+            enabled: true,
+            healthResults,
+            sortOrder: 0,
+        });
+
+        expect(String(queryArgs(query, 0)[0])).toContain("health_results");
+        expect(JSON.parse(String((queryArgs(query, 0)[1] as unknown[])[8]))).toEqual(healthResults);
+        expect(channel.healthResults).toEqual(healthResults);
+    });
+
     it("loads an authenticated user with one targeted session query", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([

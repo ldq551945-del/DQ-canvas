@@ -40,7 +40,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_schema_migrations`：已应用的数据库结构版本。
 - `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`logical_models` JSONB 保存用户可见模型及其能力、上游模型、渠道、启用状态和优先级。
 - `vozeb_pro_object_storage_settings`：S3 兼容外部存储单例配置，保存启用状态、Endpoint、Region、Bucket、对象前缀、path-style 模式及加密后的 Access Key/Secret Key；管理接口只返回密钥是否已配置，不回传明文。
-- `vozeb_pro_system_model_channels`：系统模型渠道、加密后的 API Key、模型列表和高级配置。
+- `vozeb_pro_system_model_channels`：系统模型渠道、加密后的 API Key、模型列表、高级配置和不含密钥及上游任务信息的检测结果快照。
 - `vozeb_pro_entitlement_plans`：商业套餐权益、每日额度、调用限制和功能标记；新用户不再通过套餐获得注册初始积分。
 - `vozeb_pro_users`：用户账号、角色、状态、头像存储键、最多 160 字的个人简介、当前套餐、积分余额和密码哈希；公开创作者接口只按用户名返回允许公开的资料字段，不暴露邮箱和内部用户 ID。
 - `vozeb_pro_sessions`：登录会话 token 哈希和过期时间。

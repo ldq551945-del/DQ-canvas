@@ -86,6 +86,19 @@ describe("client store session isolation", () => {
         expect(useAssetStore.getState().assets).toEqual(freshAssets);
     });
 
+    it("refreshes hydrated assets when a picker requests the latest server state", async () => {
+        const initialAssets = [textAsset("asset-old", "旧素材")];
+        const freshAssets = [textAsset("asset-new", "新素材")];
+        mocks.listAssets.mockResolvedValueOnce(initialAssets).mockResolvedValueOnce(freshAssets);
+        useUserStore.getState().setUser(user("user-a"));
+
+        await useAssetStore.getState().hydrate();
+        await useAssetStore.getState().hydrate(true);
+
+        expect(mocks.listAssets).toHaveBeenCalledTimes(2);
+        expect(useAssetStore.getState().assets).toEqual(freshAssets);
+    });
+
     it("reloads Canvas projects for the new user after a reset", async () => {
         const oldRequest = deferred<CanvasProjectSummary[]>();
         const freshProjects = [summarizeCanvasProjectRecord(canvasProject("canvas-b", "用户 B 画布"))];
@@ -306,6 +319,7 @@ function user(id: string) {
         status: "active" as const,
         planId: "free",
         planName: "免费",
+        hasActivePlan: false,
         pointsBalance: 0,
     };
 }

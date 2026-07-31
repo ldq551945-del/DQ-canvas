@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getAgentRun: vi.fn(), getLatestCreativeRunEventId: vi.fn(), listCreativeRunEvents: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getAgentRun: vi.fn(), getLatestCreativeRunEventId: vi.fn(), listCreativeRunEvents: vi.fn(), recover: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user" })) }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/creative-runtime-store", () => ({ getLatestCreativeRunEventId: mocks.getLatestCreativeRunEventId, listCreativeRunEvents: mocks.listCreativeRunEvents }));
+vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
+vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
 import { GET } from "./route";
 
@@ -46,6 +48,7 @@ describe("Agent Run SSE", () => {
         await reader.cancel();
 
         expect(new TextDecoder().decode(first.value)).toContain("id: 12");
+        expect(mocks.recover).toHaveBeenCalledWith(expect.objectContaining({ taskIds: ["run"] }));
         expect(mocks.getLatestCreativeRunEventId).toHaveBeenCalledWith("run", "task.retry.requested");
         expect(mocks.getLatestCreativeRunEventId).toHaveBeenCalledWith("run", "run.retry.requested");
         expect(mocks.listCreativeRunEvents).toHaveBeenCalledWith("run", "11");

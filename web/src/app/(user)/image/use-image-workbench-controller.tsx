@@ -16,6 +16,7 @@ import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentPara
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
+import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import { closestImageAspectRatio, resolveImageRequestSize } from "@/lib/image-size";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalImageDownloadUrl, originalImageExtension } from "@/lib/media-image-url";
@@ -350,14 +351,14 @@ export function useImageWorkbenchController() {
         return nextImage;
     }
 
-    const generate = async ({ promptOverride, signal, parameterPatch, conversationId }: { promptOverride?: string; signal?: AbortSignal; parameterPatch?: WorkbenchAgentParameterPatch; conversationId?: string } = {}) => {
+    const generate = async ({ promptOverride, userPrompt, signal, parameterPatch, conversationId }: { promptOverride?: string; userPrompt?: string; signal?: AbortSignal; parameterPatch?: WorkbenchAgentParameterPatch; conversationId?: string } = {}) => {
         const text = (promptOverride ?? prompt).trim();
         if (!text) {
             message.error("请输入生图提示词");
             return;
         }
 
-        const snapshot = buildRequestSnapshot(text, parameterPatch);
+        const snapshot = buildRequestSnapshot(text, parameterPatch, userPrompt);
         if (!snapshot) return;
         let sharedConversationId = conversationId || activeCreativeConversationId;
         try {
@@ -370,10 +371,9 @@ export function useImageWorkbenchController() {
         const snapshotCount = snapshot.count;
         if (signal?.aborted) throw new DOMException("请求已取消", "AbortError");
 
-        const existingLog = previewLog ? getLatestLog(previewLog.id) || previewLog : null;
-        const baseResults = existingLog ? getLogResults(existingLog) : [];
+        const baseResults: GenerationResult[] = [];
         const batchStartedAt = performance.now();
-        const baseDurationMs = existingLog?.durationMs || 0;
+        const baseDurationMs = 0;
         const startedResults = [
             ...baseResults,
             ...Array.from({ length: snapshotCount }, (_, offset) => ({
@@ -385,7 +385,7 @@ export function useImageWorkbenchController() {
                 slotIndex: baseResults.length + offset,
             })),
         ];
-        const pendingLog = { ...buildLogFromResults(existingLog, snapshot, startedResults, baseDurationMs, String(startedResults.length)), creativeConversationId: sharedConversationId };
+        const pendingLog = { ...buildLogFromResults(null, snapshot, startedResults, baseDurationMs, String(startedResults.length)), creativeConversationId: sharedConversationId };
         const logId = pendingLog.id;
 
         setSelectedResultIds([]);
@@ -398,9 +398,9 @@ export function useImageWorkbenchController() {
         if (signal?.aborted) {
             deletedLogIdsRef.current.add(logId);
             replaceLogs(logsRef.current.filter((log) => log.id !== logId));
-            activeLogIdRef.current = existingLog?.id || null;
-            setActiveAgentRecordId(existingLog?.id);
-            setPreviewLog(existingLog);
+            activeLogIdRef.current = null;
+            setActiveAgentRecordId(undefined);
+            setPreviewLog(null);
             setLogResults(logId, []);
             await removeStoredImageLogs([logId]);
             throw new DOMException("请求已取消", "AbortError");
@@ -448,7 +448,7 @@ export function useImageWorkbenchController() {
             if (patch.count) updateConfig("count", String(patch.count));
             if (patch.model) updateConfig("imageModel", String(patch.model));
         },
-        submitGeneration: ({ promptOverride, signal, parameterPatch, conversationId }) => generate({ promptOverride, signal, parameterPatch, conversationId }),
+        submitGeneration: ({ promptOverride, userPrompt, signal, parameterPatch, conversationId }) => generate({ promptOverride, userPrompt, signal, parameterPatch, conversationId }),
         onRequestSent: () => {
             setReferences([]);
             updateConfig("count", "1");
@@ -623,9 +623,10 @@ export function useImageWorkbenchController() {
         activeLogIdRef.current = currentLog.id;
         setPreviewLog(currentLog);
         setLogsOpen(false);
-        const session = findWorkbenchAgentSessionForRecord(agentSessions, currentLog.id, currentLog.prompt);
+        const publicPrompt = generationLogPublicPrompt(currentLog);
+        const session = findWorkbenchAgentSessionForRecord(agentSessions, currentLog.id, currentLog.creativeConversationId);
         const fallbackMessages: WorkbenchAgentMessage[] = [
-            { id: `history-${currentLog.id}-user`, role: "user", text: currentLog.prompt },
+            ...(publicPrompt ? [{ id: `history-${currentLog.id}-user`, role: "user" as const, text: publicPrompt }] : []),
             {
                 id: `history-${currentLog.id}-assistant`,
                 role: currentLog.status === "失败" ? "error" : "assistant",
@@ -637,7 +638,7 @@ export function useImageWorkbenchController() {
         setActiveCreativeConversationId(session?.creativeConversationId || currentLog.creativeConversationId);
         setAgentMessages(session?.loaded && session.messages.length ? session.messages : fallbackMessages);
         setPrompt(session?.prompt || "");
-        setLastAgentPrompt(session?.lastPrompt || currentLog.prompt);
+        setLastAgentPrompt(session?.lastPrompt || publicPrompt);
         setSelectedSkill(undefined);
         resetPlanningToDefault(false);
         setReferences([]);
@@ -655,14 +656,14 @@ export function useImageWorkbenchController() {
                     setActiveAgentSessionId(loaded.id);
                     setActiveCreativeConversationId(loaded.creativeConversationId);
                     setAgentMessages(loaded.messages.length ? loaded.messages : fallbackMessages);
-                    setLastAgentPrompt(loaded.lastPrompt || currentLog.prompt);
+                    setLastAgentPrompt(loaded.lastPrompt || publicPrompt);
                 })
                 .catch(() => {
                     if (activeLogIdRef.current === currentLog.id) message.warning("完整对话加载失败，已显示当前生成记录");
                 });
     };
 
-    const buildRequestSnapshot = (promptOverride?: string, parameterPatch?: WorkbenchAgentParameterPatch) => {
+    const buildRequestSnapshot = (promptOverride?: string, parameterPatch?: WorkbenchAgentParameterPatch, userPromptOverride?: string) => {
         const text = (promptOverride ?? prompt).trim();
         if (!text) {
             message.error("请输入生图提示词");
@@ -683,7 +684,7 @@ export function useImageWorkbenchController() {
             openConfigDialog(true);
             return null;
         }
-        return { text, config: { ...requestConfig, model: requestModel, count: "1" }, references: [...references], count: resolveImageGenerationCount(requestConfig.count) };
+        return { text, userText: (userPromptOverride ?? prompt).trim() || text, config: { ...requestConfig, model: requestModel, count: "1" }, references: [...references], count: resolveImageGenerationCount(requestConfig.count) };
     };
 
     const runGenerationSlot = async (logId: string, resultId: string, index: number, snapshot: GenerationSnapshot, batchStartedAt: number, baseDurationMs: number, retryRequest = false) => {

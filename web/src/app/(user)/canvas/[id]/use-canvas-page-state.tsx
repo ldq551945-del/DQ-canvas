@@ -135,6 +135,7 @@ export function useCanvasPageState() {
     const resumingImageTaskIdsRef = useRef(new Set<string>());
     const resumingVideoTaskIdsRef = useRef(new Set<string>());
     const resumingTextTaskIdsRef = useRef(new Set<string>());
+    const resumingAudioTaskIdsRef = useRef(new Set<string>());
     return {
         message,
         modal,
@@ -272,6 +273,7 @@ export function useCanvasPageState() {
         resumingImageTaskIdsRef,
         resumingVideoTaskIdsRef,
         resumingTextTaskIdsRef,
+        resumingAudioTaskIdsRef,
     };
 }
 

@@ -41,9 +41,6 @@ import {
     DEFAULT_IMAGE_SHORT_SIDE,
     IMAGE_SIZE_STEP,
     IMAGE_MIN_PIXELS,
-    IMAGE_MAX_PIXELS,
-    IMAGE_MAX_EDGE,
-    IMAGE_MAX_RATIO,
     IMAGE_OUTPUT_FORMAT,
     TASK_HEARTBEAT_MS,
     MODEL_REQUEST_TIMEOUT_MS,
@@ -60,7 +57,8 @@ import {
     IMAGE_POLL_URL_KEYS,
     type ImageEditReferenceMode,
 } from "./image-task-types";
-import { runImageTask, stableMediaUrl, writeImageGenerationLog } from "./image-task-runner";
+import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import {
     publicTask,
     sanitizeConfigs,
@@ -130,7 +128,7 @@ import {
 } from "./image-task-support";
 
 export async function POST(request: Request) {
-    const currentUser = await getCurrentUser();
+    const currentUser = await getCurrentUser(request);
     const settings = currentUser ? await getAuthSettings() : null;
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
     const rate = await checkGenerationRateLimit(currentUser.id, request, "image");
@@ -190,7 +188,8 @@ export async function POST(request: Request) {
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const publicOrigin = requestPublicOrigin(request);
-        after(() => runImageTask(task, origin, publicOrigin, cookie));
+        await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
+        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
 
         return NextResponse.json({ task: publicTask(task) });
     });

@@ -1,10 +1,10 @@
-import { Plus } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { getPublicSiteSettings } from "@/lib/server/site-metadata";
 import { loadGallery, parseGalleryFilters } from "./gallery-data";
+import { GalleryPublishLink } from "./gallery-publish-link";
 import { GalleryThemeToggle } from "./gallery-theme-toggle";
 import { GalleryView } from "./gallery-view";
 
@@ -35,10 +35,7 @@ export default async function GalleryPage({ searchParams }: { searchParams: Gall
                     </Link>
                     <div className="flex shrink-0 items-center gap-2">
                         <GalleryThemeToggle />
-                        <Link href="/works" className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md !bg-foreground px-3 text-sm font-medium !text-background transition hover:opacity-80 sm:px-4">
-                            <Plus className="size-4" />
-                            发布作品
-                        </Link>
+                        <GalleryPublishLink className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md !bg-foreground px-3 text-sm font-medium !text-background transition hover:opacity-80 sm:px-4" />
                     </div>
                 </div>
             </header>

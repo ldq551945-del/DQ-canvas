@@ -27,13 +27,6 @@ export function workStatusLabel(status: WorkPublicationModerationStatus) {
     return WORK_STATUS_OPTIONS.find((item) => item.value === status)?.label || status;
 }
 
-export function workStatusColor(status: WorkPublicationModerationStatus) {
-    if (status === "pending") return "processing";
-    if (status === "approved") return "success";
-    if (status === "rejected" || status === "taken_down") return "error";
-    return "default";
-}
-
 export function formatWorkTime(value?: string) {
     if (!value) return "暂无";
     return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));

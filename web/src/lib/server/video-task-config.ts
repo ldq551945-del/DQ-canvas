@@ -7,6 +7,21 @@ export function resolveVideoGenerationParameters(raw: Record<string, unknown>, d
     };
 }
 
+export function resolveUpstreamVideoDuration(value: unknown, fallback: number, policy: { durationRange?: string; minDurationSeconds?: number; maxDurationSeconds?: number } = {}) {
+    const fallbackSeconds = positiveInteger(fallback) || 5;
+    const requested = resolveVideoDuration(value, fallbackSeconds);
+    const durationRange = policy.durationRange?.trim() || "";
+    if (requested === -1 && /(?:^|\D)-1(?:\D|$)|智能|auto|adaptive/i.test(durationRange)) return -1;
+
+    const seconds = requested === -1 ? fallbackSeconds : requested;
+    const bounds = parseDurationBounds(durationRange);
+    const min = Math.max(1, positiveInteger(policy.minDurationSeconds) || bounds?.min || 1);
+    const max = Math.max(min, Math.min(3600, positiveInteger(policy.maxDurationSeconds) || bounds?.max || 3600));
+    const options = parseDurationOptions(durationRange).filter((item) => item >= min && item <= max);
+    if (options.length) return options.find((item) => item >= seconds) || options.at(-1)!;
+    return Math.max(min, Math.min(max, seconds));
+}
+
 export function normalizeVideoAspectRatio(value: unknown, fallback = "16:9") {
     return parseAspectRatio(value) || parseAspectRatio(fallback) || "16:9";
 }
@@ -29,6 +44,25 @@ export function withVideoReferenceFidelity(prompt: string, references: Array<{ t
 
 function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function parseDurationBounds(value: string) {
+    const match = value.match(/(\d{1,4})\s*(?:-|~|～|—|至|到)\s*(\d{1,4})/);
+    if (!match) return undefined;
+    const left = Number(match[1]);
+    const right = Number(match[2]);
+    return { min: Math.min(left, right), max: Math.max(left, right) };
+}
+
+function parseDurationOptions(value: string) {
+    if (!value || parseDurationBounds(value)) return [];
+    const options = Array.from(value.matchAll(/\d{1,4}/g), (match) => Number(match[0])).filter((item) => item > 0 && item <= 3600);
+    return Array.from(new Set(options)).sort((left, right) => left - right);
+}
+
+function positiveInteger(value: unknown) {
+    const number = Math.floor(Number(value));
+    return Number.isFinite(number) && number > 0 ? number : undefined;
 }
 
 function parseAspectRatio(value: unknown) {

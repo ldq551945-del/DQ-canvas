@@ -153,10 +153,26 @@ export async function isSafeOutboundUrl(value: string, options?: { allowCredenti
         const url = new URL(value);
         if (url.protocol !== "http:" && url.protocol !== "https:") return false;
         if (!options?.allowCredentials && (url.username || url.password)) return false;
+        if (privateUpstreamHostAllowed(url.hostname)) return true;
         return isSafeOutboundHost(url.hostname);
     } catch {
         return false;
     }
+}
+
+function privateUpstreamHostAllowed(hostname: string) {
+    if (process.env.VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS !== "1") return false;
+    const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return (process.env.VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS || "")
+        .split(",")
+        .map((value) =>
+            value
+                .trim()
+                .replace(/^\[|\]$/g, "")
+                .toLowerCase(),
+        )
+        .filter(Boolean)
+        .includes(host);
 }
 
 async function isSafeOutboundHost(hostname: string) {

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     countActive: vi.fn(),
-    executeAgentRun: vi.fn(),
+    runGenerationTaskRecoveryBatch: vi.fn(),
+    scheduleGenerationTask: vi.fn(),
     getAuthSettings: vi.fn(),
     getAgentRun: vi.fn(),
     setAgentRunStatus: vi.fn(),
@@ -15,8 +16,10 @@ vi.mock("next/server", async (importOriginal) => {
 });
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user" })) }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
-vi.mock("@/lib/server/agent-run-executor", () => ({ abortAgentRun: vi.fn(), executeAgentRun: mocks.executeAgentRun }));
+vi.mock("@/lib/server/agent-run-executor", () => ({ abortAgentRun: vi.fn() }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun, setAgentRunStatus: mocks.setAgentRunStatus, updateAgentRunById: mocks.updateAgentRunById }));
+vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, limit, handler) => ((await mocks.countActive()) >= limit ? null : handler())) }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
@@ -53,7 +56,7 @@ describe("Agent Run resume concurrency", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.updateAgentRunById).toHaveBeenCalledWith("run", expect.objectContaining({ status: "planning", tasks: [], reviewed: false, assetIds: [] }), { type: "run.retry.requested" }, ["failed"]);
-        expect(mocks.executeAgentRun).toHaveBeenCalledWith(expect.objectContaining({ id: "run", status: "planning", tasks: [] }), "http://localhost", "");
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "retry" }));
     });
 
     it("does not use whole-run retry when a failed child task exists", async () => {

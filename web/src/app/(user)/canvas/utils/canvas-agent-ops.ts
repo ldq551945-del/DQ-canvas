@@ -35,10 +35,11 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
         if (op.type === "add_node") {
             const nodeType = Object.values(CanvasNodeType).includes(op.nodeType as CanvasNodeType) ? op.nodeType! : CanvasNodeType.Text;
             const spec = getNodeSpec(nodeType);
+            const isAgentNode = Boolean(op.metadata?.agentRunId) || op.id?.startsWith("output-agent-");
             const existing = op.id ? nodes.find((node) => node.id === op.id) : undefined;
             if (existing) {
                 nodes = nodes.map((node) => (node.id === op.id ? { ...node, type: nodeType, title: op.title || node.title, metadata: { ...node.metadata, ...op.metadata } } : node));
-                selectedNodeIds = [existing.id];
+                if (!isAgentNode) selectedNodeIds = [existing.id];
                 return;
             }
             const requestedPosition = op.position || { x: op.x ?? index * 36, y: op.y ?? index * 36 };
@@ -48,12 +49,11 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
             const baseSize = { width: op.width || spec.width, height: op.height || spec.height };
             const maxEdge = Math.max(baseSize.width, baseSize.height);
             const size =
-                nodeType === CanvasNodeType.Image && !op.width && !op.height && naturalWidth && naturalHeight
+                isCanvasVisualMedia(nodeType) && !op.width && !op.height && naturalWidth && naturalHeight
                     ? fitNodeAspectRatio(naturalWidth, naturalHeight, maxEdge, maxEdge)
-                    : nodeType === CanvasNodeType.Image && !op.width && !op.height && metadata.size
+                    : isCanvasVisualMedia(nodeType) && !op.width && !op.height && metadata.size
                       ? nodeSizeFromRatio(metadata.size, maxEdge, maxEdge) || baseSize
                       : baseSize;
-            const isAgentNode = Boolean(metadata.agentRunId) || op.id?.startsWith("output-agent-");
             const position = isAgentNode ? findFreeNodePosition(nodes, requestedPosition, size.width, size.height) : requestedPosition;
             const node: CanvasNodeData = {
                 id: op.id || `${nodeType}-${Date.now()}-${index}`,
@@ -65,11 +65,20 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
                 metadata,
             };
             nodes = [...nodes, node];
-            selectedNodeIds = [node.id];
+            if (!isAgentNode) selectedNodeIds = [node.id];
         }
         if (op.type === "update_node") {
             if (!op.id) return;
-            nodes = nodes.map((node) => (node.id === op.id ? { ...node, ...op.patch, metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata } } : node));
+            nodes = nodes.map((node) => {
+                if (node.id !== op.id) return node;
+                const updated = { ...node, ...op.patch, metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata } };
+                const naturalWidth = updated.metadata?.naturalWidth;
+                const naturalHeight = updated.metadata?.naturalHeight;
+                if (!isCanvasVisualMedia(updated.type) || !naturalWidth || !naturalHeight || updated.metadata?.freeResize) return updated;
+                const size = fitNodeAspectRatio(naturalWidth, naturalHeight, Math.max(updated.width, updated.height), Math.max(updated.width, updated.height));
+                const center = { x: updated.position.x + updated.width / 2, y: updated.position.y + updated.height / 2 };
+                return { ...updated, width: size.width, height: size.height, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 } };
+            });
         }
         if (op.type === "delete_node") {
             const ids = new Set(op.ids || (op.id ? [op.id] : op.nodeType ? nodes.filter((node) => node.type === op.nodeType).map((node) => node.id) : []));
@@ -92,6 +101,10 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
     });
 
     return { ...snapshot, nodes, connections, selectedNodeIds, viewport };
+}
+
+function isCanvasVisualMedia(type: CanvasNodeType) {
+    return type === CanvasNodeType.Image || type === CanvasNodeType.Video || type === CanvasNodeType.Panorama;
 }
 
 function findFreeNodePosition(nodes: CanvasNodeData[], start: { x: number; y: number }, width: number, height: number) {

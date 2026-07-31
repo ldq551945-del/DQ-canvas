@@ -13,14 +13,15 @@ import {
     loadOlderWorkbenchAgentSession,
     loadWorkbenchAgentSession,
     loadWorkbenchAgentSessions,
+    mergeWorkbenchAgentSessions,
     matchesWorkbenchHistoryQuery,
     normalizeWorkbenchAgentSessions,
     removeWorkbenchAgentSessionsForRecords,
 } from "./workbench-agent-session-store";
 
 const sessions: WorkbenchAgentSession[] = [
-    { id: "linked", recordId: "record-1", title: "已关联", messages: [], prompt: "提示词一", lastPrompt: "提示词一", updatedAt: 2 },
-    { id: "legacy", title: "旧会话", messages: [], prompt: "旧提示词", lastPrompt: "旧提示词", updatedAt: 1 },
+    { id: "linked", recordId: "record-1", creativeConversationId: "conversation-1", title: "已关联", messages: [], prompt: "提示词一", lastPrompt: "提示词一", updatedAt: 2 },
+    { id: "same-text", creativeConversationId: "conversation-2", title: "相同文字", messages: [], prompt: "提示词一", lastPrompt: "提示词一", updatedAt: 1 },
 ];
 
 describe("工作台历史搜索", () => {
@@ -59,10 +60,11 @@ describe("工作台会话与生成记录", () => {
                     content: "生成产品视频",
                     metadata: {
                         workspace: "video",
+                        contentVisibility: "public",
                         attachments: [{ kind: "image", name: "产品图", url: "/api/reference-assets/permanent/product.png", storageKey: "permanent/product.png", mimeType: "image/png", width: 1200, height: 800 }],
                     },
                 },
-                { id: "assistant-message", role: "assistant", status: "completed", content: "已收到生成需求。", metadata: { workspace: "video" } },
+                { id: "assistant-message", role: "assistant", status: "completed", content: "已收到生成需求。", metadata: { workspace: "video", contentVisibility: "public" } },
             ],
         });
 
@@ -88,8 +90,8 @@ describe("工作台会话与生成记录", () => {
             hasMore: false,
             nextBeforeSequence: 1,
             messages: [
-                { id: "older", sequence: 1, role: "user", status: "completed", content: "最早需求", metadata: { workspace: "video" } },
-                { id: "existing", sequence: 2, role: "assistant", status: "completed", content: "已确认", metadata: { workspace: "video" } },
+                { id: "older", sequence: 1, role: "user", status: "completed", content: "最早需求", metadata: { workspace: "video", contentVisibility: "public" } },
+                { id: "existing", sequence: 2, role: "assistant", status: "completed", content: "已确认", metadata: { workspace: "video", contentVisibility: "public" } },
             ],
         });
 
@@ -110,16 +112,17 @@ describe("工作台会话与生成记录", () => {
         expect(result.hasOlderMessages).toBe(false);
     });
 
-    it("finds the linked session first and falls back to an exact legacy prompt", () => {
-        expect(findWorkbenchAgentSessionForRecord(sessions, "record-1", "提示词一")?.id).toBe("linked");
-        expect(findWorkbenchAgentSessionForRecord(sessions, "record-2", "旧提示词")?.id).toBe("legacy");
+    it("finds sessions only by record or conversation identity, never repeated prompt text", () => {
+        expect(findWorkbenchAgentSessionForRecord(sessions, "record-1", "conversation-2")?.id).toBe("linked");
+        expect(findWorkbenchAgentSessionForRecord(sessions, "record-2", "conversation-2")?.id).toBe("same-text");
+        expect(findWorkbenchAgentSessionForRecord(sessions, "record-3", "missing")).toBeUndefined();
     });
 
     it("removes only sessions linked to deleted records", () => {
-        expect(removeWorkbenchAgentSessionsForRecords(sessions, new Set(["record-1"])).map((session) => session.id)).toEqual(["legacy"]);
+        expect(removeWorkbenchAgentSessionsForRecords(sessions, new Set(["record-1"])).map((session) => session.id)).toEqual(["same-text"]);
     });
 
-    it("removes repeated requests and does not restore a sent prompt as draft", () => {
+    it("keeps repeated requests and does not restore a sent prompt as draft", () => {
         const [session] = normalizeWorkbenchAgentSessions([
             {
                 id: "duplicate",
@@ -135,9 +138,25 @@ describe("工作台会话与生成记录", () => {
             },
         ]);
 
-        expect(session.messages.filter((message) => message.role === "user")).toHaveLength(1);
+        expect(session.messages.filter((message) => message.role === "user")).toHaveLength(2);
         expect(session.messages.some((message) => message.text === "正在按当前参数创建生成任务。")).toBe(false);
         expect(session.prompt).toBe("");
+    });
+
+    it("keeps a local running session when server hydration returns before its summary", () => {
+        const local = {
+            id: "active-session",
+            creativeConversationId: "conversation-new",
+            title: "生成商品图",
+            messages: [{ id: "request-1-user", role: "user" as const, text: "生成商品图" }],
+            prompt: "",
+            lastPrompt: "生成商品图",
+            updatedAt: 20,
+        };
+
+        const merged = mergeWorkbenchAgentSessions([], [local]);
+
+        expect(merged).toEqual([local]);
     });
 
     it("keeps repeated text when each request used a different reference", () => {
@@ -156,5 +175,20 @@ describe("工作台会话与生成记录", () => {
         ]);
 
         expect(session.messages.filter((message) => message.role === "user")).toHaveLength(2);
+    });
+
+    it("drops any server message that is not explicitly public", async () => {
+        mocks.getCreativeWorkbenchSession.mockResolvedValue({
+            id: "legacy-conversation",
+            hasMore: false,
+            messages: [
+                { id: "internal", role: "user", status: "completed", content: "内部改写提示词", metadata: { workspace: "image" } },
+                { id: "public", role: "assistant", status: "completed", content: "任务正在生成", metadata: { workspace: "image", contentVisibility: "public" } },
+            ],
+        });
+
+        const result = await loadWorkbenchAgentSession("image", { id: "legacy-conversation", title: "旧会话", messages: [], prompt: "", lastPrompt: "", updatedAt: 1 });
+
+        expect(result.messages.map((message) => message.text)).toEqual(["任务正在生成"]);
     });
 });

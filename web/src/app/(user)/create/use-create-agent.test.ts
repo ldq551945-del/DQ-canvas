@@ -19,4 +19,15 @@ describe("useCreateAgent submission retry", () => {
         expect(retrySource).toContain("executeSubmission(snapshot)");
         expect(retrySource).not.toContain("setMessages((current) => [");
     });
+
+    it("retries a failed planning run through the existing server run", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/create/use-create-agent.ts"), "utf8");
+        const retryStart = source.indexOf("const retryRun");
+        const retrySource = source.slice(retryStart, source.indexOf("const renameConversation", retryStart));
+
+        expect(retrySource).toContain('controlCreativeAgentRun(runId, "retry")');
+        expect(retrySource).toContain("setRunDetails");
+        expect(retrySource).toContain("watchRun(result.run, assistantMessage.id");
+        expect(retrySource).not.toContain("createCreativeAgentRun");
+    });
 });

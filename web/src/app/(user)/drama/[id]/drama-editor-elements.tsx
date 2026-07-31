@@ -3,7 +3,16 @@
 import type { ReactNode } from "react";
 import { Tag } from "antd";
 
-const compactTagClass = "!m-0 !inline-flex !h-6 !min-w-max !shrink-0 !items-center !whitespace-nowrap !rounded-md !border-0 !px-2 !text-xs !leading-6";
+const compactTagClass = "!m-0 !inline-flex !h-6 !min-w-max !shrink-0 !items-center !whitespace-nowrap !rounded-md !border !px-2 !text-xs !font-medium !leading-6";
+
+const statusToneClass: Record<string, string> = {
+    idle: "!border-border !bg-muted/60 !text-muted-foreground",
+    queued: "!border-sky-200 !bg-sky-50 !text-sky-700 dark:!border-sky-900/70 dark:!bg-sky-950/35 dark:!text-sky-300",
+    running: "!border-amber-200 !bg-amber-50 !text-amber-700 dark:!border-amber-900/70 dark:!bg-amber-950/35 dark:!text-amber-300",
+    success: "!border-emerald-200 !bg-emerald-50 !text-emerald-700 dark:!border-emerald-900/70 dark:!bg-emerald-950/35 dark:!text-emerald-300",
+    error: "!border-rose-200 !bg-rose-50 !text-rose-700 dark:!border-rose-900/70 dark:!bg-rose-950/35 dark:!text-rose-300",
+    cancelled: "!border-border !bg-muted/60 !text-muted-foreground",
+};
 
 export function SectionTitle({ title, description, className = "" }: { title: string; description: string; className?: string }) {
     return (
@@ -14,52 +23,37 @@ export function SectionTitle({ title, description, className = "" }: { title: st
     );
 }
 export function GenerationTag({ status = "idle" }: { status?: string }) {
-    const values: Record<string, { color: string; label: string }> = {
-        idle: { color: "default", label: "未生成" },
-        queued: { color: "blue", label: "排队中" },
-        running: { color: "processing", label: "生成中" },
-        success: { color: "success", label: "已完成" },
-        error: { color: "error", label: "失败" },
-        cancelled: { color: "default", label: "已取消" },
+    const values: Record<string, string> = {
+        idle: "未生成",
+        queued: "排队中",
+        running: "生成中",
+        success: "已完成",
+        error: "失败",
+        cancelled: "已取消",
     };
-    const item = values[status] || values.idle;
-    return (
-        <Tag bordered={false} className={compactTagClass} color={item.color}>
-            {item.label}
-        </Tag>
-    );
+    return <Tag className={`${compactTagClass} ${statusToneClass[status] || statusToneClass.idle}`}>{values[status] || values.idle}</Tag>;
 }
 export function StoryboardTag({ status = "idle" }: { status?: string }) {
-    const values: Record<string, { color: string; label: string }> = {
-        idle: { color: "default", label: "待分镜图" },
-        queued: { color: "geekblue", label: "分镜排队" },
-        running: { color: "processing", label: "分镜图生成中" },
-        success: { color: "success", label: "分镜图完成" },
-        error: { color: "error", label: "分镜图失败" },
-        cancelled: { color: "default", label: "分镜图取消" },
+    const values: Record<string, string> = {
+        idle: "待分镜图",
+        queued: "分镜排队",
+        running: "分镜图生成中",
+        success: "分镜图完成",
+        error: "分镜图失败",
+        cancelled: "分镜图取消",
     };
-    const item = values[status] || values.idle;
-    return (
-        <Tag bordered={false} className={compactTagClass} color={item.color}>
-            {item.label}
-        </Tag>
-    );
+    return <Tag className={`${compactTagClass} ${statusToneClass[status] || statusToneClass.idle}`}>{values[status] || values.idle}</Tag>;
 }
 export function AudioTag({ status = "idle" }: { status?: string }) {
-    const values: Record<string, { color: string; label: string }> = {
-        idle: { color: "default", label: "未配音" },
-        queued: { color: "cyan", label: "配音排队" },
-        running: { color: "processing", label: "配音中" },
-        success: { color: "success", label: "配音完成" },
-        error: { color: "error", label: "配音失败" },
-        cancelled: { color: "default", label: "配音取消" },
+    const values: Record<string, string> = {
+        idle: "未配音",
+        queued: "配音排队",
+        running: "配音中",
+        success: "配音完成",
+        error: "配音失败",
+        cancelled: "配音取消",
     };
-    const item = values[status] || values.idle;
-    return (
-        <Tag bordered={false} className={compactTagClass} color={item.color}>
-            {item.label}
-        </Tag>
-    );
+    return <Tag className={`${compactTagClass} ${statusToneClass[status] || statusToneClass.idle}`}>{values[status] || values.idle}</Tag>;
 }
 export function AssetPanel({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
     return (

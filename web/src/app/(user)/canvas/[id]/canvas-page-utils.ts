@@ -8,7 +8,6 @@ import { ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationTask } from "@/services/api/image";
-import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { recordGenerationLog } from "@/services/api/generation-logs";
 import { createTextGenerationTask, waitForTextGenerationTask, type TextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
@@ -229,28 +228,28 @@ export async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
 }
 
 export async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
-    return Promise.all(
-        nodes.map(async (node) => {
-            const content = node.metadata?.content;
-            const fallbackContent = generatedContentFallback(content, node.metadata?.remoteUrl, node.metadata?.serverUrl);
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, fallbackContent) } };
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && content?.startsWith("blob:") && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && !content && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
-            if (!isCanvasImageNodeType(node.type) || !fallbackContent) return node;
-            let hydratedNode = node;
-            if (node.metadata?.storageKey) hydratedNode = { ...node, metadata: { ...node.metadata, content: await resolveStoredImageDataUrl(node.metadata.storageKey, fallbackContent) } };
-            else if (content?.startsWith("blob:") && fallbackContent) hydratedNode = { ...node, metadata: { ...node.metadata, content: fallbackContent } };
-            else if (!content && fallbackContent) hydratedNode = { ...node, metadata: { ...node.metadata, content: fallbackContent } };
-            const contentValue = content || "";
-            if (contentValue.startsWith("data:image/")) hydratedNode = { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadCanvasImage(contentValue)) } };
-            if (hydratedNode.type === CanvasNodeType.Panorama) return hydratedNode;
-            const naturalWidth = hydratedNode.metadata?.naturalWidth;
-            const naturalHeight = hydratedNode.metadata?.naturalHeight;
-            if (naturalWidth && naturalHeight) return resizeImageNodeToNaturalRatio(hydratedNode, naturalWidth, naturalHeight);
-            const dimensions = await readImageMeta(hydratedNode.metadata?.content || fallbackContent);
-            return resizeImageNodeToNaturalRatio(hydratedNode, dimensions.width, dimensions.height);
-        }),
-    );
+    return Promise.all(nodes.map((node) => hydrateCanvasNode(node).catch(() => node)));
+}
+
+async function hydrateCanvasNode(node: CanvasNodeData) {
+    const content = node.metadata?.content;
+    const fallbackContent = generatedContentFallback(content, node.metadata?.remoteUrl, node.metadata?.serverUrl);
+    if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, fallbackContent) } };
+    if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && content?.startsWith("blob:") && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
+    if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && !content && fallbackContent) return { ...node, metadata: { ...node.metadata, content: fallbackContent } };
+    if (!isCanvasImageNodeType(node.type) || !fallbackContent) return node;
+    let hydratedNode = node;
+    if (node.metadata?.storageKey) hydratedNode = { ...node, metadata: { ...node.metadata, content: await resolveStoredImageDataUrl(node.metadata.storageKey, fallbackContent) } };
+    else if (content?.startsWith("blob:") && fallbackContent) hydratedNode = { ...node, metadata: { ...node.metadata, content: fallbackContent } };
+    else if (!content && fallbackContent) hydratedNode = { ...node, metadata: { ...node.metadata, content: fallbackContent } };
+    const contentValue = content || "";
+    if (contentValue.startsWith("data:image/")) hydratedNode = { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadCanvasImage(contentValue)) } };
+    if (hydratedNode.type === CanvasNodeType.Panorama) return hydratedNode;
+    const naturalWidth = hydratedNode.metadata?.naturalWidth;
+    const naturalHeight = hydratedNode.metadata?.naturalHeight;
+    if (naturalWidth && naturalHeight) return resizeImageNodeToNaturalRatio(hydratedNode, naturalWidth, naturalHeight);
+    const dimensions = await readImageMeta(hydratedNode.metadata?.content || fallbackContent);
+    return resizeImageNodeToNaturalRatio(hydratedNode, dimensions.width, dimensions.height);
 }
 
 export function generatedContentFallback(content?: string, remoteFallback?: string, serverFallback?: string) {
@@ -264,10 +263,14 @@ export function generatedContentFallback(content?: string, remoteFallback?: stri
 
 export async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
     const hydrateItem = async <T extends { dataUrl?: string; storageKey?: string }>(item: T) => {
-        if (item.storageKey) return { ...item, dataUrl: await resolveStoredImageDataUrl(item.storageKey, item.dataUrl) };
-        if (item.dataUrl?.startsWith("data:image/")) {
-            const image = await uploadCanvasImage(item.dataUrl);
-            return { ...item, dataUrl: image.url, storageKey: image.storageKey };
+        try {
+            if (item.storageKey) return { ...item, dataUrl: await resolveStoredImageDataUrl(item.storageKey, item.dataUrl) };
+            if (item.dataUrl?.startsWith("data:image/")) {
+                const image = await uploadCanvasImage(item.dataUrl);
+                return { ...item, dataUrl: image.url, storageKey: image.storageKey };
+            }
+        } catch {
+            return item;
         }
         return item;
     };
@@ -348,14 +351,6 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 export function modelMatchesCanvasGenerationMode(model: string, mode: CanvasNodeGenerationMode) {
     if (mode === "image" && modelOptionName(model).toLowerCase() === "auto") return true;
     return modelMatchesCapability(model, mode);
-}
-
-export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) =>
-        node.metadata?.status === "loading" && !node.metadata.videoTask && !node.metadata.imageTask && !node.metadata.textTask
-            ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } }
-            : node,
-    );
 }
 
 export function isGenerationCanceled(error: unknown) {

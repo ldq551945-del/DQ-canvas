@@ -38,8 +38,8 @@ export type RequestOptions = {
 };
 export type ResolvedVideoMediaUrl = { url: string; remoteUrl?: string };
 
-export type VideoGenerationResult = { blob?: Blob; url?: string; remoteUrl?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; serverTaskId?: string };
+export type VideoGenerationResult = { blob?: Blob; url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; serverTaskId?: string; durationSeconds?: number };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 export const GLOBAL_AIOPC_VIDEO_CREATE_PATH = "/videos/videos";

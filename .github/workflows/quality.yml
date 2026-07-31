@@ -31,6 +31,8 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Dependency audit
+        run: pnpm audit --audit-level moderate
       - name: Type check
         run: pnpm run typecheck
       - name: Unit tests
@@ -60,6 +62,8 @@ jobs:
           cache-dependency-path: docs/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Dependency audit
+        run: pnpm audit --audit-level moderate
       - name: Type check
         run: pnpm run types:check
       - name: Production build

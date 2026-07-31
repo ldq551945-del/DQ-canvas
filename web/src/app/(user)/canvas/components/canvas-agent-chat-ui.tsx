@@ -5,6 +5,7 @@ import { Button, Tooltip } from "antd";
 import { ArrowUp, Check, CheckCircle2, Circle, CircleAlert, Crosshair, ImagePlus, LoaderCircle, Pause, RotateCcw, Wrench, X, XCircle } from "lucide-react";
 
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
+import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -16,7 +17,14 @@ import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import type { LocalUser } from "@/stores/use-user-store";
 import { canvasAgentProgressSteps, type CanvasAgentRunStage } from "./canvas-agent-progress";
 
-type CanvasAgentChatAttachment = { id: string; name: string; url: string };
+export type CanvasAgentChatAttachment = {
+    id: string;
+    name: string;
+    url: string;
+    label?: string;
+    status?: "uploading" | "ready" | "failed";
+    error?: string;
+};
 export type CanvasAgentChatMessage = {
     id: string;
     role: "user" | "assistant" | "system" | "tool" | "error";
@@ -95,7 +103,7 @@ export function AgentChatMessage({
             <AgentAvatar theme={theme} />
             <div className="min-w-0 max-w-[82%] text-left text-sm leading-6" style={{ color }}>
                 <div className="flex min-w-0 items-center gap-1">
-                    <div className="min-w-0 flex-1 whitespace-pre-wrap break-words text-left">{item.text}</div>
+                    <AgentMarkdown className="min-w-0 flex-1 text-left">{item.text}</AgentMarkdown>
                     {resultNodeIds.length ? (
                         <div className="flex shrink-0 items-center gap-0.5">
                             {resultNodeIds.map((nodeId, index, nodeIds) => {
@@ -241,6 +249,7 @@ export function AgentChatComposer({
     onSubmit,
     onAddFiles,
     onRemoveAttachment,
+    onRetryAttachment,
     beforeInput,
     left,
 }: {
@@ -254,12 +263,15 @@ export function AgentChatComposer({
     onSubmit: () => void;
     onAddFiles?: (files: FileList | File[] | null) => void | Promise<void>;
     onRemoveAttachment?: (id: string) => void;
+    onRetryAttachment?: (id: string) => void;
     beforeInput?: ReactNode;
     left?: ReactNode;
 }) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isDragActive, setIsDragActive] = useState(false);
-    const canSubmit = !disabled && !sending && Boolean(prompt.trim() || attachments.length);
+    const uploading = attachments.some((item) => item.status === "uploading");
+    const hasFailedUpload = attachments.some((item) => item.status === "failed");
+    const canSubmit = !disabled && !sending && !uploading && !hasFailedUpload && Boolean(prompt.trim() || attachments.length);
     const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
         if (!onAddFiles || sending || !preventFileDragEvent(event)) return;
         setIsDragActive(true);
@@ -286,14 +298,25 @@ export function AgentChatComposer({
                 onDrop={handleDrop}
             >
                 {attachments.length ? (
-                    <div className="thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
+                    <div className="thin-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1" aria-label="本轮参考图片" aria-live="polite">
                         {attachments.map((item) => (
-                            <div key={item.id} className="group relative size-14 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: theme.node.stroke }} title={item.name}>
+                            <div key={item.id} className="group relative size-14 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: item.status === "failed" ? "#ef4444" : theme.node.stroke }} title={item.error || item.name}>
                                 <img src={imagePreviewUrl(item.url, 256)} alt={item.name} className="size-full object-cover" />
-                                {onRemoveAttachment ? (
+                                {item.label ? <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{item.label}</span> : null}
+                                {item.status === "uploading" ? (
+                                    <span className="absolute inset-0 grid place-items-center bg-black/50 text-white" role="status" aria-label={`${item.name} 上传中`}>
+                                        <LoaderCircle className="size-5 animate-spin" />
+                                    </span>
+                                ) : null}
+                                {item.status === "failed" && onRetryAttachment ? (
+                                    <button type="button" className="absolute inset-0 grid place-items-center bg-red-950/55 text-white transition hover:bg-red-950/65" onClick={() => onRetryAttachment(item.id)} aria-label={`重试上传图片：${item.name}`}>
+                                        <RotateCcw className="size-5" />
+                                    </button>
+                                ) : null}
+                                {onRemoveAttachment && item.status !== "uploading" ? (
                                     <button
                                         type="button"
-                                        className="absolute right-1 top-1 grid size-5 place-items-center rounded-full border opacity-0 shadow-sm transition group-hover:opacity-100"
+                                        className="absolute right-1 top-1 z-10 grid size-5 place-items-center rounded-full border opacity-100 shadow-sm transition sm:opacity-0 sm:group-hover:opacity-100"
                                         style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }}
                                         onClick={() => onRemoveAttachment(item.id)}
                                         aria-label="移除图片"
@@ -340,8 +363,17 @@ export function AgentChatComposer({
                                         event.target.value = "";
                                     }}
                                 />
-                                <Tooltip title="上传图片">
-                                    <Button type="text" shape="circle" className="!h-9 !w-9 !min-w-9" disabled={sending} style={{ color: theme.node.muted }} icon={<ImagePlus className="size-4" />} onClick={() => fileInputRef.current?.click()} />
+                                <Tooltip title={uploading ? "正在上传图片" : "上传图片"}>
+                                    <Button
+                                        type="text"
+                                        shape="circle"
+                                        className="!h-9 !w-9 !min-w-9"
+                                        disabled={sending}
+                                        style={{ color: theme.node.muted }}
+                                        icon={uploading ? <LoaderCircle className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+                                        onClick={() => fileInputRef.current?.click()}
+                                        aria-label={uploading ? "正在上传图片" : "上传图片"}
+                                    />
                                 </Tooltip>
                             </>
                         ) : null}

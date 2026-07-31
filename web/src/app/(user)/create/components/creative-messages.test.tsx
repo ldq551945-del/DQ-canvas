@@ -7,6 +7,27 @@ import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-cont
 import { CreativeMessages } from "./creative-messages";
 
 describe("CreativeMessages", () => {
+    it("renders completed assistant markdown instead of showing syntax markers", () => {
+        const message: CreativeMessage = {
+            id: "assistant-markdown",
+            conversationId: "conversation-one",
+            sequence: 2,
+            role: "assistant",
+            status: "completed",
+            content: "以下为一份**通用专业简历报告模板**。\n\n---\n\n# 个人职业简历报告",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderMessages(message);
+
+        expect(markup).toContain("<strong");
+        expect(markup).toContain("通用专业简历报告模板</strong>");
+        expect(markup).toContain("<hr");
+        expect(markup).toContain("<h1");
+        expect(markup).not.toContain("**通用专业简历报告模板**");
+    });
+
     it("renders current-turn reference images above the user message", () => {
         const message: CreativeMessage = {
             id: "user-message",
@@ -48,6 +69,7 @@ describe("CreativeMessages", () => {
                         throw new Error("not used");
                     }}
                     onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
@@ -99,6 +121,7 @@ describe("CreativeMessages", () => {
                         throw new Error("not used");
                     }}
                     onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
@@ -151,6 +174,7 @@ describe("CreativeMessages", () => {
                         throw new Error("not used");
                     }}
                     onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
                     onRetrySubmission={vi.fn()}
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
@@ -162,4 +186,77 @@ describe("CreativeMessages", () => {
         expect(markup).toContain('aria-label="重试本次创作请求"');
         expect(markup).toContain("重试");
     });
+
+    it("offers an explicit retry when Agent planning finished with an uncertain result", () => {
+        const message: CreativeMessage = {
+            id: "assistant-message",
+            conversationId: "conversation-one",
+            runId: "run-one",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: "Agent 规划请求结果待确认",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[message]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "run-one": {
+                            id: "run-one",
+                            conversationId: "conversation-one",
+                            inputMessageId: "user-message",
+                            assistantMessageId: message.id,
+                            status: "failed",
+                            assetIds: [],
+                            tasks: [],
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
+                    onRetrySubmission={vi.fn()}
+                    onEditMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                />
+            </App>,
+        );
+
+        expect(markup).toContain('aria-label="重新分析本次请求"');
+        expect(markup).toContain("仅在你确认后重新请求");
+    });
 });
+
+function renderMessages(message: CreativeMessage) {
+    return renderToStaticMarkup(
+        <App>
+            <CreativeMessages
+                messages={[message]}
+                assets={[]}
+                loading={false}
+                projectLinks={{}}
+                projectErrors={{}}
+                runDetails={{}}
+                onMaterializeProject={async () => {
+                    throw new Error("not used");
+                }}
+                onRetryTask={vi.fn()}
+                onRetryRun={vi.fn()}
+                onRetrySubmission={vi.fn()}
+                onEditMessage={vi.fn()}
+                selectedAssetIds={[]}
+                onToggleAsset={vi.fn()}
+            />
+        </App>,
+    );
+}

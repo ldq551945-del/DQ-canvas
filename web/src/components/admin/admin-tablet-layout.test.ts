@@ -13,8 +13,8 @@ describe("admin tablet filter layouts", () => {
         expect(logs).toContain("2xl:grid-cols-[minmax(0,1fr)_286px]");
         expect(logs).toContain("xl:grid-cols-[minmax(220px,300px)_118px_138px_118px_minmax(132px,180px)]");
         expect(logs).not.toContain("sm:grid-cols-[minmax(220px,300px)");
-        expect(operations).toContain("xl:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(130px,180px))_auto]");
-        expect(operations).not.toContain("md:grid-cols-[minmax(220px,1fr)");
+        expect(operations).toContain("xl:grid-cols-[minmax(280px,1fr)_repeat(3,minmax(140px,180px))]");
+        expect(operations).not.toContain("md:grid-cols-[minmax(280px,1fr)");
         expect(media).toContain("xl:grid-cols-[minmax(320px,1fr)_40px_200px_180px]");
         expect(media).not.toContain("md:grid-cols-[minmax(320px,1fr)_40px_200px_180px]");
     });

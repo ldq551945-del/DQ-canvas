@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { acceptWorkbenchGenerationSubmission, buildWorkbenchAgentFailureUpdate, mergeWorkbenchAgentPatch, workbenchRequiresManualModel } from "./use-workbench-agent-run";
@@ -66,5 +68,12 @@ describe("workbench Agent failure update", () => {
     it("accepts only generation submissions that return a persisted record id", () => {
         expect(acceptWorkbenchGenerationSubmission("record-1", "图片")).toBe("record-1");
         expect(() => acceptWorkbenchGenerationSubmission(null, "图片")).toThrow("图片生成任务未能创建");
+    });
+
+    it("submits the original user request separately from the resolved provider prompt", () => {
+        const source = readFileSync(resolve(process.cwd(), "src/hooks/use-workbench-agent-run.ts"), "utf8");
+
+        expect(source).toContain("userPrompt: text");
+        expect(source).toContain("promptOverride: pending.resolvedPrompt, userPrompt: pending.userPrompt");
     });
 });

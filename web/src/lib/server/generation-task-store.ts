@@ -26,6 +26,19 @@ export type StoredGenerationTaskRecord = {
     createdAt: number;
     updatedAt: number;
     expiresAt: number;
+    executionPhase?: import("@/lib/server/generation-task-scheduler").GenerationTaskExecutionPhase;
+    upstreamTaskId?: string;
+    channelId?: string;
+    provider?: string;
+    queryPath?: string;
+    submittedAt?: number;
+    nextPollAt?: number;
+    lastPollAt?: number;
+    lastUpstreamStatus?: string;
+    resultPayload?: Record<string, unknown>;
+    workerId?: string;
+    leaseUntil?: number;
+    lastHeartbeatAt?: number;
 } & GenerationTaskContext;
 
 export type GenerationTaskRecordListOptions = {
@@ -66,6 +79,7 @@ type GenerationTaskSummaryAccumulator = Omit<GenerationTaskRecordSummary, "avera
 };
 
 const TASK_FILE = "generation-tasks.json";
+const ACTIVE_CONCURRENCY_PHASES = ["created", "submitting", "submitted", "polling", "result_ready", "persisting"] as const;
 let fileMutationQueue = Promise.resolve();
 const concurrencyQueues = new Map<string, Promise<void>>();
 
@@ -74,14 +88,30 @@ export async function createStoredGenerationTask<T extends { id: string; userId:
     return insertTask(type, task, ttlMs);
 }
 
-export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<T | null> {
+type GenerationTaskExecutionState = Pick<StoredGenerationTaskRecord, "executionPhase" | "lastUpstreamStatus">;
+
+export async function getStoredGenerationTask<T>(type: GenerationTaskType, id: string): Promise<(T & GenerationTaskExecutionState) | null> {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [id, type]);
-        return result.rows[0]?.payload || null;
+        const result = await postgresQuery<{ payload: T; execution_phase?: unknown; last_upstream_status?: unknown }>("SELECT payload, execution_phase, last_upstream_status FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [
+            id,
+            type,
+        ]);
+        const row = result.rows[0];
+        return row?.payload ? withExecutionState(row.payload, row.execution_phase, row.last_upstream_status) : null;
     }
     const tasks = await readFileTasks();
-    return (tasks.find((task) => task.id === id && task.type === type && task.expiresAt > Date.now())?.payload as T | undefined) || null;
+    const record = tasks.find((task) => task.id === id && task.type === type && task.expiresAt > Date.now());
+    return record ? withExecutionState(record.payload as T, record.executionPhase, record.lastUpstreamStatus) : null;
+}
+
+export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id: string): Promise<StoredGenerationTaskRecord | null> {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>("SELECT * FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [id, type]);
+        return result.rows[0] ? mapStoredTaskRecord(result.rows[0]) : null;
+    }
+    return (await readFileTasks()).find((task) => task.id === id && task.type === type && task.expiresAt > Date.now()) || null;
 }
 
 export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskType, userId: string, clientRequestId: string, attemptNo?: number): Promise<T | null> {
@@ -452,15 +482,14 @@ export async function countActiveStoredGenerationTasks(userId: string, type: Gen
     const activeAfter = Date.now() - staleMs;
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ total: string | number }>("SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND updated_at >= $3 AND expires_at > now()", [
-            userId,
-            type,
-            new Date(activeAfter),
-        ]);
+        const result = await postgresQuery<{ total: string | number }>(
+            "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
+            [userId, type, new Date(activeAfter), ACTIVE_CONCURRENCY_PHASES],
+        );
         return Number(result.rows[0]?.total || 0);
     }
     const tasks = await readFileTasks();
-    return tasks.filter((task) => task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && task.updatedAt >= activeAfter && task.expiresAt > Date.now()).length;
+    return tasks.filter((task) => task.userId === userId && task.type === type && ["pending", "running"].includes(task.status) && isActiveConcurrencyPhase(task.executionPhase) && task.updatedAt >= activeAfter && task.expiresAt > Date.now()).length;
 }
 
 export async function withGenerationConcurrencyLimit<T>(userId: string, type: GenerationTaskType, staleMs: number, limit: number, handler: () => Promise<T>): Promise<T | null> {
@@ -468,11 +497,10 @@ export async function withGenerationConcurrencyLimit<T>(userId: string, type: Ge
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
             await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [userId, type]);
-            const result = await client.query<{ total: string | number }>("SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND updated_at >= $3 AND expires_at > now()", [
-                userId,
-                type,
-                new Date(Date.now() - staleMs),
-            ]);
+            const result = await client.query<{ total: string | number }>(
+                "SELECT count(*) AS total FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND status IN ('pending', 'running') AND execution_phase = ANY($4::text[]) AND updated_at >= $3 AND expires_at > now()",
+                [userId, type, new Date(Date.now() - staleMs), ACTIVE_CONCURRENCY_PHASES],
+            );
             return Number(result.rows[0]?.total || 0) >= limit ? null : handler();
         });
     }
@@ -492,6 +520,10 @@ export async function withGenerationConcurrencyLimit<T>(userId: string, type: Ge
         release();
         if (concurrencyQueues.get(key) === queued) concurrencyQueues.delete(key);
     }
+}
+
+function isActiveConcurrencyPhase(phase: StoredGenerationTaskRecord["executionPhase"]) {
+    return !phase || ACTIVE_CONCURRENCY_PHASES.includes(phase as (typeof ACTIVE_CONCURRENCY_PHASES)[number]);
 }
 
 async function upsertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
@@ -543,6 +575,7 @@ async function upsertTask<T extends { id: string; userId: string; status: string
             updatedAt: task.updatedAt,
             expiresAt: task.updatedAt + ttlMs,
             ...preserveTaskContext(previous, context),
+            ...preserveTaskExecution(previous),
         };
         return [record, ...tasks.filter((item) => item.id !== task.id)];
     });
@@ -581,6 +614,7 @@ async function insertTask<T extends { id: string; userId: string; status: string
             createdAt: task.createdAt,
             updatedAt: task.updatedAt,
             expiresAt: task.updatedAt + ttlMs,
+            executionPhase: "created",
             ...context,
         };
         return { tasks: [record, ...tasks], result: task };
@@ -668,6 +702,25 @@ function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, n
     };
 }
 
+function preserveTaskExecution(previous?: StoredGenerationTaskRecord) {
+    if (!previous) return { executionPhase: "created" as const };
+    return {
+        executionPhase: previous.executionPhase,
+        upstreamTaskId: previous.upstreamTaskId,
+        channelId: previous.channelId,
+        provider: previous.provider,
+        queryPath: previous.queryPath,
+        submittedAt: previous.submittedAt,
+        nextPollAt: previous.nextPollAt,
+        lastPollAt: previous.lastPollAt,
+        lastUpstreamStatus: previous.lastUpstreamStatus,
+        resultPayload: previous.resultPayload,
+        workerId: previous.workerId,
+        leaseUntil: previous.leaseUntil,
+        lastHeartbeatAt: previous.lastHeartbeatAt,
+    };
+}
+
 function cleanContextText(value?: string) {
     return value?.trim().slice(0, 160) || undefined;
 }
@@ -718,6 +771,19 @@ function mapStoredTaskRecord(row: Record<string, unknown>): StoredGenerationTask
         parentTaskId: cleanContextText(String(row.parent_task_id || "")),
         attemptNo: row.attempt_no === null || row.attempt_no === undefined ? undefined : Math.max(0, Math.floor(Number(row.attempt_no) || 0)),
         clientRequestId: cleanContextText(String(row.client_request_id || "")),
+        executionPhase: isExecutionPhase(row.execution_phase) ? row.execution_phase : undefined,
+        upstreamTaskId: cleanContextText(String(row.upstream_task_id || "")),
+        channelId: cleanContextText(String(row.channel_id || "")),
+        provider: cleanContextText(String(row.provider || "")),
+        queryPath: typeof row.query_path === "string" ? row.query_path.trim().slice(0, 1_000) || undefined : undefined,
+        submittedAt: optionalDatabaseTime(row.submitted_at),
+        nextPollAt: optionalDatabaseTime(row.next_poll_at),
+        lastPollAt: optionalDatabaseTime(row.last_poll_at),
+        lastUpstreamStatus: cleanContextText(String(row.last_upstream_status || "")),
+        resultPayload: recordObject(row.result_payload),
+        workerId: cleanContextText(String(row.worker_id || "")),
+        leaseUntil: optionalDatabaseTime(row.lease_until),
+        lastHeartbeatAt: optionalDatabaseTime(row.last_heartbeat_at),
     };
 }
 
@@ -746,9 +812,37 @@ function isTaskSurface(value: unknown): value is NonNullable<GenerationTaskConte
     return value === "chat" || value === "canvas" || value === "drama";
 }
 
+function isExecutionPhase(value: unknown): value is NonNullable<StoredGenerationTaskRecord["executionPhase"]> {
+    return (
+        value === "created" ||
+        value === "submitting" ||
+        value === "submitted" ||
+        value === "polling" ||
+        value === "result_ready" ||
+        value === "persisting" ||
+        value === "needs_review" ||
+        value === "review_pending" ||
+        value === "reviewing" ||
+        value === "review_unavailable" ||
+        value === "completed"
+    );
+}
+
 function databaseTime(value: unknown) {
     const time = value instanceof Date ? value.getTime() : new Date(String(value || "")).getTime();
     return Number.isFinite(time) ? time : 0;
+}
+
+function optionalDatabaseTime(value: unknown) {
+    return value ? databaseTime(value) || undefined : undefined;
+}
+
+function withExecutionState<T>(payload: T, phase: unknown, status: unknown): T & GenerationTaskExecutionState {
+    return {
+        ...payload,
+        executionPhase: isExecutionPhase(phase) ? phase : undefined,
+        lastUpstreamStatus: cleanContextText(typeof status === "string" ? status : ""),
+    };
 }
 
 function recordObject(value: unknown) {

@@ -21,6 +21,7 @@ import { linkStoredGenerationTask, type GenerationTaskContext } from "@/lib/serv
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
+import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submission-error";
 
 import {
     type CreateImageTaskBody,
@@ -34,9 +35,6 @@ import {
     DEFAULT_IMAGE_SHORT_SIDE,
     IMAGE_SIZE_STEP,
     IMAGE_MIN_PIXELS,
-    IMAGE_MAX_PIXELS,
-    IMAGE_MAX_EDGE,
-    IMAGE_MAX_RATIO,
     IMAGE_OUTPUT_FORMAT,
     TASK_HEARTBEAT_MS,
     MODEL_REQUEST_TIMEOUT_MS,
@@ -72,7 +70,9 @@ import {
     isInternalSystemProxyBase,
     taskHeaders,
     imagePointsIdempotencyKey,
-    taskFetch,
+    imageSubmissionFetch,
+    imageSubmissionResponseError,
+    parseImageSubmissionJson,
     geminiHeaders,
     geminiApiUrl,
     withSystemPrompt,
@@ -100,6 +100,7 @@ import {
     shouldTryNextImageResponseFormat,
     shouldRetryJsonImageEditPayload,
     shouldFallbackToResponsesImage,
+    allowsImageProtocolFallback,
     stringField,
     delay,
     parseGeminiImagePayload,
@@ -124,38 +125,39 @@ import {
     globalAiOpcImagePreset,
 } from "./image-task-support";
 
-export async function runOpenAiImageTask(task: ImageTask, origin: string, publicOrigin: string, cookie: string): Promise<ImageTaskRunResult> {
+export async function runOpenAiImageTask(task: ImageTask, origin: string, publicOrigin: string, cookie: string, singleStep = false): Promise<ImageTaskRunResult> {
     const config = task.config;
     const quality = normalizeQuality(config.quality || "");
     const requestSize = resolveRequestSize(quality, config.size || "auto");
     const globalPreset = globalAiOpcImagePreset(config);
-    if (globalPreset) return runGlobalAiOpcImageTask(task, origin, publicOrigin, cookie, quality, requestSize);
+    if (globalPreset) return runGlobalAiOpcImageTask(task, origin, publicOrigin, cookie, quality, requestSize, singleStep);
     const path = await openAiImageTaskPath(config, task.kind);
     const url = taskUrl(config, path, origin);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
     const responseFormat = await preferredImageResponseFormat(config);
+    const allowProtocolFallback = allowsImageProtocolFallback(config);
     const useJsonImageEdit = task.kind === "edit" && (await shouldUseJsonImageEdit(config));
-    if (useJsonImageEdit) return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, responseFormat);
+    if (useJsonImageEdit) return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, responseFormat, singleStep);
     let response: Response;
 
     if (task.kind === "edit") {
         let formData: FormData;
         try {
-            formData = await buildImageEditFormData(task, quality, requestSize, origin, cookie, "url");
+            formData = await buildImageEditFormData(task, quality, requestSize, origin, cookie, "url", allowProtocolFallback);
         } catch (error) {
-            throw error instanceof Error ? error : new Error("参考图读取失败，请重新上传参考图");
+            throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "参考图读取失败，请重新上传参考图");
         }
-        response = await taskFetch(config, url, { method: "POST", headers, body: formData, cache: "no-store" });
+        response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: formData, cache: "no-store" });
         if (!response.ok) {
             const message = await readFetchError(response, "图片生成失败");
-            if (shouldFallbackToJsonImageEdit(response.status, message)) return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "url");
-            if (shouldTryNextImageResponseFormat("url", response.status, message)) return runOpenAiImageTaskWithBase64Response(task, origin, publicOrigin, cookie);
-            if (shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie);
-            throw new Error(message);
+            if (allowProtocolFallback && shouldFallbackToJsonImageEdit(response.status, message)) return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "url", singleStep);
+            if (allowProtocolFallback && shouldTryNextImageResponseFormat("url", response.status, message)) return runOpenAiImageTaskWithBase64Response(task, origin, publicOrigin, cookie, singleStep);
+            if (allowProtocolFallback && shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
+            throw imageSubmissionResponseError(response.status, message);
         }
     } else {
         headers.set("content-type", "application/json");
-        response = await taskFetch(config, url, {
+        response = await imageSubmissionFetch(config, url, {
             method: "POST",
             headers,
             body: JSON.stringify({
@@ -164,34 +166,33 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
                 n: 1,
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
-                response_format: responseFormat,
-                output_format: IMAGE_OUTPUT_FORMAT,
+                ...(allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
             }),
             cache: "no-store",
         });
         if (!response.ok) {
             const message = await readFetchError(response, "图片生成失败");
-            if (shouldTryNextImageResponseFormat(responseFormat, response.status, message)) return runOpenAiImageTaskWithBase64Response(task, origin, publicOrigin, cookie);
-            if (shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie);
-            throw new Error(message);
+            if (allowProtocolFallback && shouldTryNextImageResponseFormat(responseFormat, response.status, message)) return runOpenAiImageTaskWithBase64Response(task, origin, publicOrigin, cookie, singleStep);
+            if (allowProtocolFallback && shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
+            throw imageSubmissionResponseError(response.status, message);
         }
     }
 
-    if (!response.ok) throw new Error(await readFetchError(response, "图片生成失败"));
-    const payload = (await response.json()) as ImageApiResponse;
+    if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
+    const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
     const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-    const result = await parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url));
-    if (responseFormat === "url" && shouldRetryInternalImageUrlAsBase64(result)) {
+    const result = await parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
+    if (allowProtocolFallback && responseFormat === "url" && shouldRetryInternalImageUrlAsBase64(result)) {
         await refundChargedImageResponse(task, response.headers);
-        return runOpenAiImageTaskWithBase64Response(task, origin, publicOrigin, cookie);
+        return runOpenAiImageTaskWithBase64Response(task, origin, publicOrigin, cookie, singleStep);
     }
     return result;
 }
 
-async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOrigin: string, cookie: string, quality: string | undefined, requestSize: string | undefined): Promise<ImageTaskRunResult> {
+async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOrigin: string, cookie: string, quality: string | undefined, requestSize: string | undefined, singleStep: boolean): Promise<ImageTaskRunResult> {
     const config = task.config;
     const preset = globalAiOpcImagePreset(config);
-    if (!preset) throw new Error("GlobalAiOpc 图片预设未配置");
+    if (!preset) throw new GenerationSubmissionSafeFailure("GlobalAiOpc 图片预设未配置");
     const path = preset.createPath;
     const url = taskUrl(config, path, origin);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
@@ -199,7 +200,7 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
     const referenceContext = { ownerUserId: task.userId, taskId: task.id };
     const imageUrls = (await Promise.all(task.references.map((reference) => publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext)))).filter(Boolean);
     const ratio = imageRequestAspectRatio(config.size || "");
-    const response = await taskFetch(config, url, {
+    const response = await imageSubmissionFetch(config, url, {
         method: "POST",
         headers,
         body: JSON.stringify(
@@ -215,10 +216,10 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
         ),
         cache: "no-store",
     });
-    if (!response.ok) throw new Error(await readFetchError(response, "图片生成失败"));
-    const payload = (await response.json()) as ImageApiResponse;
+    if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
+    const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
     const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-    return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url));
+    return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
 }
 
 export async function runOpenAiJsonImageEditTask(
@@ -230,6 +231,7 @@ export async function runOpenAiJsonImageEditTask(
     requestSize: string | undefined,
     cookie: string,
     responseFormat: (typeof IMAGE_RESPONSE_FORMATS)[number] = "b64_json",
+    singleStep = false,
 ): Promise<ImageTaskRunResult> {
     const config = task.config;
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
@@ -238,66 +240,68 @@ export async function runOpenAiJsonImageEditTask(
     const apiBase = await resolveConfiguredApiBaseUrl(task.config.baseUrl).catch(() => task.config.baseUrl);
     const referenceMode = configuredImageEditReferenceMode(config);
     const imageUrlObjectOnlyMode = shouldUseSub2ApiImageEdit(config, apiBase);
+    const allowProtocolFallback = allowsImageProtocolFallback(config);
     const publicUrlReferenceMode = imageUrlObjectOnlyMode || referenceMode === "public-url" || (referenceMode === "auto" && isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol }));
-    for (const body of await buildJsonImageEditBodies(task, quality, requestSize, responseFormat, origin, publicOrigin, publicUrlReferenceMode, imageUrlObjectOnlyMode)) {
-        const response = await taskFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
+    for (const body of await buildJsonImageEditBodies(task, quality, requestSize, responseFormat, origin, publicOrigin, publicUrlReferenceMode, imageUrlObjectOnlyMode, allowProtocolFallback)) {
+        const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
         if (!response.ok) {
             const message = await readFetchError(response, "图片生成失败");
             lastMessage = message;
-            if (imageUrlObjectOnlyMode) throw new Error(message);
-            if (shouldRetryJsonImageEditPayload(response.status, message)) continue;
-            if (shouldTryNextImageResponseFormat(responseFormat, response.status, message)) {
-                if (responseFormat === "url") return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json");
-                return runOpenAiResponsesImageTask(task, origin, cookie);
+            if (imageUrlObjectOnlyMode) throw imageSubmissionResponseError(response.status, message);
+            if (allowProtocolFallback && shouldRetryJsonImageEditPayload(response.status, message)) continue;
+            if (allowProtocolFallback && shouldTryNextImageResponseFormat(responseFormat, response.status, message)) {
+                if (responseFormat === "url") return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json", singleStep);
+                return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
             }
-            if (shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie);
-            throw new Error(message);
+            if (allowProtocolFallback && shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
+            throw imageSubmissionResponseError(response.status, message);
         }
-        const payload = (await response.json()) as ImageApiResponse;
+        const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
         const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-        const result = await parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url));
-        if (responseFormat === "url" && shouldRetryInternalImageUrlAsBase64(result)) {
+        const result = await parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
+        if (allowProtocolFallback && responseFormat === "url" && shouldRetryInternalImageUrlAsBase64(result)) {
             await refundChargedImageResponse(task, response.headers);
-            return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json");
+            return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json", singleStep);
         }
         return result;
     }
-    if (shouldTryNextImageResponseFormat(responseFormat, 400, lastMessage)) {
-        if (responseFormat === "url") return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json");
-        return runOpenAiResponsesImageTask(task, origin, cookie);
+    if (allowProtocolFallback && shouldTryNextImageResponseFormat(responseFormat, 400, lastMessage)) {
+        if (responseFormat === "url") return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json", singleStep);
+        return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
     }
-    throw new Error(lastMessage || "图片生成失败");
+    throw new GenerationSubmissionSafeFailure(lastMessage || "图片生成失败");
 }
 
-export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, origin: string, publicOrigin: string, cookie: string): Promise<ImageTaskRunResult> {
+export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, origin: string, publicOrigin: string, cookie: string, singleStep = false): Promise<ImageTaskRunResult> {
     const config = task.config;
     const quality = normalizeQuality(config.quality || "");
     const requestSize = resolveRequestSize(quality, config.size || "auto");
     const path = await openAiImageTaskPath(config, task.kind);
     const url = taskUrl(config, path, origin);
+    const allowProtocolFallback = allowsImageProtocolFallback(config);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
 
     if (task.kind === "edit") {
         let formData: FormData;
         try {
-            formData = await buildImageEditFormData(task, quality, requestSize, origin, cookie, "b64_json");
+            formData = await buildImageEditFormData(task, quality, requestSize, origin, cookie, "b64_json", allowProtocolFallback);
         } catch (error) {
-            throw error instanceof Error ? error : new Error("参考图读取失败，请重新上传参考图");
+            throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "参考图读取失败，请重新上传参考图");
         }
-        const response = await taskFetch(config, url, { method: "POST", headers, body: formData, cache: "no-store" });
+        const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: formData, cache: "no-store" });
         if (!response.ok) {
             const message = await readFetchError(response, "图片生成失败");
-            if (shouldFallbackToJsonImageEdit(response.status, message)) return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json");
-            if (shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie);
-            throw new Error(message);
+            if (allowProtocolFallback && shouldFallbackToJsonImageEdit(response.status, message)) return runOpenAiJsonImageEditTask(task, url, origin, publicOrigin, quality, requestSize, cookie, "b64_json", singleStep);
+            if (allowProtocolFallback && shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
+            throw imageSubmissionResponseError(response.status, message);
         }
-        const payload = (await response.json()) as ImageApiResponse;
+        const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
         const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-        return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url));
+        return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
     }
 
     headers.set("content-type", "application/json");
-    const response = await taskFetch(config, url, {
+    const response = await imageSubmissionFetch(config, url, {
         method: "POST",
         headers,
         body: JSON.stringify({
@@ -313,34 +317,35 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
     });
     if (!response.ok) {
         const message = await readFetchError(response, "图片生成失败");
-        if (shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie);
-        throw new Error(message);
+        if (allowProtocolFallback && shouldFallbackToResponsesImage(response.status, message)) return runOpenAiResponsesImageTask(task, origin, cookie, singleStep);
+        throw imageSubmissionResponseError(response.status, message);
     }
-    const payload = (await response.json()) as ImageApiResponse;
+    const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
     const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-    return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url));
+    return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
 }
 
-export async function runOpenAiResponsesImageTask(task: ImageTask, origin: string, cookie: string): Promise<ImageTaskRunResult> {
+export async function runOpenAiResponsesImageTask(task: ImageTask, origin: string, cookie: string, singleStep = false): Promise<ImageTaskRunResult> {
     const config = task.config;
     const url = taskUrl(config, "/responses", origin);
     const headers = taskHeaders(config, cookie, imagePointsIdempotencyKey(task));
     headers.set("content-type", "application/json");
     let lastError = "";
 
-    for (const body of buildResponsesImageBodies(task, origin)) {
-        const response = await taskFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
+    const bodies = allowsImageProtocolFallback(config) ? buildResponsesImageBodies(task, origin) : [buildResponsesImageBodies(task, origin)[0]];
+    for (const body of bodies) {
+        const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
         if (!response.ok) {
             lastError = await readFetchError(response, "图片生成失败");
             if (response.status === 400 || response.status === 422) continue;
-            throw new Error(lastError);
+            throw imageSubmissionResponseError(response.status, lastError);
         }
-        const payload = (await response.json()) as ImageApiResponse;
+        const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
         const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
-        return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url));
+        return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
     }
 
-    throw new Error(lastError || "图片生成失败");
+    throw new GenerationSubmissionSafeFailure(lastError || "图片生成失败");
 }
 
 export function buildResponsesImageBodies(task: ImageTask, origin: string) {
@@ -378,6 +383,7 @@ export async function buildJsonImageEditBodies(
     publicOrigin: string,
     publicUrlReferenceMode = false,
     imageUrlObjectOnlyMode = false,
+    includeCompatibilityFields = true,
 ) {
     const referenceContext = { ownerUserId: task.userId, taskId: task.id };
     const images = (
@@ -391,8 +397,7 @@ export async function buildJsonImageEditBodies(
         n: 1,
         ...(quality ? { quality } : {}),
         ...(requestSize ? { size: requestSize } : {}),
-        response_format: responseFormat,
-        output_format: IMAGE_OUTPUT_FORMAT,
+        ...(includeCompatibilityFields ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
         ...(mask ? { mask } : {}),
     };
     if (!images.length) return [base];

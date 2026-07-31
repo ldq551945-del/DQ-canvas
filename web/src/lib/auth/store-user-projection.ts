@@ -17,7 +17,7 @@ export function toPublicUser(user: StoredUser, db?: Pick<AuthDatabase, "settings
     const dailyPoints = dailyEnabled ? (wallet?.remainingPoints ?? Math.max(0, normalizePoints(configuredDailyPoints, 0))) : 0;
     return buildPublicUser(
         user,
-        { id: plan.id, name: plan.name },
+        { id: plan.id, name: plan.name, hasActivePlan: !freePlan },
         {
             permanentPoints: normalizePoints(user.pointsBalance, 0),
             dailyPoints,
@@ -28,7 +28,11 @@ export function toPublicUser(user: StoredUser, db?: Pick<AuthDatabase, "settings
 
 export function publicUserFromAuthenticatedRecord(record: AuthenticatedUserRecord, dailyPointsExpiresAt = walletClock().expiresAt) {
     const fallbackPlan = DEFAULT_ENTITLEMENT_SETTINGS.plans[0];
-    return buildPublicUser(record.user, { id: record.planId || fallbackPlan.id, name: record.planName || fallbackPlan.name }, { permanentPoints: record.permanentPoints, dailyPoints: record.dailyPoints, dailyPointsExpiresAt });
+    return buildPublicUser(
+        record.user,
+        { id: record.planId || fallbackPlan.id, name: record.planName || fallbackPlan.name, hasActivePlan: record.hasActivePlan },
+        { permanentPoints: record.permanentPoints, dailyPoints: record.dailyPoints, dailyPointsExpiresAt },
+    );
 }
 
 export function matchesPublicUser(user: PublicUser, input: { keyword: string; role?: UserRole; status?: UserStatus }) {
@@ -53,7 +57,7 @@ export function summarizePublicUsers(users: PublicUser[], defaultPlanId: string)
     };
 }
 
-function buildPublicUser(user: StoredUser, plan: { id: string; name: string }, wallet = { permanentPoints: normalizePoints(user.pointsBalance, 0), dailyPoints: 0, dailyPointsExpiresAt: walletClock().expiresAt }): PublicUser {
+function buildPublicUser(user: StoredUser, plan: { id: string; name: string; hasActivePlan: boolean }, wallet = { permanentPoints: normalizePoints(user.pointsBalance, 0), dailyPoints: 0, dailyPointsExpiresAt: walletClock().expiresAt }): PublicUser {
     const totalPoints = Math.max(0, normalizePointAmount(wallet.permanentPoints + wallet.dailyPoints, 0));
     return {
         id: user.id,
@@ -67,6 +71,7 @@ function buildPublicUser(user: StoredUser, plan: { id: string; name: string }, w
         status: user.status,
         planId: plan.id,
         planName: plan.name,
+        hasActivePlan: plan.hasActivePlan,
         pointsBalance: totalPoints,
         permanentPointsBalance: normalizePoints(wallet.permanentPoints, 0),
         dailyPointsBalance: Math.max(0, normalizePoints(wallet.dailyPoints, 0)),

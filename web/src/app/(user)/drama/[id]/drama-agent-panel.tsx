@@ -11,6 +11,7 @@ import type { TextAreaRef } from "antd/es/input/TextArea";
 import type { AgentMediaDownload } from "@/components/agent/agent-media-download";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
+import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
@@ -22,6 +23,7 @@ import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
 import { controlCreativeAgentRun, createCreativeAgentRun, createCreativeConversation, listCreativeAssets, listCreativeMessages, uploadCreativeAsset, watchCreativeAgentRun } from "@/services/api/creative";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
 import { useDramaStore } from "../stores/use-drama-store";
+import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 
 type PendingDramaSubmission = {
     clientRequestId: string;
@@ -226,7 +228,7 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                 sequence: sequence + 1,
                 role: "assistant",
                 status: "running",
-                content: "正在理解你的需求",
+                content: agentRequirementAcknowledgement(content, "drama", assetIds.length > 0),
                 metadata: {},
                 createdAt: now,
                 updatedAt: now,
@@ -285,9 +287,9 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                     return (
                         <div key={message.id} className={`group/message min-w-0 ${message.role === "user" ? "pl-8 text-right" : "pr-2"}`}>
                             {referencedAssets.length ? <DramaMessageReferences assets={referencedAssets} /> : null}
-                            <div className={`min-w-0 whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere] ${message.status === "failed" ? "text-red-500" : "text-foreground"}`}>
+                            <div className={`min-w-0 break-words text-sm leading-6 [overflow-wrap:anywhere] ${message.status === "failed" ? "text-red-500" : "text-foreground"}`}>
                                 {message.status === "running" ? <LoaderCircle className="mr-1 inline size-3.5 animate-spin" /> : null}
-                                {displayContent}
+                                {message.role === "assistant" && message.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
                             </div>
                             {messageAssets.length ? <DramaAgentAssets assets={messageAssets} project={project} episode={episode} /> : null}
                             {message.role === "assistant" && message.status === "failed" && !message.runId ? (

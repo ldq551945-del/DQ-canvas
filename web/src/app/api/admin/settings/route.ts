@@ -7,6 +7,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { mergeSystemChannelSecrets, serializeAdminSettings } from "@/lib/server/admin-channel-config";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { invalidatePublicSiteSettings } from "@/lib/server/site-metadata";
+import { channelProtocolValidationErrors } from "@/lib/channel-protocol-registry";
 
 export const runtime = "nodejs";
 
@@ -40,12 +41,15 @@ export async function PATCH(request: Request) {
         if (Array.isArray(body.systemChannels)) patch.systemChannels = mergeSystemChannelSecrets(body.systemChannels, currentSettings.systemChannels);
         if (Array.isArray(body.systemChannels) || Array.isArray(body.logicalModels) || body.defaultModels) {
             const channels = patch.systemChannels || currentSettings.systemChannels;
+            const protocolErrors = channels.flatMap(channelProtocolValidationErrors);
+            if (protocolErrors.length) throw new AuthInputError(protocolErrors[0]);
             const sourceLogicalModels = Array.isArray(body.logicalModels) ? body.logicalModels : currentSettings.logicalModels;
             const defaultModels = { ...currentSettings.defaultModels, ...body.defaultModels };
-            const errors = modelRoutingValidationErrors(sourceLogicalModels, channels, defaultModels);
+            const normalizedDefaults = normalizeDefaultModelsConfig(defaultModels, sourceLogicalModels, channels);
+            const errors = modelRoutingValidationErrors(sourceLogicalModels, channels, normalizedDefaults);
             if (errors.length) throw new AuthInputError(errors[0]);
             patch.logicalModels = normalizeLogicalModelsConfig(sourceLogicalModels, channels);
-            patch.defaultModels = normalizeDefaultModelsConfig(defaultModels, patch.logicalModels, channels);
+            patch.defaultModels = normalizeDefaultModelsConfig(normalizedDefaults, patch.logicalModels, channels);
         }
         if (Array.isArray(body.agentSkills)) patch.agentSkills = body.agentSkills;
         if (!Object.keys(patch).length) return NextResponse.json({ error: "没有可更新的设置" }, { status: 400 });

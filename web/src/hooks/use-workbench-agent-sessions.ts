@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
 
 import type { WorkbenchAgentMessage, WorkbenchAgentSession } from "@/components/agent/workbench-agent-panel";
-import { loadOlderWorkbenchAgentSession, loadWorkbenchAgentSession, loadWorkbenchAgentSessions } from "@/components/agent/workbench-agent-session-store";
+import { loadOlderWorkbenchAgentSession, loadWorkbenchAgentSession, loadWorkbenchAgentSessions, mergeWorkbenchAgentSessions } from "@/components/agent/workbench-agent-session-store";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { createCreativeConversation } from "@/services/api/creative";
 
@@ -13,7 +13,7 @@ type WorkbenchContext = { key: string; generation: number };
 export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: string) {
     const contextKey = `${userId}:${workspace}`;
     const [prompt, setPrompt] = useState("");
-    const [agentMessages, setAgentMessages] = useState<WorkbenchAgentMessage[]>([]);
+    const [agentMessages, setAgentMessagesState] = useState<WorkbenchAgentMessage[]>([]);
     const [agentSessions, setAgentSessions] = useState<WorkbenchAgentSession[]>([]);
     const [activeAgentSessionId, setActiveAgentSessionId] = useState(() => nanoid());
     const [activeAgentRecordId, setActiveAgentRecordId] = useState<string>();
@@ -23,20 +23,27 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     const [availableSkills, setAvailableSkills] = useState<AgentSkillSummary[]>([]);
     const [olderAgentMessagesLoading, setOlderAgentMessagesLoading] = useState(false);
     const contextRef = useRef<WorkbenchContext>({ key: contextKey, generation: 0 });
+    const agentMessagesContextRef = useRef(contextKey);
     const agentSessionsRef = useRef<WorkbenchAgentSession[]>([]);
     const activeConversationRef = useRef<{ key: string; id: string } | undefined>(undefined);
     const conversationRequestRef = useRef<(WorkbenchContext & { promise: Promise<string> }) | null>(null);
     const olderMessagesRequestRef = useRef<string | undefined>(undefined);
     if (contextRef.current.key !== contextKey) {
         contextRef.current = { key: contextKey, generation: contextRef.current.generation + 1 };
+        agentMessagesContextRef.current = "";
         activeConversationRef.current = undefined;
         conversationRequestRef.current = null;
         olderMessagesRequestRef.current = undefined;
     }
+    const setAgentMessages = useCallback<Dispatch<SetStateAction<WorkbenchAgentMessage[]>>>((value) => {
+        agentMessagesContextRef.current = contextRef.current.key;
+        setAgentMessagesState(value);
+    }, []);
 
     useEffect(() => {
         const context = { ...contextRef.current };
-        setAgentMessages([]);
+        agentMessagesContextRef.current = "";
+        setAgentMessagesState([]);
         setAgentSessions([]);
         agentSessionsRef.current = [];
         setPrompt("");
@@ -52,8 +59,9 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         void loadWorkbenchAgentSessions(workspace, userId)
             .then((sessions) => {
                 if (!isCurrentContext(contextRef.current, context)) return;
-                agentSessionsRef.current = sessions;
-                setAgentSessions(sessions);
+                const merged = mergeWorkbenchAgentSessions(sessions, agentSessionsRef.current);
+                agentSessionsRef.current = merged;
+                setAgentSessions(merged);
                 setAgentSessionsHydrated(true);
             })
             .catch(() => {
@@ -66,7 +74,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
     }, [agentSessions]);
 
     useEffect(() => {
-        if (!agentSessionsHydrated || !userId || !agentMessages.length) return;
+        if (agentMessagesContextRef.current !== contextKey || !userId || !agentMessages.length) return;
         const context = { ...contextRef.current };
         if (!isCurrentContext(contextRef.current, context)) return;
         const session: WorkbenchAgentSession = {
@@ -82,7 +90,7 @@ export function useWorkbenchAgentSessions(workspace: "image" | "video", userId: 
         const next = [session, ...agentSessionsRef.current.filter((item) => item.id !== activeAgentSessionId)].slice(0, 100);
         agentSessionsRef.current = next;
         setAgentSessions(next);
-    }, [activeAgentRecordId, activeAgentSessionId, activeCreativeConversationId, agentMessages, agentSessionsHydrated, lastAgentPrompt, prompt, userId, workspace]);
+    }, [activeAgentRecordId, activeAgentSessionId, activeCreativeConversationId, agentMessages, contextKey, lastAgentPrompt, prompt, userId, workspace]);
 
     useEffect(() => {
         const context = { ...contextRef.current };

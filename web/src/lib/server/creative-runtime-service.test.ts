@@ -97,11 +97,25 @@ describe("创作会话素材上传", () => {
             conversationId: "conversation-one",
             userContent: "生成商品图",
             assistantContent: "已收到生成需求。",
-            userMetadata: { workspace: "image" },
-            assistantMetadata: { workspace: "image" },
+            userMetadata: { workspace: "image", contentVisibility: "public" },
+            assistantMetadata: { workspace: "image", contentVisibility: "public" },
         });
         expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("workbenchPlan");
         expect(JSON.stringify(mocks.appendCreativeConversationExchange.mock.calls[0][0])).not.toContain("resolvedPrompt");
+    });
+
+    it("passes request identity for retry idempotency without using prompt text", async () => {
+        mocks.getCreativeConversation.mockResolvedValueOnce({ id: "conversation-one", userId: "user-one", status: "active", surface: "chat", source: "image-workbench" });
+
+        await appendWorkbenchExchangeForUser("user-one", {
+            conversationId: "conversation-one",
+            workspace: "image",
+            prompt: "相同提示词",
+            reply: "已收到生成需求。",
+            requestId: "request-retry-1",
+        });
+
+        expect(mocks.appendCreativeConversationExchange).toHaveBeenCalledWith(expect.objectContaining({ runId: "request-retry-1" }));
     });
 
     it("persists only owned permanent workbench references as message attachments", async () => {
@@ -143,6 +157,7 @@ describe("创作会话素材上传", () => {
             expect.objectContaining({
                 userMetadata: {
                     workspace: "image",
+                    contentVisibility: "public",
                     attachments: [
                         expect.objectContaining({
                             kind: "image",

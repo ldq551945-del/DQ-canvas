@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 
-import { deleteSession, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
+import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
+import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
 
 const SESSION_COOKIE_NAME = "vozeb_pro_session";
 
@@ -12,8 +13,13 @@ async function getSessionCookieValue() {
     return cookieStore.get(SESSION_COOKIE_NAME)?.value;
 }
 
-export async function getCurrentUser() {
-    return getUserBySession(await getSessionCookieValue());
+export async function getCurrentUser(request?: Request) {
+    const sessionUser = await getUserBySession(await getSessionCookieValue());
+    if (sessionUser || !request) return sessionUser;
+    const workerUserId = authorizedMaintenanceUserId(request);
+    if (!workerUserId) return null;
+    const workerUser = (await getPublicUsersByIds([workerUserId]))[0];
+    return workerUser?.status === "active" ? workerUser : null;
 }
 
 export async function clearCurrentSession() {
@@ -77,6 +83,7 @@ export function serializeCurrentUser(user: CurrentUser) {
         status: user.status,
         planId: user.planId,
         planName: user.planName,
+        hasActivePlan: user.hasActivePlan,
         pointsBalance: user.pointsBalance,
         permanentPointsBalance: user.permanentPointsBalance,
         dailyPointsBalance: user.dailyPointsBalance,

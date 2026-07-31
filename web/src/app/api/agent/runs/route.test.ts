@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
     checkRateLimit: vi.fn(),
     countActiveStoredGenerationTasks: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(),
-    executeAgentRun: vi.fn(),
+    runGenerationTaskRecoveryBatch: vi.fn(),
+    scheduleGenerationTask: vi.fn(),
     createAgentRun: vi.fn(),
     getAgentRunByClientRequestId: vi.fn(),
     listAgentRuns: vi.fn(),
@@ -18,7 +19,8 @@ vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
 vi.mock("@/lib/server/security", () => ({ checkRateLimit: mocks.checkRateLimit }));
 vi.mock("@/lib/server/generation-task-store", () => ({ withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit }));
-vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun }));
+vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.runGenerationTaskRecoveryBatch }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/agent-run-store", () => ({ createAgentRun: mocks.createAgentRun, getAgentRunByClientRequestId: mocks.getAgentRunByClientRequestId, listAgentRuns: mocks.listAgentRuns }));
 vi.mock("@/lib/server/internal-origin", () => ({ resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 
@@ -70,6 +72,7 @@ describe("POST /api/agent/runs", () => {
             modelIds: [],
             snapshot: undefined,
         });
+        expect(mocks.scheduleGenerationTask).toHaveBeenCalledWith("agent", "new-run", expect.objectContaining({ executionPhase: "created", nextPollAt: expect.any(Number), lastUpstreamStatus: "created" }));
         expect(mocks.after).toHaveBeenCalledWith(expect.any(Function));
     });
 });

@@ -1,10 +1,9 @@
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { appendWorkbenchExchangeForUser } from "@/lib/server/creative-runtime-service";
 import { getCreativeConversationContext } from "@/lib/server/creative-runtime-store";
-import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { fetchOptionalResponses } from "@/lib/server/responses-request";
-import { strictJsonObjectText } from "@/lib/server/structured-model-output";
+import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/text-planning-runtime";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { parseWorkbenchPlanCall, type WorkbenchFunctionCallResult } from "./workbench-agent-plan";
 import { createWorkbenchPlanningMessages, workbenchTool } from "./workbench-agent-prompt";
@@ -32,7 +31,7 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     const conversationId = cleanId(body.conversationId);
     const skillIds = skills.map((skill) => skill.id);
     if (body.smartPlanning === false && body.modelIds?.length) {
-        const finalized = directWorkbenchPlan({ body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly });
+        const finalized = withWorkbenchSkillInstructions(directWorkbenchPlan({ body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly }), skills);
         await saveWorkbenchExchange(input, conversationId, workspace, finalized);
         return { ...finalized, ...(conversationId ? { conversationId } : {}) };
     }
@@ -51,17 +50,25 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     let finalized: ReturnType<typeof finalizeWorkbenchPlan> | undefined;
     let acceptedBilling: SystemAiBilling | undefined;
     let latestError: unknown;
-    for (const candidate of candidates) {
+    for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
         try {
             const idempotencyKey = body.requestId ? systemAiIdempotencyKey("workbench-plan", input.userId, body.requestId, workspace, candidate.channel.id, candidate.upstreamModel) : undefined;
-            const requestHeaders = { ...headers, ...systemAiBillingHeaders(model, idempotencyKey) };
-            let call = await callResponsesPlanner(origin, candidate.channel.id, candidate.upstreamModel, messages, requestHeaders, input.userId, model, input.signal);
-            if (!call) call = await callChatPlanner(origin, candidate.channel.id, candidate.upstreamModel, messages, requestHeaders, input.userId, model, input.signal);
-            if (!call) throw new WorkbenchPlanningError("文本模型没有返回工作台执行计划");
+            const requestHeaders = { ...headers, ...systemAiBillingHeaders(model, idempotencyKey, candidate.upstreamModel) };
+            const structured = await requestStructuredText({
+                origin,
+                cookie: input.cookie,
+                candidate,
+                messages,
+                tool: { name: workbenchTool.name, description: workbenchTool.description, parameters: workbenchTool.parameters },
+                headers: requestHeaders,
+                signal: input.signal,
+                onInvalidResponse: (responseHeaders) => refundTextResponse(input.userId, model, responseHeaders),
+            });
+            const call = readFunctionCallResult(structured.arguments, structured.headers);
             const plan = await parseWorkbenchPlanCall(call, { workspace, prompt: input.prompt, models: body.models || [], skillIds }, () => refundTextCost(input.userId, model, call.pointsCost, call.pointsRecordId));
             if (!plan) throw new WorkbenchPlanningError("文本模型返回的工作台计划无效，相关积分已退款");
             try {
-                finalized = finalizeWorkbenchPlan(plan, { body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly });
+                finalized = withWorkbenchSkillInstructions(finalizeWorkbenchPlan(plan, { body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly }), skills);
             } catch (error) {
                 await refundTextCost(input.userId, model, call.pointsCost, call.pointsRecordId);
                 throw error;
@@ -73,7 +80,10 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
             latestError = error;
         }
     }
-    if (!finalized) throw latestError instanceof WorkbenchPlanningError ? latestError : new WorkbenchPlanningError(latestError instanceof Error ? latestError.message : "没有可用的文本模型渠道");
+    if (!finalized) {
+        if (latestError instanceof WorkbenchPlanningError) throw latestError;
+        throw new WorkbenchPlanningError("默认文本模型规划失败，请检查渠道可用性");
+    }
     if (input.signal?.aborted) {
         if (acceptedBilling) await refundTextCost(input.userId, model, acceptedBilling.pointsCost, acceptedBilling.pointsRecordId);
         throw new WorkbenchPlanningError("本次 Agent 规划已取消", 499);
@@ -87,6 +97,17 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     return { ...finalized, ...(conversationId ? { conversationId } : {}) };
 }
 
+function withWorkbenchSkillInstructions<T extends ReturnType<typeof finalizeWorkbenchPlan>>(plan: T, skills: Awaited<ReturnType<typeof getAuthSettings>>["agentSkills"]): T {
+    if (!plan.shouldGenerate || !plan.selectedSkillIds.length) return plan;
+    const selected = new Set(plan.selectedSkillIds);
+    const instructions = skills
+        .filter((skill) => selected.has(skill.id))
+        .map((skill) => skill.instructions.trim())
+        .filter(Boolean)
+        .join("\n\n");
+    return instructions ? { ...plan, resolvedPrompt: `${plan.resolvedPrompt}\n\n执行以下已选 Skill 约束：\n${instructions}` } : plan;
+}
+
 async function saveWorkbenchExchange(input: { userId: string; prompt: string; body: WorkbenchRequestBody }, conversationId: string, workspace: "image" | "video", plan: ReturnType<typeof finalizeWorkbenchPlan>) {
     if (!conversationId) return;
     try {
@@ -95,6 +116,7 @@ async function saveWorkbenchExchange(input: { userId: string; prompt: string; bo
             workspace,
             prompt: input.prompt,
             reply: plan.shouldGenerate ? "已收到生成需求。" : plan.reply,
+            ...(input.body.requestId ? { requestId: input.body.requestId } : {}),
             ...(input.body.attachments?.length ? { attachments: input.body.attachments } : {}),
         });
     } catch (error) {
@@ -109,44 +131,6 @@ function cleanId(value: unknown) {
 function errorStatus(error: unknown, fallback: number) {
     const status = error && typeof error === "object" && "status" in error ? Number((error as { status?: unknown }).status) : fallback;
     return Number.isInteger(status) && status >= 400 && status < 600 ? status : fallback;
-}
-
-async function callResponsesPlanner(origin: string, channelId: string, upstreamModel: string, messages: Array<{ role: string; content: string }>, headers: Record<string, string>, userId: string, model: string, signal?: AbortSignal) {
-    const response = await fetchOptionalResponses(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/responses`, {
-        method: "POST",
-        headers,
-        cache: "no-store",
-        signal,
-        body: JSON.stringify({ model: upstreamModel, input: messages, tools: [workbenchTool], tool_choice: { type: "function", name: "plan_workbench_action" } }),
-    });
-    if (!response?.ok) return null;
-    const payload = (await response.json()) as { output?: Array<{ type?: string; name?: string; arguments?: string }> };
-    const argumentsText = payload.output?.find((item) => item.type === "function_call" && item.name === "plan_workbench_action")?.arguments || "";
-    if (argumentsText) return readFunctionCallResult(argumentsText, response.headers);
-    await refundTextResponse(userId, model, response.headers);
-    return null;
-}
-
-async function callChatPlanner(origin: string, channelId: string, upstreamModel: string, messages: Array<{ role: string; content: string }>, headers: Record<string, string>, userId: string, model: string, signal?: AbortSignal) {
-    const fallback = await fetchInternalApi(`${origin}/api/ai/system/${encodeURIComponent(channelId)}/chat/completions`, {
-        method: "POST",
-        headers,
-        cache: "no-store",
-        signal,
-        body: JSON.stringify({
-            model: upstreamModel,
-            messages,
-            tools: [{ type: "function", function: { name: workbenchTool.name, description: workbenchTool.description, parameters: workbenchTool.parameters } }],
-            tool_choice: { type: "function", function: { name: workbenchTool.name } },
-        }),
-    });
-    if (!fallback.ok) throw new WorkbenchPlanningError("默认文本模型规划失败，请检查渠道可用性");
-    const payload = (await fallback.json()) as { choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }> };
-    const message = payload.choices?.[0]?.message;
-    const argumentsText = message?.tool_calls?.find((item) => item.function?.name === workbenchTool.name)?.function?.arguments || strictJsonObjectText(message?.content);
-    if (argumentsText) return readFunctionCallResult(argumentsText, fallback.headers);
-    await refundTextResponse(userId, model, fallback.headers);
-    return null;
 }
 
 function readFunctionCallResult(argumentsText: string, headers: Headers): WorkbenchFunctionCallResult {

@@ -5,6 +5,7 @@ import { useCallback } from "react";
 
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
 import { recordGenerationLog } from "@/services/api/generation-logs";
+import { storeGeneratedAudio, waitForAudioGenerationTask } from "@/services/api/audio";
 import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationTask } from "@/services/api/image";
 import { waitForTextGenerationTask, type TextGenerationTask } from "@/services/api/text";
 import { storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
@@ -20,7 +21,7 @@ const loadAssetPickerModal = () => import("../components/asset-picker-modal").th
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { CanvasHistoryEntry, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH } from "./canvas-page-elements";
-import { imageMetadata, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
+import { audioMetadata, imageMetadata, uploadGeneratedCanvasImage, videoMetadata } from "./canvas-page-utils";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
@@ -161,6 +162,7 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         resumingImageTaskIdsRef,
         resumingVideoTaskIdsRef,
         resumingTextTaskIdsRef,
+        resumingAudioTaskIdsRef,
     } = state;
 
     const createHistoryEntry = useCallback(
@@ -201,7 +203,7 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         setNodes((prev) =>
             prev.map((node) =>
                 affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING
-                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined, videoTask: undefined, imageTask: undefined, textTask: undefined } }
+                    ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined, videoTask: undefined, imageTask: undefined, textTask: undefined, audioTask: undefined } }
                     : node,
             ),
         );
@@ -387,6 +389,26 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         );
         return answer || "没有返回内容";
     }, []);
+
+    const completeAudioTask = useCallback(async (nodeId: string, generationConfig: AiConfig, task: NonNullable<CanvasNodeMetadata["audioTask"]>, controller: AbortController, prompt?: string) => {
+        const audio = await storeGeneratedAudio(await waitForAudioGenerationTask(generationConfig, task, { signal: controller.signal }), generationConfig.audioFormat);
+        setNodes((prev) =>
+            prev.map((node) =>
+                node.id === nodeId
+                    ? {
+                          ...node,
+                          metadata: {
+                              ...node.metadata,
+                              ...audioMetadata(audio),
+                              prompt: prompt || node.metadata?.prompt,
+                              audioTask: undefined,
+                              errorDetails: undefined,
+                          },
+                      }
+                    : node,
+            ),
+        );
+    }, []);
     return {
         createHistoryEntry,
         startGenerationRequest,
@@ -397,6 +419,7 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         completeImageTask,
         startAndCompleteImageTask,
         completeTextTask,
+        completeAudioTask,
     };
 }
 

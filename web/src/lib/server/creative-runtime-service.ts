@@ -16,6 +16,7 @@ import { getLocalMediaRegistrations } from "@/lib/server/local-media-registry";
 import { getCreativeWorkbenchSessionDetail, listCreativeWorkbenchSessionSummaries } from "@/lib/server/creative-workbench-session-store";
 import type { WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 import { normalizeWorkbenchAgentAttachments, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
+import { WORKBENCH_PUBLIC_MESSAGE_VISIBILITY } from "@/lib/workbench-session-contract";
 
 export class CreativeRuntimeServiceError extends Error {
     constructor(
@@ -129,7 +130,7 @@ export async function uploadAssetForUser(userId: string, conversationId: string,
     return asset;
 }
 
-export async function appendWorkbenchExchangeForUser(userId: string, input: { conversationId: string; workspace: "image" | "video"; prompt: string; reply: string; attachments?: unknown }) {
+export async function appendWorkbenchExchangeForUser(userId: string, input: { conversationId: string; workspace: "image" | "video"; prompt: string; reply: string; requestId?: string; attachments?: unknown }) {
     const conversation = await getConversationForUser(userId, input.conversationId);
     if (conversation.surface !== "chat" || conversation.source !== `${input.workspace}-workbench`) throw new CreativeRuntimeServiceError("工作台会话入口不正确", 409);
     const attachments = await validateWorkbenchAttachments(userId, input.attachments);
@@ -138,8 +139,9 @@ export async function appendWorkbenchExchangeForUser(userId: string, input: { co
         conversationId: conversation.id,
         userContent: input.prompt,
         assistantContent: input.reply,
-        userMetadata: { workspace: input.workspace, ...(attachments.length ? { attachments } : {}) },
-        assistantMetadata: { workspace: input.workspace },
+        ...(input.requestId ? { runId: input.requestId } : {}),
+        userMetadata: { workspace: input.workspace, contentVisibility: WORKBENCH_PUBLIC_MESSAGE_VISIBILITY, ...(attachments.length ? { attachments } : {}) },
+        assistantMetadata: { workspace: input.workspace, contentVisibility: WORKBENCH_PUBLIC_MESSAGE_VISIBILITY },
     });
 }
 

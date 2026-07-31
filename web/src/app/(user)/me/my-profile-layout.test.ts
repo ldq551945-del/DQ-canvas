@@ -22,7 +22,7 @@ describe("personal creator page layout", () => {
         expect(page).toContain('setActivityView("following")');
         expect(page).toContain('setActivityView("followers")');
         expect(page).toContain("<CommunityActivityModal");
-        expect(page).toContain("mt-5 !h-10 !min-w-48");
+        expect(page).toContain("mt-6 !h-10 !min-w-48");
     });
 
     it("shows the account id under the nickname", async () => {

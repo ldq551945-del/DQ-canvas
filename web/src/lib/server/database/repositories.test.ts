@@ -13,6 +13,22 @@ function queryArgs(query: ReturnType<typeof mockExecutor>["query"], index: numbe
 }
 
 describe("split Postgres repositories", () => {
+    it("starts independent settings queries in parallel for pool executors", async () => {
+        const resolvers: Array<() => void> = [];
+        const query = vi.fn(
+            () =>
+                new Promise<{ rows: Record<string, unknown>[]; rowCount: number }>((resolve) => {
+                    resolvers.push(() => resolve({ rows: [], rowCount: 0 }));
+                }),
+        );
+        const loading = createPostgresRepositories({ query } as unknown as QueryExecutor).settings.getSettings();
+
+        await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(3));
+        resolvers.forEach((resolve) => resolve());
+
+        await expect(loading).resolves.toEqual({ settings: undefined, plans: [], channels: [] });
+    });
+
     it("loads settings without touching user or billing tables", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([
@@ -96,6 +112,7 @@ describe("split Postgres repositories", () => {
             user: { id: "user-one", username: "user-one", pointsBalance: 120 },
             planId: "pro",
             planName: "专业版",
+            hasActivePlan: false,
             permanentPoints: 120,
             dailyPoints: 0,
         });
@@ -194,7 +211,7 @@ describe("split Postgres repositories", () => {
         );
 
         expect(page).toMatchObject({ total: 41, page: 3, pageSize: 20, items: [{ id: "admin-one" }] });
-        expect(details[0]).toMatchObject({ planId: "pro", planName: "专业版", permanentPoints: 40, dailyPoints: 12 });
+        expect(details[0]).toMatchObject({ planId: "pro", planName: "专业版", hasActivePlan: true, permanentPoints: 40, dailyPoints: 12 });
         expect(queryArgs(query, 0)[0]).toContain("CASE WHEN role = 'admin' THEN '管理员'");
         expect(queryArgs(query, 0)[0]).toContain("lpad(account_id::text, 4, '0') LIKE $2");
         expect(queryArgs(query, 0)[1]).toEqual(["管理员", "%管理员%", "admin", "active"]);

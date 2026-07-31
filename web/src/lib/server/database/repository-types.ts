@@ -67,6 +67,7 @@ export type AuthenticatedUserRecord = {
     user: UserRecord;
     planId: string;
     planName: string;
+    hasActivePlan: boolean;
     permanentPoints: number;
     dailyPoints: number;
 };

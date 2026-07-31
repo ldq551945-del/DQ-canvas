@@ -50,7 +50,7 @@ export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string })
                     title="全景查看"
                     centered
                     destroyOnHidden
-                    maskClosable={false}
+                    mask={{ closable: false }}
                     footer={null}
                     width="min(1180px, calc(100vw - 24px))"
                     onCancel={() => setOpen(false)}

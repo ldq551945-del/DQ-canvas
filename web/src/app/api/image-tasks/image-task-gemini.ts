@@ -21,6 +21,7 @@ import { linkStoredGenerationTask, type GenerationTaskContext } from "@/lib/serv
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
+import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 
 import {
     type CreateImageTaskBody,
@@ -34,9 +35,6 @@ import {
     DEFAULT_IMAGE_SHORT_SIDE,
     IMAGE_SIZE_STEP,
     IMAGE_MIN_PIXELS,
-    IMAGE_MAX_PIXELS,
-    IMAGE_MAX_EDGE,
-    IMAGE_MAX_RATIO,
     IMAGE_OUTPUT_FORMAT,
     TASK_HEARTBEAT_MS,
     MODEL_REQUEST_TIMEOUT_MS,
@@ -72,7 +70,9 @@ import {
     isInternalSystemProxyBase,
     taskHeaders,
     imagePointsIdempotencyKey,
-    taskFetch,
+    imageSubmissionFetch,
+    imageSubmissionResponseError,
+    parseImageSubmissionJson,
     geminiHeaders,
     geminiApiUrl,
     withSystemPrompt,
@@ -123,11 +123,11 @@ import {
 } from "./image-task-support";
 
 export async function runGeminiImageTask(task: ImageTask, origin: string, cookie: string): Promise<ImageTaskRunResult> {
-    if (task.mask) throw new Error("Gemini 暂不支持蒙版编辑");
+    if (task.mask) throw new GenerationSubmissionSafeFailure("Gemini 暂不支持蒙版编辑");
     const config = task.config;
     const parts: GeminiPart[] = [{ text: withSystemPrompt(config, buildImageReferencePromptText(task.prompt, task.references)) }];
     task.references.forEach((reference) => parts.push(toGeminiImagePart(referenceRequestUrl(reference, origin), reference.type)));
-    const response = await taskFetch(config, `${geminiApiUrl(config, "generateContent", origin)}`, {
+    const response = await imageSubmissionFetch(config, `${geminiApiUrl(config, "generateContent", origin)}`, {
         method: "POST",
         headers: geminiHeaders(config, cookie, imagePointsIdempotencyKey(task)),
         body: JSON.stringify({
@@ -136,7 +136,15 @@ export async function runGeminiImageTask(task: ImageTask, origin: string, cookie
         }),
         cache: "no-store",
     });
-    if (!response.ok) throw new Error(await readFetchError(response, "图片生成失败"));
-    const payload = (await response.json()) as GeminiPayload;
-    return parseChargedImageResponse(task, response, async () => ({ dataUrl: parseGeminiImagePayload(payload) }));
+    if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
+    const payload = await parseImageSubmissionJson<GeminiPayload>(response);
+    return parseChargedImageResponse(task, response, async () => {
+        if (payload.error?.message) throw new GenerationSubmissionSafeFailure(payload.error.message);
+        if (payload.promptFeedback?.blockReason) throw new GenerationSubmissionSafeFailure(`Gemini 拒绝了本次请求：${payload.promptFeedback.blockReason}`);
+        try {
+            return { dataUrl: parseGeminiImagePayload(payload) };
+        } catch (error) {
+            throw new GenerationSubmissionUncertainError(error instanceof Error ? error.message : "Gemini 没有返回图片，创建结果待确认");
+        }
+    });
 }

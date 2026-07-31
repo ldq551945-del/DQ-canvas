@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -40,6 +40,7 @@ export function NodeContent(props: NodeContentRendererProps) {
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
+    if (props.node.metadata?.status === "cancelled") return <CancelledContent theme={props.theme} />;
 
     const Renderer = nodeContentRenderers[props.node.type];
     return Renderer ? <Renderer {...props} /> : <UnknownNodeContent theme={props.theme} />;
@@ -95,7 +96,7 @@ export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
 
 export function TaskNodeContent({ node, theme }: NodeContentRendererProps) {
     const status = node.metadata?.agentTaskStatus || "pending";
-    const labels = { pending: "等待执行", running: "执行中", paused: "已暂停", waiting_user: "等待确认", completed: "已完成", failed: "失败", cancelled: "已取消" };
+    const labels = { ready: "等待执行", pending: "等待执行", running: "执行中", paused: "已暂停", waiting_user: "等待确认", completed: "已完成", failed: "失败", cancelled: "已取消" };
     return (
         <div className="flex h-full min-h-0 flex-col p-5" style={{ color: theme.node.text }}>
             <div className="flex min-h-0 flex-1 flex-col">
@@ -171,12 +172,14 @@ export function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme"
 
 export function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
     return (
-        <div className="flex max-w-[260px] flex-col items-center gap-3 px-5 text-center">
-            <div className="text-xs leading-5 text-red-300">{node.metadata?.errorDetails || "生成失败"}</div>
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 overflow-hidden px-5 py-4 text-center">
+            <div className="max-h-[60%] max-w-[260px] overflow-y-auto text-xs leading-5" style={{ color: theme.node.danger }}>
+                {node.metadata?.errorDetails || "生成失败"}
+            </div>
             <button
                 type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition hover:scale-[1.02]"
-                style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-3 text-xs font-medium transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: theme.node.dangerSurface, borderColor: theme.node.dangerBorder, color: theme.node.danger }}
                 onClick={(event) => {
                     event.stopPropagation();
                     onRetry?.(node);
@@ -186,6 +189,15 @@ export function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererP
                 <RefreshCw className="size-3.5" />
                 重试
             </button>
+        </div>
+    );
+}
+
+export function CancelledContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+    return (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-5 py-4 text-center" style={{ color: theme.node.placeholder }}>
+            <CircleX className="size-6" />
+            <span className="text-xs">任务已取消</span>
         </div>
     );
 }
@@ -261,6 +273,8 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
                 <LoadingContent theme={props.theme} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
+            ) : props.node.metadata?.status === "cancelled" ? (
+                <CancelledContent theme={props.theme} />
             ) : (
                 <EmptyImageContent {...props} isBatchRoot={false} />
             );

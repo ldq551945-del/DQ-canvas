@@ -1,5 +1,7 @@
 import { nanoid } from "nanoid";
 
+import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
+import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { imageToDataUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
@@ -30,10 +32,11 @@ export type ImageGenerationTask = {
 };
 
 type ImageTaskPayload = {
-    task?: ImageGenerationTask & {
-        result?: { dataUrl?: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
-        error?: string;
-    };
+    task?: ImageGenerationTask &
+        GenerationTaskExecutionState & {
+            result?: { dataUrl?: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
+            error?: string;
+        };
     error?: string;
 };
 
@@ -64,7 +67,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
         signal: options?.signal,
     });
     syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
-    if (!response.ok) throw new Error(await readFetchError(response, "创建图片任务失败"));
+    if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status);
     const payload = (await response.json()) as ImageTaskPayload;
     if (!payload.task?.id) throw new Error(payload.error || "创建图片任务失败");
     return payload.task;
@@ -100,6 +103,7 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
         const payload = (await response.json()) as ImageTaskPayload;
         const current = payload.task;
         if (!current) throw new Error(payload.error || "图片任务不存在");
+        if (current.needsReview) throw new GenerationTaskNeedsReviewError();
         if (current.status === "success") {
             if (!current.result?.dataUrl) throw new Error("图片任务没有返回结果");
             await refreshUserPointsIfSystem(config.apiSource);

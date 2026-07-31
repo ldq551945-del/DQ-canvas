@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeVideoAspectRatio, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
+import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "./video-task-config";
 
 describe("resolveVideoGenerationParameters", () => {
     const defaults = { imageSize: "9:16", videoQuality: "1080", videoSeconds: 10 };
@@ -25,6 +25,23 @@ describe("resolveVideoGenerationParameters", () => {
 
     it("keeps the explicit intelligent duration option", () => {
         expect(resolveVideoGenerationParameters({ videoSeconds: "-1" }, defaults).videoSeconds).toBe(-1);
+    });
+
+    it("selects the first supported duration that is not shorter than the request", () => {
+        expect(resolveUpstreamVideoDuration(7, 5, { durationRange: "5、8、10 秒" })).toBe(8);
+        expect(resolveUpstreamVideoDuration(12, 5, { durationRange: "5、8、10 秒" })).toBe(10);
+    });
+
+    it("clamps continuous provider ranges and uses five seconds by default", () => {
+        expect(resolveUpstreamVideoDuration(undefined, 0, { durationRange: "4-15 秒" })).toBe(5);
+        expect(resolveUpstreamVideoDuration(3, 5, { durationRange: "4-15 秒" })).toBe(4);
+        expect(resolveUpstreamVideoDuration(7, 5, { durationRange: "4-15 秒" })).toBe(7);
+        expect(resolveUpstreamVideoDuration(20, 5, { durationRange: "4-15 秒" })).toBe(15);
+    });
+
+    it("keeps intelligent duration only when the provider declares it", () => {
+        expect(resolveUpstreamVideoDuration(-1, 5, { durationRange: "4-15 秒" })).toBe(5);
+        expect(resolveUpstreamVideoDuration(-1, 5, { durationRange: "-1 智能或 5-15 秒" })).toBe(-1);
     });
 
     it("normalizes pixel dimensions to the provider aspect-ratio format", () => {

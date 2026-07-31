@@ -2,8 +2,6 @@ import sharp, { type Metadata } from "sharp";
 
 import { parseImageDimensions } from "@/lib/image-size";
 
-const MAX_IMAGE_EDGE = 3840;
-const MAX_IMAGE_PIXELS = 8_294_400;
 const MAX_INPUT_PIXELS = 40_000_000;
 
 type NormalizedGeneratedImage = {
@@ -41,7 +39,7 @@ function orientedDimensions(metadata: Metadata) {
 }
 
 function assertTargetDimensions(width: number, height: number) {
-    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || Math.max(width, height) > MAX_IMAGE_EDGE || width * height > MAX_IMAGE_PIXELS) {
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0) {
         throw new Error("目标图片尺寸无效");
     }
 }

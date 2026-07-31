@@ -11,6 +11,7 @@ import { PublicCreatorModal } from "@/components/works/public-creator-modal";
 import { WORK_CATEGORY_OPTIONS } from "@/lib/work-publication-options";
 import { cn } from "@/lib/utils";
 import type { GalleryFilters, GalleryResult } from "./gallery-data";
+import { GalleryPublishLink } from "./gallery-publish-link";
 
 const controlClass = "h-10 min-w-0 rounded-md border border-border bg-card px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-foreground/40";
 const primaryLinkClass = "inline-flex h-9 items-center justify-center gap-2 rounded-md !bg-foreground px-4 text-sm font-medium !text-background transition hover:opacity-80";
@@ -31,12 +32,7 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
                         <Plus className="size-4" />
                         管理我的作品
                     </Link>
-                ) : (
-                    <Link href="/works" className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground transition hover:bg-muted">
-                        <Plus className="size-4" />
-                        <span className="hidden sm:inline">发布作品</span>
-                    </Link>
-                )}
+                ) : null}
             </section>
 
             <nav className="flex min-w-0 gap-1 overflow-x-auto border-b border-border pb-2" aria-label="作品分类">
@@ -117,10 +113,7 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
                             </Link>
                         ) : (
                             <>
-                                <Link href="/works" className={primaryLinkClass}>
-                                    <Plus className="size-4" />
-                                    发布第一个作品
-                                </Link>
+                                <GalleryPublishLink className={primaryLinkClass} label="发布第一个作品" />
                                 <Link href="/create" className="inline-flex h-9 items-center gap-2 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition hover:bg-muted">
                                     <Sparkles className="size-4" />
                                     开始创作

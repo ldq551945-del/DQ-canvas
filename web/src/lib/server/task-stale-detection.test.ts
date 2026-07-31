@@ -30,7 +30,7 @@ type StoredTaskRecord = {
     [key: string]: unknown;
 };
 
-describe("audio task stale detection", () => {
+describe("audio task recovery after executor interruption", () => {
     beforeEach(() => {
         taskMemory.value = undefined;
     });
@@ -48,7 +48,7 @@ describe("audio task stale detection", () => {
         expect(retrieved!.error).toBeUndefined();
     });
 
-    it("marks a pending task as error when its updatedAt is older than 5 minutes", async () => {
+    it("keeps an old pending task recoverable instead of treating executor silence as upstream failure", async () => {
         const task = await createAudioTask({
             userId: "user-1",
             config: { baseUrl: "https://api.test", apiKey: "key", apiFormat: "openai", model: "tts-1" },
@@ -65,8 +65,8 @@ describe("audio task stale detection", () => {
 
         const retrieved = await getAudioTask(task.id);
         expect(retrieved).toBeTruthy();
-        expect(retrieved!.status).toBe("error");
-        expect(retrieved!.error).toContain("中断");
+        expect(retrieved!.status).toBe("pending");
+        expect(retrieved!.error).toBeUndefined();
     });
 
     it("does not mark a completed task as stale regardless of updatedAt", async () => {

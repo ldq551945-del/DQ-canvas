@@ -15,6 +15,7 @@ import { VideoSettingsPanel, videoSizeLabel } from "@/components/video-settings-
 import { canvasThemes } from "@/lib/canvas-theme";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
+import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -206,7 +207,7 @@ export default function VideoPage() {
                             historyContent={(query, closeHistory) => {
                                 const filteredLogs = logs.filter((log) => {
                                     const session = agentSessionByRecordId.get(log.id);
-                                    return matchesWorkbenchHistoryQuery(query, log.title, log.prompt, session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
+                                    return matchesWorkbenchHistoryQuery(query, log.title, generationLogPublicPrompt(log), session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
                                 });
                                 return (
                                     <LogPanel

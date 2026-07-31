@@ -5,6 +5,7 @@ import { Bot, BookOpen, Check, CircleStop, FileAudio2, Film, History, LoaderCirc
 import { Button, Input, Popover, Tooltip } from "antd";
 
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
+import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { formatAgentMessageText } from "@/components/agent/agent-message-format";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
@@ -202,7 +203,7 @@ function WorkbenchAgentProgressMessage({ message, onRetry }: { message: Workbenc
 function WorkbenchAgentResponseMessage({ message, onChoice }: { message: WorkbenchAgentMessage; onChoice?: (choice: WorkbenchAgentChoice) => void }) {
     return (
         <div className="max-w-full">
-            <p className="whitespace-pre-wrap">{message.text}</p>
+            {message.role === "assistant" ? <AgentMarkdown>{message.text}</AgentMarkdown> : <p className="whitespace-pre-wrap">{message.text}</p>}
             {message.choices?.length ? (
                 <div className="mt-3 space-y-2 border-t border-current/10 pt-3">
                     {message.choices.map((choice, index) => (

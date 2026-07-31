@@ -16,7 +16,12 @@ export function createWorkbenchPlanningMessages(input: {
     conversationContext?: CreativeConversationContext;
 }) {
     const { userId, prompt, body, workspace, referenceRequired, conversationOnly, skills, conversationContext } = input;
-    const skillText = skills.map((skill) => `【${skill.name}】action=${skill.action || "generate"}; requiresReference=${Boolean(skill.requiresReference)}; defaults=${JSON.stringify(skill.defaultConfig || {})}\n${skill.instructions}`).join("\n\n");
+    const skillText = skills
+        .map(
+            (skill) =>
+                `【${skill.name}】action=${skill.action || "generate"}; requiresReference=${Boolean(skill.requiresReference)}; defaults=${JSON.stringify(skill.defaultConfig || {})}\n${(skill.plannerSummary || skill.description || skill.instructions).slice(0, 240)}`,
+        )
+        .join("\n\n");
     const currentModel = String(body.currentConfig?.[workspace === "image" ? "imageModel" : "videoModel"] || body.modelOptions?.[0]?.id || "");
     return [
         {
@@ -27,18 +32,18 @@ export function createWorkbenchPlanningMessages(input: {
             role: "user",
             content: JSON.stringify({
                 userId,
-                prompt,
-                previousPrompt: body.previousPrompt || "",
+                prompt: prompt.slice(0, 12_000),
+                previousPrompt: (body.previousPrompt || "").slice(0, 2000),
                 currentConfig: body.currentConfig || {},
-                availableModels: body.modelOptions || [],
+                availableModels: (body.modelOptions || []).slice(0, 40),
                 hasReferences: Boolean(body.hasReferences),
                 referenceTypes: body.referenceTypes || [],
                 referenceRequired,
                 conversationOnly,
                 conversationContext: conversationContext
                     ? {
-                          summary: conversationContext.summary,
-                          recentMessages: conversationContext.recentMessages.map((message) => ({ role: message.role, content: message.content })),
+                          summary: conversationContext.summary.slice(0, 3000),
+                          recentMessages: conversationContext.recentMessages.slice(-6).map((message) => ({ role: message.role, content: message.content.slice(0, 800) })),
                       }
                     : undefined,
             }),

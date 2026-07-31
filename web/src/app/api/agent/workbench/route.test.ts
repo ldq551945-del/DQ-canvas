@@ -22,10 +22,12 @@ vi.mock("@/lib/server/internal-origin", () => ({
 }));
 
 import { POST } from "./route";
+import { resetTextPlanningRuntime } from "@/lib/server/text-planning-runtime";
 
 describe("workbench agent model routing", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        resetTextPlanningRuntime();
         mocks.getAuthSettings.mockResolvedValue(settings);
         mocks.getCreativeConversationContext.mockResolvedValue({ summary: "", summaryThroughSequence: 0, recentMessages: [] });
         mocks.appendWorkbenchExchangeForUser.mockResolvedValue({});
@@ -69,8 +71,8 @@ describe("workbench agent model routing", () => {
         expect((await response.json()).data.parameterPatch).not.toHaveProperty("model");
 
         const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
-        const upstreamBody = JSON.parse(String(init.body)) as { input: Array<{ role: string; content: string }> };
-        const userMessage = upstreamBody.input.find((message) => message.role === "user");
+        const upstreamBody = JSON.parse(String(init.body)) as { messages: Array<{ role: string; content: string }> };
+        const userMessage = upstreamBody.messages.find((message) => message.role === "user");
         const planningInput = JSON.parse(userMessage?.content || "{}") as { availableModels?: Array<{ id: string; name: string }>; currentConfig?: Record<string, unknown> };
         expect(planningInput.availableModels).toEqual([{ id: "image-logical", name: "图片模型" }]);
         expect(planningInput.currentConfig).toEqual({ imageModel: "", size: "16:9", quality: "high", count: 2 });
@@ -85,7 +87,7 @@ describe("workbench agent model routing", () => {
 
         expect(response.status).toBe(200);
         expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
-        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
+        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
         expect(init.signal).toBeInstanceOf(AbortSignal);
     });
 
@@ -99,8 +101,8 @@ describe("workbench agent model routing", () => {
         const attachment = { kind: "image", name: "产品参考", url: "/api/reference-assets/permanent/product.png", storageKey: "permanent/product.png", mimeType: "image/png" };
         const response = await POST(workbenchRequest({ prompt: "继续生成主图", workspace: "image", conversationId: "conversation-one", attachments: [attachment] }));
         const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
-        const upstreamBody = JSON.parse(String(init.body)) as { input: Array<{ role: string; content: string }> };
-        const planningInput = JSON.parse(upstreamBody.input.find((message) => message.role === "user")?.content || "{}") as { conversationContext?: { summary?: string } };
+        const upstreamBody = JSON.parse(String(init.body)) as { messages: Array<{ role: string; content: string }> };
+        const planningInput = JSON.parse(upstreamBody.messages.find((message) => message.role === "user")?.content || "{}") as { conversationContext?: { summary?: string } };
 
         expect(response.status).toBe(200);
         expect(planningInput.conversationContext?.summary).toContain("咖啡品牌视觉");
@@ -185,7 +187,7 @@ describe("workbench agent model routing", () => {
 
         expect(response.status).toBe(502);
         expect(await response.json()).toMatchObject({ data: null, msg: "默认文本模型规划失败，请检查渠道可用性" });
-        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(2);
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(1);
     });
 
     it("uses the next planner binding when the primary text channel fails", async () => {
@@ -203,7 +205,7 @@ describe("workbench agent model routing", () => {
         });
         mocks.fetchInternalApi.mockImplementation(async (url: string) => {
             if (url.includes("/main/") && (url.endsWith("/responses") || url.endsWith("/chat/completions"))) return new Response("provider unavailable", { status: 503 });
-            if (url.includes("/backup/") && url.endsWith("/responses"))
+            if (url.includes("/backup/") && url.endsWith("/chat/completions"))
                 return Response.json({
                     output: [{ type: "function_call", name: "plan_workbench_action", arguments: JSON.stringify({ parameterPatch: { model: "image-logical" }, resolvedPrompt: "备用渠道规划", shouldGenerate: false, reply: "备用渠道已接管。" }) }],
                 });
@@ -216,6 +218,36 @@ describe("workbench agent model routing", () => {
         expect(await response.json()).toMatchObject({ data: { reply: "备用渠道已接管。" } });
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/main/"))).toBe(true);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/backup/"))).toBe(true);
+    });
+
+    it("automatically uses the next planner binding when the primary model times out", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            systemChannels: [settings.systemChannels[0], { ...settings.systemChannels[0], id: "backup", name: "备用渠道", models: ["vendor/planner-backup", "vendor/image"] }],
+            logicalModels: settings.logicalModels.map((model) =>
+                model.id === "planner"
+                    ? {
+                          ...model,
+                          bindings: [model.bindings[0], { id: "planner-backup-binding", channelId: "backup", upstreamModel: "vendor/planner-backup", enabled: true, priority: 2 }],
+                      }
+                    : model,
+            ),
+        });
+        mocks.fetchInternalApi.mockImplementation(async (url: string) => {
+            if (url.includes("/main/") && url.endsWith("/chat/completions")) throw new DOMException("timed out", "TimeoutError");
+            if (url.includes("/backup/") && url.endsWith("/chat/completions"))
+                return Response.json({
+                    choices: [{ message: { content: JSON.stringify({ parameterPatch: { model: "image-logical" }, resolvedPrompt: "备用渠道规划", shouldGenerate: false, reply: "备用文本模型已自动接管。" }) } }],
+                });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        const response = await POST(workbenchRequest({ prompt: "规划商品图", workspace: "image" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ data: { reply: "备用文本模型已自动接管。" } });
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/main/"))).toHaveLength(1);
+        expect(mocks.fetchInternalApi.mock.calls.filter(([url]) => String(url).includes("/backup/"))).toHaveLength(1);
     });
 
     it("uses distinct idempotency keys for different planner bindings on the same channel", async () => {
@@ -246,13 +278,13 @@ describe("workbench agent model routing", () => {
         }));
 
         expect(response.status).toBe(200);
-        expect(calls.find((call) => call.model === "vendor/planner")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
-        expect(calls.find((call) => call.model === "vendor/planner-backup")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
+        expect(calls.find((call) => call.model === "vendor/planner")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
+        expect(calls.find((call) => call.model === "vendor/planner-backup")?.key).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
         expect(calls.find((call) => call.model === "vendor/planner")?.key).not.toBe(calls.find((call) => call.model === "vendor/planner-backup")?.key);
     });
 
     it("accepts strict JSON from chat providers that do not support tool calls", async () => {
-        mocks.fetchInternalApi.mockResolvedValueOnce(new Response("responses unavailable", { status: 502 })).mockResolvedValueOnce(
+        mocks.fetchInternalApi.mockResolvedValueOnce(
             Response.json({
                 choices: [
                     {
@@ -284,21 +316,19 @@ describe("workbench agent model routing", () => {
     });
 
     it("rejects prose chat output instead of guessing generation parameters locally", async () => {
-        mocks.fetchInternalApi
-            .mockResolvedValueOnce(new Response("responses unavailable", { status: 502 }))
-            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "Use a warm composition and generate three images." } }] }, { headers: { "x-vozeb-pro-points-cost": "1", "x-vozeb-pro-points-record-id": "points-workbench-1" } }));
+        mocks.fetchInternalApi.mockResolvedValueOnce(
+            Response.json({ choices: [{ message: { content: "Use a warm composition and generate three images." } }] }, { headers: { "x-vozeb-pro-points-cost": "1", "x-vozeb-pro-points-record-id": "points-workbench-1" } }),
+        );
 
         const response = await POST(workbenchRequest({ prompt: "规划咖啡海报", workspace: "image" }));
 
         expect(response.status).toBe(502);
-        expect(await response.json()).toMatchObject({ data: null, msg: "文本模型没有返回工作台执行计划" });
+        expect(await response.json()).toMatchObject({ data: null, msg: "默认文本模型规划失败，请检查渠道可用性" });
         expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 1, "text", 1, undefined, "points-workbench-1");
     });
 
     it("refunds the free-text quota when a zero-cost planner response is invalid", async () => {
-        mocks.fetchInternalApi
-            .mockResolvedValueOnce(new Response("responses unavailable", { status: 502 }))
-            .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "not structured" } }] }, { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-workbench-free" } }));
+        mocks.fetchInternalApi.mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "not structured" } }] }, { headers: { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-workbench-free" } }));
 
         const response = await POST(workbenchRequest({ requestId: "free-plan", prompt: "规划咖啡海报", workspace: "image" }));
 
@@ -406,8 +436,8 @@ describe("workbench agent model routing", () => {
         const response = await POST(workbenchRequest({ prompt: "让参考图人物自然眨眼", workspace: "video", hasReferences: true, referenceTypes: ["image"] }));
         const payload = await response.json();
         const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
-        const upstreamBody = JSON.parse(String(init.body)) as { input: Array<{ role: string; content: string }> };
-        const planningInput = JSON.parse(upstreamBody.input.find((message) => message.role === "user")?.content || "{}") as { availableModels?: Array<{ id: string; name: string }>; referenceTypes?: string[] };
+        const upstreamBody = JSON.parse(String(init.body)) as { messages: Array<{ role: string; content: string }> };
+        const planningInput = JSON.parse(upstreamBody.messages.find((message) => message.role === "user")?.content || "{}") as { availableModels?: Array<{ id: string; name: string }>; referenceTypes?: string[] };
 
         expect(planningInput.availableModels).toEqual([{ id: "video-reference", name: "参考视频模型" }]);
         expect(planningInput.referenceTypes).toEqual(["image"]);

@@ -3,12 +3,14 @@ import { open } from "node:fs/promises";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { isSafeOutboundUrl } from "@/lib/server/security";
 
-export async function downloadMediaToFile(url: string, path: string, input: { origin: string; cookie?: string; maxBytes: number; timeoutMs?: number }) {
+export async function downloadMediaToFile(url: string, path: string, input: { origin: string; cookie?: string; internalHeaders?: HeadersInit; maxBytes: number; timeoutMs?: number }) {
     const source = url.trim();
     if (!source) throw new Error("媒体地址为空");
     const internal = source.startsWith("/");
     const target = internal ? `${input.origin.replace(/\/+$/, "")}${source}` : source;
-    const response = internal ? await fetchInternalApi(target, { headers: input.cookie ? { cookie: input.cookie } : undefined, signal: AbortSignal.timeout(input.timeoutMs || 3 * 60_000) }) : await fetchExternalMedia(target, input.timeoutMs || 3 * 60_000);
+    const internalHeaders = new Headers(input.internalHeaders);
+    if (input.cookie) internalHeaders.set("cookie", input.cookie);
+    const response = internal ? await fetchInternalApi(target, { headers: internalHeaders, signal: AbortSignal.timeout(input.timeoutMs || 3 * 60_000) }) : await fetchExternalMedia(target, input.timeoutMs || 3 * 60_000);
     if (!response.ok) throw new Error(`媒体下载失败（${response.status}）`);
     if (!response.body) throw new Error("媒体文件为空");
     const contentLength = Number(response.headers.get("content-length"));

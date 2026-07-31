@@ -135,7 +135,6 @@ export default function DramaPage() {
                                 <InputNumber
                                     className="!w-full"
                                     min={256}
-                                    max={3840}
                                     value={customWidth}
                                     prefix="W"
                                     onChange={(value) => {
@@ -148,7 +147,6 @@ export default function DramaPage() {
                                 <InputNumber
                                     className="!w-full"
                                     min={256}
-                                    max={3840}
                                     value={customHeight}
                                     prefix="H"
                                     onChange={(value) => {

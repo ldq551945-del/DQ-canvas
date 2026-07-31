@@ -156,6 +156,16 @@ export function normalizeModelConfigs(value: unknown) {
     ) as Record<string, SystemChannelModelConfig>;
 }
 
+export function modelConfigsFromOperations(catalog: ModelCatalogEntry[], value: unknown) {
+    const operations = normalizeModelConfigs(value);
+    return Object.fromEntries(
+        catalog.flatMap((entry) => {
+            const config = operations[entry.capability];
+            return config ? [[normalizeModelId(entry.id), { ...config, capability: entry.capability, source: "provider" as const }] as const] : [];
+        }),
+    ) as Record<string, SystemChannelModelConfig>;
+}
+
 export function nextModelsPageUrl(currentUrl: string, payload: ModelsResponse, apiFormat: "openai" | "gemini", lastModelId: string) {
     const token = paginationString(payload, ["nextPageToken", "next_page_token"]);
     if (token) return withQuery(currentUrl, apiFormat === "gemini" ? "pageToken" : "page_token", token);
@@ -237,14 +247,35 @@ function modelConfigFromMetadata(record: Record<string, unknown> | undefined, ca
     const protocolValue = record.protocol;
     const protocol = isChannelProtocol(protocolValue) ? protocolValue : undefined;
     const createPath = firstApiPath(record, ["createPath", "create_path", "generationEndpoint", "generation_endpoint", "endpoint", "route", "path"]);
+    const editPath = firstApiPath(record, ["editPath", "edit_path", "editEndpoint", "edit_endpoint", "imageEditEndpoint", "image_edit_endpoint"]);
+    const imageToVideoPath = firstApiPath(record, ["imageToVideoPath", "image_to_video_path", "imageToVideoEndpoint", "image_to_video_endpoint", "i2vEndpoint", "i2v_endpoint"]);
     const queryPath = firstApiPath(record, ["queryPath", "query_path", "pollEndpoint", "poll_endpoint", "statusEndpoint", "status_endpoint", "taskEndpoint", "task_endpoint"]);
+    const cancelPath = firstApiPath(record, ["cancelPath", "cancel_path", "cancelEndpoint", "cancel_endpoint"]);
+    const cancelMethod = record.cancelMethod === "DELETE" || record.cancel_method === "DELETE" ? "DELETE" : record.cancelMethod === "POST" || record.cancel_method === "POST" ? "POST" : undefined;
     return {
         capability,
         ...(apiFormat === "openai" || apiFormat === "gemini" ? { apiFormat } : {}),
         ...(protocol ? { protocol } : {}),
         ...(createPath && !/\/models(?:\/|$)/i.test(createPath) ? { createPath } : {}),
+        ...(editPath ? { editPath } : {}),
+        ...(imageToVideoPath ? { imageToVideoPath } : {}),
         ...(queryPath ? { queryPath } : {}),
+        ...(cancelPath ? { cancelPath } : {}),
+        ...(cancelMethod ? { cancelMethod } : {}),
+        ...optionalMetadataText(record, "requestTemplate", "request_template", 12_000),
+        ...optionalMetadataText(record, "resultField", "result_field", 500),
+        ...optionalMetadataText(record, "statusField", "status_field", 500),
+        ...optionalMetadataText(record, "durationRange", "duration_range", 120),
+        ...optionalMetadataText(record, "referenceRule", "reference_rule", 1_000),
+        ...(typeof record.supportsReferenceImage === "boolean" ? { supportsReferenceImage: record.supportsReferenceImage } : {}),
+        ...(typeof record.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: record.supportsReferenceVideo } : {}),
+        ...(typeof record.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: record.supportsReferenceAudio } : {}),
     };
+}
+
+function optionalMetadataText(record: Record<string, unknown>, camelKey: string, snakeKey: string, max: number) {
+    const value = record[camelKey] ?? record[snakeKey];
+    return typeof value === "string" && value.trim() ? { [camelKey]: value.trim().slice(0, max) } : {};
 }
 
 function firstApiPath(record: Record<string, unknown>, keys: string[]) {
@@ -262,7 +293,20 @@ function firstApiPath(record: Record<string, unknown>, keys: string[]) {
 }
 
 function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
-    return value === "auto" || value === "openai" || value === "sub2api" || value === "qingyan" || value === "globalaiopc" || value === "seedance" || value === "compatible";
+    return (
+        value === "auto" ||
+        value === "openai" ||
+        value === "sub2api" ||
+        value === "newapi" ||
+        value === "qingyan" ||
+        value === "globalaiopc" ||
+        value === "seedance" ||
+        value === "stable-diffusion" ||
+        value === "volcengine-video" ||
+        value === "seedance-special" ||
+        value === "custom" ||
+        value === "compatible"
+    );
 }
 
 function normalizeCapabilityMap(value: unknown) {

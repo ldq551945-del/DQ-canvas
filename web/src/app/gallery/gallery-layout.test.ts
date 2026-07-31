@@ -4,17 +4,20 @@ import { describe, expect, it } from "vitest";
 
 describe("gallery surfaces", () => {
     it("keeps the public and workspace routes on one shared gallery view", async () => {
-        const [publicPage, communityPage, sharedView, galleryCard, themeToggle, lazyImage] = await Promise.all([
+        const [publicPage, communityPage, sharedView, galleryCard, themeToggle, publishLink, lazyImage] = await Promise.all([
             readFile(resolve(process.cwd(), "src/app/gallery/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/(user)/community/page.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/gallery/gallery-view.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/works/public-work-gallery-card.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/app/gallery/gallery-theme-toggle.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/gallery/gallery-publish-link.tsx"), "utf8"),
             readFile(resolve(process.cwd(), "src/components/media/lazy-media-image.tsx"), "utf8"),
         ]);
 
         expect(publicPage).toContain('basePath="/gallery"');
         expect(publicPage).toContain("<GalleryView");
+        expect(publicPage.match(/<GalleryPublishLink/g)).toHaveLength(1);
+        expect(publicPage).not.toContain('href="/works"');
         expect(publicPage).not.toContain("WORK_CATEGORY_OPTIONS.map");
         expect(communityPage).toContain('basePath="/community" embedded');
         expect(communityPage).toContain("h-full min-h-0 overflow-y-auto");
@@ -29,6 +32,10 @@ describe("gallery surfaces", () => {
         expect(sharedView).not.toContain("max-h-[640px]");
         expect(sharedView).toContain("galleryFilterHref(basePath");
         expect(sharedView).toContain("发布第一个作品");
+        expect(sharedView).not.toContain('<span className="hidden sm:inline">发布作品</span>');
+        expect(publishLink).toContain("state.ready");
+        expect(publishLink).toContain("state.payload?.user");
+        expect(publishLink).toContain('href="/works"');
         expect(galleryCard).toContain("<video");
         expect(sharedView).not.toContain("item.publicPrompt || item.description");
         expect(sharedView).not.toContain("item.tags.slice");

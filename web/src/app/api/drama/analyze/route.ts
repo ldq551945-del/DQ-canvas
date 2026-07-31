@@ -3,23 +3,12 @@ import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { readJsonBody } from "@/lib/auth/request";
 import { getAuthSettings, isAuthInputError, refundUserPoints } from "@/lib/auth/store";
-import {
-    describeDramaAnalysisCandidate,
-    describeDramaModelOutput,
-    dramaContentTool,
-    dramaVisualTool,
-    hasUsableDramaToolArguments,
-    normalizeDramaContentAnalysis,
-    normalizeDramaVisualAnalysis,
-    readDramaChatArguments,
-    readDramaResponsesArguments,
-    readDramaUpstreamError,
-} from "@/lib/server/drama-analysis";
-import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { describeDramaAnalysisCandidate, describeDramaModelOutput, dramaContentTool, dramaVisualTool, hasUsableDramaToolArguments, normalizeDramaContentAnalysis, normalizeDramaVisualAnalysis } from "@/lib/server/drama-analysis";
+import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
-import { fetchOptionalResponses } from "@/lib/server/responses-request";
 import { checkRateLimit } from "@/lib/server/security";
-import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, type SystemAiBilling } from "@/lib/server/system-ai-billing";
+import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
+import { rankTextPlanningCandidates, requestStructuredText, type TextPlanningCandidate } from "@/lib/server/text-planning-runtime";
 
 export const runtime = "nodejs";
 
@@ -76,9 +65,18 @@ export async function POST(request: Request) {
             { role: "user", content: JSON.stringify(input) },
         ];
         let latestError: unknown;
-        for (const candidate of candidates) {
+        for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
             try {
-                const call = await requestFunctionCall(resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || "", candidate.channel.id, candidate.upstreamModel, model, messages, user.id, tool);
+                const call = await requestFunctionCall(
+                    resolveInternalOrigin(new URL(request.url).origin),
+                    request.headers.get("cookie") || "",
+                    candidate,
+                    model,
+                    messages,
+                    user.id,
+                    tool,
+                    systemAiIdempotencyKey("drama-analyze", user.id, phase, JSON.stringify(input), candidate.channel.id, candidate.upstreamModel),
+                );
                 try {
                     const parsed = JSON.parse(call.args);
                     const data = phase === "visual" ? normalizeDramaVisualAnalysis(parsed, visualInput!.shotIds) : normalizeDramaContentAnalysis(parsed, settings.generationDefaults.videoSeconds, script);
@@ -110,48 +108,29 @@ export async function POST(request: Request) {
 async function requestFunctionCall(
     origin: string,
     cookie: string,
-    channelId: string,
-    model: string,
+    candidate: TextPlanningCandidate,
     billingModel: string,
     messages: Array<{ role: string; content: string }>,
     userId: string,
     tool: { name: string; description: string; parameters: Record<string, unknown> },
+    idempotencyKey: string,
 ) {
-    const base = `${origin}/api/ai/system/${encodeURIComponent(channelId)}`;
-    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel) };
-    const response = await fetchOptionalResponses(`${base}/responses`, {
-        method: "POST",
+    const headers = { "Content-Type": "application/json", cookie, ...systemAiBillingHeaders(billingModel, idempotencyKey, candidate.upstreamModel) };
+    const call = await requestStructuredText({
+        origin,
+        cookie,
+        candidate,
+        messages,
+        tool,
         headers,
-        body: JSON.stringify({
-            model,
-            input: messages,
-            tools: [{ type: "function", name: tool.name, description: tool.description, parameters: tool.parameters }],
-            tool_choice: { type: "function", name: tool.name },
-            text: { format: { type: "json_schema", name: tool.name, schema: tool.parameters, strict: false } },
-        }),
+        onInvalidResponse: (responseHeaders) => refund(userId, billingModel, responseHeaders),
     });
-    if (response?.ok) {
-        const payload = await response.json();
-        const args = readDramaResponsesArguments(payload, tool.name);
-        if (args && hasUsableDramaToolArguments(args, tool.name)) return readCallResult(args, response.headers);
-        console.error("[drama-analyze] structured output invalid", JSON.stringify({ endpoint: "responses", channelId, model, status: response.status, outputShape: describeDramaModelOutput(payload), argumentShape: describeArgumentsText(args) }));
-        await refund(userId, model, response.headers);
-    }
-    const fallback = await fetchInternalApi(`${base}/chat/completions`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ model, messages, tools: [{ type: "function", function: tool }], tool_choice: { type: "function", function: { name: tool.name } } }),
-        signal: AbortSignal.timeout(2 * 60_000),
-    });
-    if (!fallback.ok) throw new Error(readDramaUpstreamError(await fallback.text(), fallback.status));
-    const payload = await fallback.json();
-    const args = readDramaChatArguments(payload, tool.name);
-    if (!args || !hasUsableDramaToolArguments(args, tool.name)) {
-        console.error("[drama-analyze] structured output invalid", JSON.stringify({ endpoint: "chat/completions", channelId, model, status: fallback.status, outputShape: describeDramaModelOutput(payload), argumentShape: describeArgumentsText(args) }));
-        await refund(userId, model, fallback.headers);
+    if (!hasUsableDramaToolArguments(call.arguments, tool.name)) {
+        console.error("[drama-analyze] structured output invalid", JSON.stringify({ endpoint: call.protocol, channelId: candidate.channel.id, model: candidate.upstreamModel, argumentShape: describeArgumentsText(call.arguments) }));
+        await refund(userId, billingModel, call.headers);
         throw new Error("模型没有返回结构化剧本结果");
     }
-    return readCallResult(args, fallback.headers);
+    return readCallResult(call.arguments, call.headers);
 }
 
 function normalizeVisualInput(body: AnalyzeBody) {

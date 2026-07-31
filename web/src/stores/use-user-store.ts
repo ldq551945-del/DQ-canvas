@@ -14,6 +14,7 @@ export type LocalUser = {
     status: "active" | "disabled";
     planId: string;
     planName: string;
+    hasActivePlan: boolean;
     pointsBalance: number;
     permanentPointsBalance?: number;
     dailyPointsBalance?: number;

@@ -43,6 +43,7 @@ export default async function AdminPage({ searchParams }: AdminPageProps) {
                 status: currentUser.status,
                 planId: currentUser.planId,
                 planName: currentUser.planName,
+                hasActivePlan: currentUser.hasActivePlan,
                 pointsBalance: currentUser.pointsBalance,
             }}
         >

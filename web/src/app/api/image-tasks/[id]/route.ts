@@ -1,7 +1,10 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { requestPublicOrigin } from "@/app/api/image-tasks/image-task-reference-urls";
 import { getImageTask, transitionImageTask } from "@/lib/server/image-task-store";
+import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { pointsResponseHeaders } from "@/lib/server/points-response";
 import { generationModelId } from "@/lib/server/generation-channel";
 
@@ -12,13 +15,17 @@ type RouteContext = {
     params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
-    const currentUser = await getCurrentUser();
+export async function GET(request: Request, context: RouteContext) {
+    const currentUser = await getCurrentUser(request);
     if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { id } = await context.params;
     const task = await getImageTask(id);
     if (!task || (task.userId !== currentUser.id && currentUser.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: 404 });
+    if (isRecoverableImageTask(task)) {
+        const origin = resolveInternalOrigin(new URL(request.url).origin);
+        after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin: requestPublicOrigin(request), cookie: request.headers.get("cookie") || "", limit: 1, taskIds: [task.id] }));
+    }
 
     return NextResponse.json(
         {
@@ -29,14 +36,20 @@ export async function GET(_request: Request, context: RouteContext) {
                 model: generationModelId(task.config),
                 result: task.result,
                 error: task.error,
+                needsReview: task.executionPhase === "needs_review",
+                executionPhase: task.executionPhase,
             },
         },
         { headers: pointsResponseHeaders(currentUser) },
     );
 }
 
+function isRecoverableImageTask(task: NonNullable<Awaited<ReturnType<typeof getImageTask>>>) {
+    return (task.status === "pending" || task.status === "running") && task.executionPhase !== "needs_review";
+}
+
 export async function PATCH(request: Request, context: RouteContext) {
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(request);
     const task = user ? await getImageTask((await context.params).id) : null;
     if (!user || !task || (task.userId !== user.id && user.role !== "admin")) return NextResponse.json({ error: "任务不存在或已过期" }, { status: user ? 404 : 401 });
     const body = (await request.json().catch(() => ({}))) as { status?: string };

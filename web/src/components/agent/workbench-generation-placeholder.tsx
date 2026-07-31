@@ -25,7 +25,6 @@ export function WorkbenchGenerationPlaceholder({ kind, className }: { kind: "ima
                 })}
             </span>
             <span className={styles.sheen} aria-hidden="true" />
-            <span className="sr-only">{label}</span>
         </div>
     );
 }

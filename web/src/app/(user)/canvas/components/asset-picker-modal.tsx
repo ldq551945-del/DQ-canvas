@@ -94,8 +94,8 @@ function MyAssetsTab({ open, onInsert }: { open: boolean; onInsert: (payload: In
     const ready = Boolean(userId && hydrated && hydratedUserId === userId);
 
     useEffect(() => {
-        if (open && userId && !ready && !syncError) void hydrate();
-    }, [hydrate, open, ready, syncError, userId]);
+        if (open && userId) void hydrate(true);
+    }, [hydrate, open, userId]);
 
     useEffect(() => {
         const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));

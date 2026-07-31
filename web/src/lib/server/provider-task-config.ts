@@ -1,4 +1,6 @@
 import type { SystemChannelAdvancedConfig } from "@/lib/auth/store";
+import type { LogicalModelCapability } from "@/lib/auth/store";
+import { channelProtocolDefinition, protocolModelConfig } from "@/lib/channel-protocol-registry";
 import { hasProviderReadSignatureShape, isReferenceAssetUrl } from "@/lib/reference-asset-url";
 
 type TemplateValues = Record<string, unknown>;
@@ -11,8 +13,17 @@ export function providerCreatePaths(config: SystemChannelAdvancedConfig | undefi
     return uniquePaths(config?.createPath ? [config.createPath] : fallbacks);
 }
 
+export function resolvedProviderCreatePaths(config: SystemChannelAdvancedConfig | undefined, capability: LogicalModelCapability, fallbacks: string[]) {
+    const configured = config?.createPath?.trim();
+    if (configured) return providerCreatePaths(config, fallbacks);
+    const protocol = config?.protocol || "auto";
+    const definition = channelProtocolDefinition(protocol);
+    const presetPath = definition.strict ? protocolModelConfig(protocol, capability)?.createPath : undefined;
+    return uniquePaths(presetPath ? [presetPath] : fallbacks);
+}
+
 export function providerQueryPaths(config: SystemChannelAdvancedConfig | undefined, taskId: string, fallbacks: string[]) {
-    const configured = config?.queryPath ? [renderTaskPath(config.queryPath, taskId)] : [];
+    const configured = config?.queryPath ? [providerTaskPath(config.queryPath, taskId)] : [];
     return uniquePaths([...configured, ...fallbacks]);
 }
 
@@ -88,7 +99,7 @@ export function assertReferenceCapabilities(config: SystemChannelAdvancedConfig 
     if (unsupported) throw new Error(`当前渠道未启用${unsupported.type === "image" ? "参考图" : unsupported.type === "video" ? "参考视频" : "参考音频"}能力`);
 }
 
-function renderTaskPath(path: string, taskId: string) {
+export function providerTaskPath(path: string, taskId: string) {
     const encoded = encodeURIComponent(taskId);
     const rendered = path.replace(/\{\{\s*(?:taskId|task_id|id)\s*\}\}|\{(?:taskId|task_id|id)\}|:(?:taskId|task_id|id)\b/gi, encoded);
     if (rendered !== path) return rendered;
@@ -129,6 +140,7 @@ function shouldAlignReferenceTemplateValue(value: unknown): boolean {
 }
 
 function isExternallyReachableReferenceUrl(value: string) {
+    if (/^assetId:\/\/[a-zA-Z0-9._:-]+$/i.test(value)) return true;
     try {
         const url = new URL(value);
         if (url.protocol !== "http:" && url.protocol !== "https:") return false;

@@ -101,11 +101,11 @@ describe("drama project service updates", () => {
         expect(saved).toMatchObject({ ratio: "1080x1920", characters: [{ references: [{ width: 1080, height: 1920 }] }] });
     });
 
-    it("rejects unsafe exact project dimensions", async () => {
+    it("preserves exact project dimensions without a platform ceiling", async () => {
         const current = project("2026-07-19T08:00:01.000Z", "旧标题");
         mocks.getDramaProject.mockResolvedValue(current);
 
-        await expect(updateDramaProjectForUser("user-one", current.id, { ...project("2026-07-19T08:00:02.000Z", "新标题"), ratio: "5000x5000" })).rejects.toBeInstanceOf(DramaProjectServiceError);
+        await expect(updateDramaProjectForUser("user-one", current.id, { ...project("2026-07-19T08:00:02.000Z", "新标题"), ratio: "5000x5000" })).resolves.toMatchObject({ ratio: "5000x5000" });
     });
 
     it("archives the new conversation when project creation fails", async () => {

@@ -240,6 +240,7 @@ export default function CreatePage() {
                         materializingProjectId={agent.materializingProjectId}
                         onMaterializeProject={agent.materializeProject}
                         onRetryTask={(runId, taskId) => void agent.retryTask(runId, taskId).catch((error) => message.error(error instanceof Error ? error.message : "重试任务失败"))}
+                        onRetryRun={(runId) => void agent.retryRun(runId).catch((error) => message.error(error instanceof Error ? error.message : "重新分析失败"))}
                         onRetrySubmission={(messageId) => void agent.retrySubmission(messageId).catch((error) => message.error(error instanceof Error ? error.message : "重试请求失败"))}
                         onEditMessage={(editedMessage) => {
                             const assetIds = Array.isArray(editedMessage.metadata.assetIds) ? editedMessage.metadata.assetIds.filter((id): id is string => typeof id === "string") : [];

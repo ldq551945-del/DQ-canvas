@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import type { SystemGenerationChannelConfig } from "@/lib/server/generation-channel";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
+import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
 export type VideoTaskStatus = "running" | "success" | "error" | "cancelled";
 
@@ -18,32 +19,48 @@ export type VideoTask = GenerationTaskContext & {
     source?: string;
     prompt?: string;
     attempts?: GenerationAttempt[];
+    polling?: { lastAttemptAt?: number; nextAttemptAt?: number };
     result?: { url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
     error?: string;
 };
 
-const TASK_TTL_MS = 24 * 60 * 60 * 1000;
-const TASK_STALE_MS = 5 * 60 * 1000;
-
 export async function createVideoTask(input: Omit<VideoTask, "id" | "status" | "createdAt" | "updatedAt">) {
     const now = Date.now();
-    return createStoredGenerationTask("video", { ...input, id: randomUUID(), status: "running" as const, createdAt: now, updatedAt: now }, TASK_TTL_MS);
+    return createStoredGenerationTask("video", { ...input, id: randomUUID(), status: "running" as const, createdAt: now, updatedAt: now }, GENERATION_TASK_RETENTION_MS);
 }
 
 export async function getVideoTask(id: string) {
-    const task = await getStoredGenerationTask<VideoTask>("video", id);
-    if (!task || task.status !== "running" || task.updatedAt >= Date.now() - TASK_STALE_MS) return task;
-    return (await transitionVideoTask(task, { status: "error", error: "视频任务长时间未更新，请重新查询或生成。" })) || getStoredGenerationTask<VideoTask>("video", id);
+    return getStoredGenerationTask<VideoTask>("video", id);
+}
+
+export function claimVideoTaskPoll(id: string, intervalMs: number) {
+    const now = Date.now();
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => {
+        if (!canReconcileVideoTask(task) || Number(task.polling?.nextAttemptAt || 0) > now) return null;
+        return { ...task, polling: { lastAttemptAt: now, nextAttemptAt: now + Math.max(1_000, intervalMs) } };
+    });
+}
+
+export function completeReconciledVideoTask(id: string, result: NonNullable<VideoTask["result"]>) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "success", result, error: undefined } : null));
+}
+
+export function failReconciledVideoTask(id: string, error: string) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "error", result: undefined, error } : null));
 }
 
 export function transitionVideoTask(task: VideoTask, patch: Partial<Pick<VideoTask, "result" | "error">> & { status: "success" | "error" | "cancelled" }) {
-    return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, TASK_TTL_MS);
+    return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS);
 }
 
-export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "attempts">>) {
-    return mutateStoredGenerationTask<VideoTask>("video", id, TASK_TTL_MS, (task) => ({ ...task, ...patch }));
+export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts">>) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }
 
 export function touchVideoTask(id: string) {
-    return touchStoredGenerationTask("video", id, Date.now(), TASK_TTL_MS);
+    return touchStoredGenerationTask("video", id, Date.now(), GENERATION_TASK_RETENTION_MS);
+}
+
+export function canReconcileVideoTask(task: Pick<VideoTask, "status" | "error">) {
+    return task.status === "running" || (task.status === "error" && /视频生成超时|视频任务长时间未更新/.test(task.error || ""));
 }

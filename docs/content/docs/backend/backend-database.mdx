@@ -33,7 +33,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `billing_orders` -> `vozeb_pro_billing_orders`
 - `generation_logs` -> `vozeb_pro_generation_logs`
 
-这样同一个 PostgreSQL 数据库里即使存在其他业务表，也能清楚区分 VOZEB PRO 的数据。无前缀表不会被自动删除；当前部署和后续读写只使用 `vozeb_pro_` 前缀表。
+这样同一个 PostgreSQL 数据库里即使存在其他业务表，也能清楚区分 VOZEB PRO 的数据。Schema 中的显式索引和会生成索引的命名唯一约束也必须使用 `vozeb_pro_` 前缀，避免与同一 `public` Schema 的其他应用对象重名。无前缀表不会被自动删除；当前部署和后续读写只使用 `vozeb_pro_` 前缀表。
 
 ## 核心表
 
@@ -58,7 +58,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_referral_codes`：每个用户唯一的稳定邀请码，只保存聚合点击数和最后访问时间，不保存原始 IP、完整 User-Agent 或设备指纹。
 - `vozeb_pro_referral_relationships`：单层邀请关系和归因摘要，受邀用户唯一；保存 HMAC 网络/支付身份风险信号、人工风险状态和处置证据，禁止自邀、重复绑定和两层循环邀请。
 - `vozeb_pro_referral_rewards`：首笔有效实付订单生成的邀请人/新用户奖励记录，保存待结算、已发放、已撤销、已拒绝和撤销待复核状态，并关联积分流水、优惠券和触发订单。
-- `vozeb_pro_billing_orders`：商业订单主表，记录订单号、商品快照、套餐、支付商单号、支付状态和生效信息；日常总价、活动优惠、券优惠、实付金额、活动/用户券关联及 `pricing_snapshot` 均作为权威价格快照保存，支付、退款和对账只读取实付快照。状态包括 `pending/paid/closed/canceled/refunding/refunded`，退款外部调用期间使用 `refunding` 认领状态。过期待支付订单由原子批处理更新为 `closed` 并记录 `close.source=expiration-job`，多实例使用 `FOR UPDATE SKIP LOCKED` 并发执行不会重复关闭或遗留券锁。独立 `created_at` 索引用于后台财务日期窗口聚合。
+- `vozeb_pro_billing_orders`：商业订单主表，记录订单号、商品快照、套餐、支付商单号、支付状态和生效信息；日常总价、活动优惠、券优惠、实付金额、活动/用户券关联及 `pricing_snapshot` 均作为权威价格快照保存，支付、退款和对账只读取实付快照。状态包括 `pending/paid/closed/canceled/refunding/refunded`，退款外部调用期间使用 `refunding` 认领状态。过期待支付订单由原子批处理更新为 `closed` 并记录 `close.source=expiration-job`，多实例使用 `FOR UPDATE SKIP LOCKED` 并发执行不会重复关闭或遗留券锁。独立 `created_at` 索引用于后台财务日期窗口聚合；财务摘要的对账子查询复用同一日期窗口内的支付流水，不重新扫描窗口外流水。
 - `vozeb_pro_payment_transactions`：支付流水，记录支付商交易号、支付渠道、金额、状态和原始回调摘要；独立 `created_at` 索引用于支付金额和状态的日期窗口聚合。
 - `vozeb_pro_billing_reconciliation_runs`：支付商账单导入对账批次，保存渠道、来源、导入人、文件名、行数、匹配数、异常数和金额差额摘要。
 - `vozeb_pro_billing_reconciliation_rows`：支付商账单对账明细，保存规范化后的订单号、支付商流水号、金额、币种、状态、本地匹配订单和差异代码；不保存整份原始 CSV。
@@ -68,11 +68,13 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_announcements`：站内公告。
 - `vozeb_pro_prompts` / `vozeb_pro_prompt_seed_sources`：公共提示词、用户提示词和种子来源。
 - `vozeb_pro_generation_logs` / `vozeb_pro_generation_log_assets`：图片/视频生成日志和结果资源地址；工作台日志通过 `conversation_id` 关联可恢复的 Agent 对话，`created_at` 独立索引用于后台近 7 日运营聚合，避免读取日志正文和媒体资产。
-- `vozeb_pro_generation_tasks`：文本、图片、视频、音频、Agent 和短剧整集合成（`render`）异步任务状态，用于跨请求、重启和多实例查询；数据库状态统一为 `pending/running/success/error/paused/cancelled`，各上游或 Agent 的 `planning/completed/failed` 等状态会在写入索引列时归一化，原始状态仍保留在 JSON payload 中。表内同时预留 `conversation_id/run_id/surface/project_id/parent_task_id/attempt_no/client_request_id`，用于后台任务中心追踪会话、运行、项目、父任务、尝试次数和幂等请求。
+- `vozeb_pro_generation_tasks`：文本、图片、视频、音频、Agent 和短剧整集合成（`render`）异步任务状态，用于跨请求、重启和多实例查询；数据库状态统一为 `pending/running/success/error/paused/cancelled`，各上游或 Agent 的 `planning/completed/failed` 等状态会在写入索引列时归一化，原始状态仍保留在 JSON payload 中。`execution_phase` 独立保存 `created/submitting/submitted/polling/result_ready/persisting/needs_review/review_pending/reviewing/review_unavailable/completed`，并通过 `upstream_task_id/channel_id/provider/query_path`、提交/轮询时间、上游状态、结果载荷、Worker 和租约字段恢复原任务。Agent 普通生成完成后以成功任务进入持久复盘阶段，最多尝试三次，最终复盘不可用也不回滚已成功生成结果。表内同时保存 `conversation_id/run_id/surface/project_id/parent_task_id/attempt_no/client_request_id`，用于后台任务中心追踪会话、运行、项目、父任务、尝试次数和幂等请求；到期恢复索引只覆盖非终态且可自动推进的执行阶段。
+- `vozeb_pro_generation_worker_heartbeats`：生成 Worker 的稳定 ID 与最近心跳时间；就绪检查按最近心跳和部署配置的失联窗口判断后台恢复是否可用。
+- `vozeb_pro_generation_webhook_events`：通用生成回调幂等与对账记录，以 `(channel_id, event_id)` 为主键，保存上游任务 ID、请求体哈希、匹配到的站内任务、处理状态和收取/处理时间；不保存回调密钥或渠道 API Key。
 - `vozeb_pro_creative_conversations`：统一创作会话，保存用户、`chat/canvas/drama` Surface、`agent/image-workbench/video-workbench/canvas/drama` 来源、可选项目、标题、状态、最近消息时间、持久滚动摘要和摘要覆盖到的消息序号；Surface、来源与项目创建后不可变。列表先按来源过滤再分页，避免不同工作台记录混入 Agent 历史；图片/视频工作台首屏使用一次定向摘要查询，不逐会话展开消息和资产。
-- `vozeb_pro_creative_messages`：会话消息，按会话内连续 `sequence` 排序，保存角色、运行状态、正文、Run 关联和结构化 metadata。工作台打开历史时默认读取最新 50 条，并以 `beforeSequence` 向前分页，禁止固定读取最早消息导致新消息被截断。
+- `vozeb_pro_creative_messages`：会话消息，按会话内连续 `sequence` 排序，保存角色、运行状态、正文、Run 关联和结构化 metadata。工作台打开历史时默认读取最新 50 条，并以 `beforeSequence` 向前分页，禁止固定读取最早消息导致新消息被截断；Agent 上下文已保存滚动摘要后只读取 `contextSummaryThroughSequence` 之后的消息，避免长会话重复加载已压缩历史。
 - `vozeb_pro_creative_assets`：稳定创作资产，保存 `assetId`、来源 Run/任务/消息、父资产、顺序、文本内容或持久媒体位置及媒体信息；不保存 base64。
-- `vozeb_pro_creative_run_events`：Agent Run 持久事件，使用递增 `bigserial` ID 为 SSE 断线续传提供精确游标。
+- `vozeb_pro_creative_run_events`：Agent Run 持久事件，使用递增 `bigserial` ID 为 SSE 断线续传提供精确游标；PostgreSQL 事务写入事件后发送 `vozeb_pro_run_events` 通知唤醒其他实例，通知不承载业务数据，丢失时仍从本表恢复。
 - `vozeb_pro_canvas_projects`：Canvas 项目聚合快照，保存用户、标题、创作会话 ID、节点、连线、视口和项目助手会话；列表查询只投影标题、时间和节点/连线计数，进入单项目后才读取完整快照。
 - `vozeb_pro_library_assets`：用户素材库聚合记录，保存文本或服务器媒体引用、标签、来源和备注；不保存媒体 base64，素材页按用户、类型、关键词和页码在服务端裁剪。
 - `vozeb_pro_local_media_assets`：图片、视频和音频的统一媒体登记表，保存稳定站内 `storage_key`、本地/对象存储 Provider、对象存储配置与对象 Key、同步时间、临时/长期分类、用户归属、原文件名、来源、会话/Run/任务/项目关联、MIME、大小和过期时间；媒体读取与删除以该登记和业务引用检查为权限边界。
@@ -90,6 +92,8 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 当前作品社区不提供收藏、评论或评论举报，新建 Schema 不创建对应关系表、内容表、举报表或作品计数字段。
 
 文本、图片、视频、音频和漫剧整集合成终态更新使用带 `user_id + task_type + allowed status` 条件的原子 `UPDATE`；任务尝试元数据通过存储层原子 mutate 合并，避免取消状态被旧快照覆盖。用户取消、后台成功、后台失败和过期检查同时发生时只有一个状态转换能成功，退款由成功抢占终态或检测到已取消结果的一方执行。
+
+生成恢复通过 `worker_id + lease_until` 原子领取到期任务；页面唤醒和常驻 Worker 复用同一恢复服务。上游创建成功后先保存任务 ID，再进入查询阶段；查询到结果先写 `result_ready`，下一批只完成媒体保存。`submitting` 结果不确定且无法对账时进入 `needs_review`，只有管理员明确提供上游任务 ID、结果或确认失败后才能继续。Webhook 事件先按渠道与事件 ID 幂等登记，再匹配已有媒体任务并清除租约；未匹配事件保留为 `unmatched`，不得创建新任务。
 
 Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，每个多副本子任务同时保存子任务 ID、完成状态、尝试次数和结果，恢复时复用已完成结果并继续轮询未完成任务；事件独立写入 `creative_run_events`。状态更新、助手消息终态和事件追加在同一 PostgreSQL 事务内完成；暂停、恢复、取消、完成和失败竞争时，旧 Run 快照不能覆盖更新后的状态。文件 Provider 使用串行 mutation queue 保持相同的进程内语义。短剧成本概览按 `user_id + project_id + task_type + status` 在数据库聚合，并使用 `generation_tasks_user_project_idx`，不读取数千条完整任务 JSON 后再汇总。
 
@@ -211,11 +215,11 @@ PayPly 下单由服务端向 `VOZEB_PRO_PAYPLY_CHECKOUT_URL` 发起请求，密�
 
 创作 Agent Run 复用 `generation_tasks` 持久化，`task_type = agent`，JSON payload 保存会话 ID、Surface、可选项目、用户需求、运行状态和任务计划；事件写入 `creative_run_events`，生成结果登记到 `creative_assets`。图片、视频、音频和文本子任务继续使用现有任务类型，并写入父 Run、会话、项目和尝试次数关联。真实执行状态以后端记录为准，画布节点 metadata 仅承担展示和关联。
 
-规划模型读取当前会话最近 12 条已完成消息；更早消息按序写入 `creative_conversations.context_summary`，并用 `context_summary_through_sequence` 防止重复摘要。当前 Run 的用户消息和助手占位消息不会重复进入自身规划上下文。
+规划上下文读取当前会话的持久摘要和近期已完成消息，传给模型时最多保留最近 6 条并按 `12000/22000/32000` 字符复杂度预算继续裁剪；更早消息按序写入 `creative_conversations.context_summary`，并用 `context_summary_through_sequence` 防止重复摘要。当前 Run 的用户消息和助手占位消息不会重复进入自身规划上下文。
 
 任务可保存多份媒体引用。依赖任务完成后，执行器从其稳定 `assetId` 重新读取持久媒体位置并注入下游图片或视频请求；`parent_asset_id` 保存首个父资产，其余父资产 ID 记录在资产 metadata 中。
 
-同一用户的 `client_request_id` 保持唯一。重复提交 Agent Run 时返回原运行，不重复创建用户消息、助手占位消息、子任务或计费。SSE 使用 `creative_run_events.id` 作为 `Last-Event-ID`，只重放游标之后的事件。
+同一用户的 `client_request_id` 保持唯一。重复提交 Agent Run 时返回原运行，不重复创建用户消息、助手占位消息、子任务或计费。每份并发结果以独立子任务身份合并写回父任务，并追加 `task.child.completed/failed`；已经成功的子任务与资产不会因兄弟失败而丢失。SSE 使用 `creative_run_events.id` 作为 `Last-Event-ID`，只重放游标之后的事件。
 
 Chat 规划可以返回 Canvas 或短剧 `projectHandoff`。服务端使用 `handoff-{runId}` 作为稳定交接 ID，在所有生成任务完成后合并规划引用资产与本轮新资产，写入一次 `project.handoff` 持久事件，并将完整交接信息保存到助手消息 metadata 和 `run.completed`。Canvas 与短剧均通过服务端项目 API 按稳定交接 ID 幂等创建，不把媒体 base64 写入项目或交接记录。
 

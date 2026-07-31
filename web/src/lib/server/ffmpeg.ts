@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
+import { join, parse } from "node:path";
 
 type FfmpegResult = { stdout: string; stderr: string };
 
 export async function ffmpegAvailable() {
     try {
-        await runFfmpeg(["-version"], { timeoutMs: 10_000 });
+        await Promise.all([runFfmpeg(["-version"], { timeoutMs: 10_000 }), runFfprobe(["-version"], { timeoutMs: 10_000 })]);
         return true;
     } catch {
         return false;
@@ -16,7 +17,16 @@ export function runFfmpeg(args: string[], options?: { timeoutMs?: number; cwd?: 
 }
 
 export function runFfprobe(args: string[], options?: { timeoutMs?: number; cwd?: string; signal?: AbortSignal }) {
-    return runProcess(process.env.FFPROBE_PATH?.trim() || "ffprobe", args, options);
+    return runProcess(resolveFfprobePath(), args, options);
+}
+
+export function resolveFfprobePath() {
+    const configured = process.env.FFPROBE_PATH?.trim();
+    if (configured) return configured;
+    const ffmpegPath = process.env.FFMPEG_PATH?.trim();
+    if (!ffmpegPath) return "ffprobe";
+    const parsed = parse(ffmpegPath);
+    return parsed.dir ? join(parsed.dir, `ffprobe${parsed.ext}`) : "ffprobe";
 }
 
 function resolveFfmpegPath() {

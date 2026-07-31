@@ -8,6 +8,13 @@ export const navigationGroups = [
     { id: "community", label: "社区" },
 ] as const;
 
+export const landingNavigationTools = [
+    { slug: "create", label: "Agent 创作" },
+    { slug: "image", label: "生图工作台" },
+    { slug: "drama", label: "短剧项目" },
+    { slug: "gallery", label: "作品广场" },
+] as const;
+
 export const navigationTools = [
     {
         slug: "create",

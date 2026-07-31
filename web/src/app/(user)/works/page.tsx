@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { workStatusToneClass } from "@/lib/work-publication-status";
 import {
     deleteWorkPublication,
     listWorkPublications,
@@ -19,7 +20,7 @@ import {
 } from "@/services/api/work-publications";
 import { submitWorkAppeal } from "@/services/api/work-governance";
 import { WorkPublicationEditor } from "./components/work-publication-editor";
-import { formatWorkTime, SOURCE_TYPE_LABELS, VISIBILITY_LABELS, workSharePath, workStatusColor, workStatusLabel, WORK_STATUS_OPTIONS } from "./work-publication-values";
+import { formatWorkTime, SOURCE_TYPE_LABELS, VISIBILITY_LABELS, workSharePath, workStatusLabel, WORK_STATUS_OPTIONS } from "./work-publication-values";
 
 const PAGE_SIZE = 10;
 
@@ -356,15 +357,9 @@ function WorkListItem({
                     <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                             <h2 className="min-w-0 max-w-full truncate text-sm font-semibold">{version.title}</h2>
-                            {active ? (
-                                <Tag color={workStatusColor(version.moderationStatus)} className="m-0">
-                                    {workStatusLabel(version.moderationStatus)}
-                                </Tag>
-                            ) : (
-                                <Tag color="default" className="m-0">
-                                    已下架
-                                </Tag>
-                            )}
+                            <span className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium leading-none ${workStatusToneClass(active ? version.moderationStatus : "revoked")}`}>
+                                {active ? workStatusLabel(version.moderationStatus) : "已下架"}
+                            </span>
                             {work.publishedVersion && work.publishedVersion.id !== version.id ? <Tag color="success">线上 v{work.publishedVersion.versionNumber}</Tag> : null}
                         </div>
                         <p className="mt-0.5 line-clamp-1 text-xs leading-5 text-muted-foreground">{version.description || "暂未填写作品说明"}</p>

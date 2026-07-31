@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useLayoutEffect } from "react";
 
+import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
@@ -10,7 +11,7 @@ const loadAssetPickerModal = () => import("../components/asset-picker-modal").th
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { NODE_STATUS_ERROR, NODE_STATUS_LOADING } from "./canvas-page-elements";
-import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled, resetInterruptedGeneration } from "./canvas-page-utils";
+import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled } from "./canvas-page-utils";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
@@ -153,8 +154,15 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         resumingImageTaskIdsRef,
         resumingVideoTaskIdsRef,
         resumingTextTaskIdsRef,
+        resumingAudioTaskIdsRef,
     } = state;
-    const { createHistoryEntry, startGenerationRequest, finishGenerationRequest, stopGenerationByRunningId, confirmStopGeneration, completeVideoTask, completeImageTask, startAndCompleteImageTask, completeTextTask } = tasks;
+    const { createHistoryEntry, startGenerationRequest, finishGenerationRequest, stopGenerationByRunningId, confirmStopGeneration, completeVideoTask, completeImageTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
+    const deferReviewedTask = (nodeId: string, taskField: "imageTask" | "videoTask" | "textTask" | "audioTask", errorDetails: string) => {
+        setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+        window.setTimeout(() => {
+            setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.[taskField] && item.metadata.errorDetails === errorDetails ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING } } : item)));
+        }, 30_000);
+    };
 
     useEffect(() => {
         if (userId) void hydrate();
@@ -166,7 +174,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         setProjectLoaded(false);
         void loadProject(projectId)
             .then(async (project) => {
-                const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
+                const restoredNodes = await hydrateCanvasImages(project.nodes);
                 const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
                 if (cancelled) return;
                 setNodes(restoredNodes);
@@ -218,6 +226,10 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "图片生成失败";
                     message.error(errorDetails);
+                    if (isGenerationTaskNeedsReviewError(error)) {
+                        deferReviewedTask(node.id, "imageTask", errorDetails);
+                        return;
+                    }
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -243,6 +255,10 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "视频生成失败";
                     message.error(errorDetails);
+                    if (isGenerationTaskNeedsReviewError(error)) {
+                        deferReviewedTask(node.id, "videoTask", errorDetails);
+                        return;
+                    }
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, videoTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -268,6 +284,10 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "文本生成失败";
                     message.error(errorDetails);
+                    if (isGenerationTaskNeedsReviewError(error)) {
+                        deferReviewedTask(node.id, "textTask", errorDetails);
+                        return;
+                    }
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, textTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -277,6 +297,35 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                 });
         });
     }, [completeTextTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const resumable = nodes.filter((node) => node.type === CanvasNodeType.Audio && node.metadata?.status === NODE_STATUS_LOADING && node.metadata.audioTask && !generationRequestsRef.current.has(node.id));
+        resumable.forEach((node) => {
+            const task = node.metadata?.audioTask;
+            if (!task || resumingAudioTaskIdsRef.current.has(node.id)) return;
+            resumingAudioTaskIdsRef.current.add(node.id);
+            const controller = startGenerationRequest(node.id, node.id, node.id);
+            const generationConfig = buildGenerationConfig(effectiveConfig, node, "audio");
+            setRunningNodeId((current) => current || node.id);
+            void completeAudioTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
+                .catch((error) => {
+                    if (isGenerationCanceled(error)) return;
+                    const errorDetails = error instanceof Error ? error.message : "音频生成失败";
+                    message.error(errorDetails);
+                    if (isGenerationTaskNeedsReviewError(error)) {
+                        deferReviewedTask(node.id, "audioTask", errorDetails);
+                        return;
+                    }
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, audioTask: undefined } } : item)));
+                })
+                .finally(() => {
+                    resumingAudioTaskIdsRef.current.delete(node.id);
+                    finishGenerationRequest(node.id, controller);
+                    setRunningNodeId((current) => (current === node.id ? null : current));
+                });
+        });
+    }, [completeAudioTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;

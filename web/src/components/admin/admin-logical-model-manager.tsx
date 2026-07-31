@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { useDeferredValue, useMemo, useState } from "react";
 
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
-import { capabilityLabel, deriveLogicalModelsConfig, isLogicalModelResolvable, normalizeDefaultModelsConfig, resolveLogicalModelConfig } from "@/lib/model-routing-config";
+import { capabilityLabel, isLogicalModelResolvable, mergeChannelModelsIntoLogicalModels, normalizeDefaultModelsConfig, resolveLogicalModelConfig } from "@/lib/model-routing-config";
 import { LabeledControl, SectionTitle } from "@/components/admin/admin-settings-controls";
 
 type Props = {
@@ -42,7 +42,9 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
         () => logicalModels.filter((model) => (capabilityFilter === "all" || model.capability === capabilityFilter) && (!deferredQuery || `${model.id} ${model.name}`.toLowerCase().includes(deferredQuery))),
         [capabilityFilter, deferredQuery, logicalModels],
     );
-    const readyCount = defaultFields.filter(({ capability, key }) => isLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key])).length;
+    const availableDefaultFields = defaultFields.filter(({ capability }) => logicalModels.some((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id)));
+    const availableCapabilityOptions = capabilityOptions.filter(({ value }) => availableDefaultFields.some(({ capability }) => capability === value));
+    const readyCount = availableDefaultFields.filter(({ capability, key }) => isLogicalModelResolvable(logicalModels, channels, capability, defaultModels[key])).length;
 
     const openCreate = () => {
         setEditingId("");
@@ -74,15 +76,15 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
     };
 
     const syncChannelModels = () => {
-        const existing = new Set(logicalModels.map((model) => model.id.toLowerCase()));
-        const additions = deriveLogicalModelsConfig(channels).filter((model) => !existing.has(model.id.toLowerCase()));
-        if (!additions.length) {
+        const nextModels = mergeChannelModelsIntoLogicalModels(logicalModels, channels);
+        const addedModels = nextModels.length - logicalModels.length;
+        const addedBindings = nextModels.reduce((total, model) => total + model.bindings.length, 0) - logicalModels.reduce((total, model) => total + model.bindings.length, 0);
+        if (!addedModels && !addedBindings) {
             message.info("渠道模型已全部存在于逻辑模型目录");
             return;
         }
-        const nextModels = [...logicalModels, ...additions];
         onChange({ logicalModels: nextModels, defaultModels: normalizeDefaultModelsConfig(defaultModels, nextModels, channels) });
-        message.success(`已补充 ${additions.length} 个逻辑模型，请检查能力类型后保存`);
+        message.success(`已补充 ${addedModels} 个逻辑模型、${addedBindings} 条渠道绑定`);
     };
 
     const updateDefault = (key: keyof SystemDefaultModels, modelId: string) => onChange({ logicalModels, defaultModels: { ...defaultModels, [key]: modelId } });
@@ -93,8 +95,8 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                 <div>
                     <div className="flex flex-wrap items-center gap-2">
                         <SectionTitle icon={<Route className="size-4" />} title="逻辑模型路由" />
-                        <Tag color={readyCount === defaultFields.length ? "green" : "orange"} className="m-0">
-                            默认能力 {readyCount}/{defaultFields.length} 可用
+                        <Tag color={readyCount === availableDefaultFields.length ? "green" : "orange"} className="m-0">
+                            默认能力 {readyCount}/{availableDefaultFields.length} 可用
                         </Tag>
                     </div>
                     <p className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">用户与 Agent 只选择逻辑模型；后台按绑定优先级选择实际渠道和上游模型。</p>
@@ -113,7 +115,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                 <div className="min-w-0">
                     <div className="mb-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]">
                         <Input allowClear value={query} prefix={<Search className="size-4 text-stone-400" />} placeholder="搜索逻辑 ID 或名称" onChange={(event) => setQuery(event.target.value)} />
-                        <Select value={capabilityFilter} options={[{ label: "全部能力", value: "all" }, ...capabilityOptions]} onChange={(value) => setCapabilityFilter(value)} />
+                        <Select value={capabilityFilter} options={[{ label: "全部能力", value: "all" }, ...availableCapabilityOptions]} onChange={(value) => setCapabilityFilter(value)} />
                     </div>
                     <div className="max-h-[680px] space-y-2 overflow-y-auto pr-1">
                         {visibleModels.map((model) => {
@@ -162,7 +164,7 @@ export function AdminLogicalModelManager({ channels, logicalModels, defaultModel
                 <div className="rounded-lg border border-stone-200 bg-stone-50/70 p-4 dark:border-stone-800 dark:bg-stone-900/40">
                     <SectionTitle icon={<GitBranch className="size-4" />} title="默认模型" />
                     <div className="mt-4 space-y-4">
-                        {defaultFields.map(({ capability, key, label }) => {
+                        {availableDefaultFields.map(({ capability, key, label }) => {
                             const options = logicalModels
                                 .filter((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id))
                                 .map((model) => ({ label: `${model.name} (${model.id})`, value: model.id }));

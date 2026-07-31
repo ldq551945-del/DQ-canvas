@@ -48,14 +48,14 @@ describe("workbench Agent progress", () => {
         expect(next[0].progress).toBeUndefined();
     });
 
-    it("does not repeat the same user request when replanning", () => {
+    it("keeps repeated user submissions as separate requests", () => {
         const progress = createWorkbenchAgentProgressMessage("progress", false);
         const messages = [
             { id: "user", role: "user" as const, text: "生成商品图" },
             { id: "assistant", role: "assistant" as const, text: "请补充素材" },
         ];
 
-        expect(appendWorkbenchAgentRequest(messages, "生成商品图", [], progress).filter((item) => item.role === "user")).toHaveLength(1);
+        expect(appendWorkbenchAgentRequest(messages, "生成商品图", [], progress).filter((item) => item.role === "user")).toHaveLength(2);
         expect(appendWorkbenchAgentRequest(messages, "换成竖版", [], progress).filter((item) => item.role === "user")).toHaveLength(2);
     });
 

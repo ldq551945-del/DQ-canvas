@@ -5,6 +5,8 @@ import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
+import { GENERATION_TASK_NEEDS_REVIEW_MESSAGE, GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
+import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { registerVideoTask, syncVideoTask } from "@/services/api/video-task-tracking";
@@ -46,6 +48,7 @@ import {
     applyTaskIdToVideoPath,
     normalizeAdvancedVideoPath,
     createSeedanceTask,
+    createSeedanceSpecialTask,
     pollSeedanceTask,
     assertSeedanceVideoReferences,
     assertSeedanceAudioReferences,
@@ -113,6 +116,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
         }
         if (state.status === "failed") {
             await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
+            if (state.error === GENERATION_TASK_NEEDS_REVIEW_MESSAGE) throw new GenerationTaskNeedsReviewError();
             throw new Error(state.error);
         }
         if (attempt === 119) {
@@ -164,9 +168,10 @@ export async function createServerVideoGenerationTask(
         }),
         signal: options?.signal,
     });
-    const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string; model?: string }; error?: string };
-    if (!response.ok || !payload.task?.id) throw new Error(payload.error || "后台视频任务创建失败");
-    return { id: payload.task.id, provider: "generation", model: payload.task.model || selectedModel, pollPath: "server", serverTaskId: payload.task.id };
+    const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string; model?: string; durationSeconds?: number }; error?: string };
+    if (!response.ok) throw new GenerationTaskRequestError(payload.error || "后台视频任务创建失败", response.status);
+    if (!payload.task?.id) throw new Error(payload.error || "后台视频任务创建失败");
+    return { id: payload.task.id, provider: "generation", model: payload.task.model || selectedModel, pollPath: "server", serverTaskId: payload.task.id, durationSeconds: payload.task.durationSeconds };
 }
 
 export function taskContext(options?: RequestOptions) {
@@ -212,7 +217,10 @@ export async function createUpstreamVideoGenerationTask(
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
     const protocol = requestConfig.advancedConfig?.protocol === "sub2api" ? "auto" : requestConfig.advancedConfig?.protocol || "auto";
-    if (protocol === "seedance" || (protocol === "auto" && isSeedanceVideoConfig(requestConfig))) {
+    if (protocol === "seedance-special") {
+        return createSeedanceSpecialTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
+    }
+    if (protocol === "seedance" || protocol === "volcengine-video" || (protocol === "auto" && isSeedanceVideoConfig(requestConfig))) {
         return createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options);
     }
     if (protocol === "globalaiopc" || protocol === "qingyan" || protocol === "compatible") {
@@ -237,8 +245,9 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
 export async function pollServerVideoTask(task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     const response = await fetch(`/api/video-tasks/${encodeURIComponent(task.serverTaskId || task.id)}`, { cache: "no-store", signal: options?.signal });
     syncUserPointsFromHeaders(response.headers, "system");
-    const payload = (await response.json().catch(() => ({}))) as { task?: { status?: string; result?: { url?: string; remoteUrl?: string; mimeType?: string }; error?: string }; error?: string };
+    const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string }; error?: string };
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");
+    if (payload.task?.needsReview) return { status: "failed", error: GENERATION_TASK_NEEDS_REVIEW_MESSAGE };
     if (payload.task?.status === "success") return { status: "completed", result: payload.task.result || {} };
     if (payload.task?.status === "error" || payload.task?.status === "cancelled") return { status: "failed", error: payload.task.error || "视频生成失败" };
     return { status: "pending" };

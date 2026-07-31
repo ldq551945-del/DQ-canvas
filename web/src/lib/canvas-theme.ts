@@ -22,6 +22,9 @@ export const canvasThemes = {
             text: "#1e293b",
             muted: "#64748b",
             faint: "#94a3b8",
+            danger: "#dc2626",
+            dangerSurface: "#fff1f2",
+            dangerBorder: "#fecdd3",
         },
         toolbar: {
             panel: "rgba(255,255,255,.96)",
@@ -52,6 +55,9 @@ export const canvasThemes = {
             text: "#f8fafc",
             muted: "#cbd5e1",
             faint: "#64748b",
+            danger: "#f87171",
+            dangerSurface: "#2a1215",
+            dangerBorder: "#7f1d1d",
         },
         toolbar: {
             panel: "rgba(10,12,16,.96)",

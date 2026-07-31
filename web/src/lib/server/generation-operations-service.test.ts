@@ -50,10 +50,12 @@ describe("generation operations aggregation", () => {
             retryTaskId: "child-failed",
         });
         expect(result.summary).toMatchObject({ total: 1, failed: 1, totalPointsCost: 3 });
+        expect(result.agentPerformance).toEqual(expect.objectContaining({ sampleSize: 0 }));
         expect(result.channels).toEqual([expect.objectContaining({ id: "channel-one", capability: "image", enabled: true, runtimeHealth: { status: "healthy", consecutiveFailures: 0 } })]);
         expect(mocks.getPublicUsersByIds).toHaveBeenCalledWith(["user-one"]);
         expect(mocks.findPublicUserIdsByKeyword).toHaveBeenCalledWith("0001");
-        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenCalledWith({ page: 1, search: "0001", searchUserIds: ["user-one"], includeAll: false });
+        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(1, { page: 1, search: "0001", searchUserIds: ["user-one"], includeAll: false });
+        expect(mocks.listStoredGenerationTaskRecords).toHaveBeenNthCalledWith(2, { page: 1, pageSize: 100, type: "agent", search: "0001", searchUserIds: ["user-one"], includeAll: true });
         expect(JSON.stringify(result)).not.toContain("amountCents");
     });
 });

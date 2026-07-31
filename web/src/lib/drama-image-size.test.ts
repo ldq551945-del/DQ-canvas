@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import { dramaOutputDimensions, normalizeDramaImageSize, resolveDramaGenerationSize } from "./drama-image-size";
 
 describe("drama image size", () => {
-    it("accepts supported ratios and bounded exact dimensions", () => {
+    it("accepts supported ratios and unrestricted exact dimensions", () => {
         expect(normalizeDramaImageSize("16:9")).toBe("16:9");
         expect(normalizeDramaImageSize("1080×1920")).toBe("1080x1920");
-        expect(normalizeDramaImageSize("5000x5000")).toBe("");
+        expect(normalizeDramaImageSize("5000x5000")).toBe("5000x5000");
     });
 
     it("uses prompt, custom dimensions, reference ratio, then project ratio", () => {

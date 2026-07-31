@@ -3,7 +3,7 @@
 import { nanoid } from "nanoid";
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
-import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, GenerationLogSlotSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
+import { generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { readImageMeta } from "@/lib/image-utils";
 import { deleteGenerationLogs as deleteServerGenerationLogs, listGenerationLogs, recordGenerationLog, type StoredGenerationLogRecord } from "@/services/api/generation-logs";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
@@ -76,7 +76,7 @@ export type GenerationLog = {
 };
 
 export type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
-export type GenerationSnapshot = { text: string; config: AiConfig; references: ReferenceImage[]; count?: number };
+export type GenerationSnapshot = { text: string; userText?: string; config: AiConfig; references: ReferenceImage[]; count?: number };
 
 export function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
@@ -571,7 +571,7 @@ function buildLog({
         id: baseLog?.id || nanoid(),
         creativeConversationId: baseLog?.creativeConversationId,
         createdAt: baseLog?.createdAt || Date.now(),
-        title: baseLog?.title || prompt.slice(0, 12) || "未命名",
+        title: baseLog?.title || requestSnapshot.userPrompt?.slice(0, 12) || prompt.slice(0, 12) || "未命名",
         prompt,
         time: new Date().toLocaleString("zh-CN", { hour12: false }),
         model,
@@ -613,6 +613,7 @@ export function snapshotFromLog(log: GenerationLog, fallbackConfig: AiConfig, re
     const restoredReferences = snapshotReferences.filter((item) => !referenceIds || referenceIds.has(item.id)).flatMap(imageReferenceFromSnapshot);
     return {
         text: slot?.prompt || log.prompt,
+        userText: generationLogPublicPrompt(log),
         references: restoredReferences.length ? restoredReferences : log.references || [],
         config: {
             ...fallbackConfig,
@@ -655,7 +656,8 @@ function mergeImageRequestSnapshot(base: GenerationLogRequestSnapshot | undefine
         if (result.status === "success") assetIndex += 1;
         return slot;
     });
-    return { version: 1, parameters, references, slots };
+    const userPrompt = base?.userPrompt || snapshot.userText || snapshot.text;
+    return { version: 1, userPrompt, parameters, references, slots };
 }
 
 function imageSnapshotParameters(config: GenerationLogConfig | AiConfig, count: string): GenerationLogSnapshotParameters {

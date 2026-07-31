@@ -4,6 +4,7 @@ import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from 
 import type { AiTextMessage } from "@/types/ai";
 import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
+import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
 type TextTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
 
@@ -29,6 +30,8 @@ export type TextTask = {
     config: TextTaskConfig;
     messages: AiTextMessage[];
     result?: { content: string };
+    upstream?: { id: string; createPath: string };
+    billing?: { pointsCost: number; pointsRecordId?: string; refunded: boolean };
     error?: string;
     pointsRemaining?: number;
     candidateConfigs?: TextTaskConfig[];
@@ -36,8 +39,6 @@ export type TextTask = {
     attemptNo?: number;
 };
 
-const TASK_TTL_MS = 60 * 60 * 1000;
-const TASK_STALE_MS = 3 * 60 * 1000;
 export async function createTextTask(input: Omit<TextTask, "id" | "status" | "createdAt" | "updatedAt">) {
     const now = Date.now();
     const task: TextTask = {
@@ -47,27 +48,21 @@ export async function createTextTask(input: Omit<TextTask, "id" | "status" | "cr
         createdAt: now,
         updatedAt: now,
     };
-    return createStoredGenerationTask("text", task, TASK_TTL_MS);
+    return createStoredGenerationTask("text", task, GENERATION_TASK_RETENTION_MS);
 }
 
 export async function getTextTask(id: string) {
-    const task = await getStoredGenerationTask<TextTask>("text", id);
-    if (!task || !isStale(task)) return task;
-    return (await transitionTextTask(task, ["pending", "running"], { status: "error", error: "生成任务已中断，请重新生成。", messages: [], config: { ...task.config, apiKey: "" } })) || getStoredGenerationTask<TextTask>("text", id);
+    return getStoredGenerationTask<TextTask>("text", id);
 }
 
-export function transitionTextTask(task: TextTask, allowedStatuses: TextTaskStatus[], patch: Partial<Pick<TextTask, "config" | "messages" | "result" | "error" | "pointsRemaining">> & { status: TextTaskStatus }) {
-    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, patch, TASK_TTL_MS);
+export function transitionTextTask(task: TextTask, allowedStatuses: TextTaskStatus[], patch: Partial<Pick<TextTask, "config" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus }) {
+    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS);
 }
 
 export function touchTextTask(id: string) {
-    return touchStoredGenerationTask("text", id, Date.now(), TASK_TTL_MS);
+    return touchStoredGenerationTask("text", id, Date.now(), GENERATION_TASK_RETENTION_MS);
 }
 
-export function updateTextTask(id: string, patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "attempts" | "attemptNo">>) {
-    return mutateStoredGenerationTask<TextTask>("text", id, TASK_TTL_MS, (task) => ({ ...task, ...patch }));
-}
-
-function isStale(task: TextTask) {
-    return (task.status === "pending" || task.status === "running") && task.updatedAt < Date.now() - TASK_STALE_MS;
+export function updateTextTask(id: string, patch: Partial<Pick<TextTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing">>) {
+    return mutateStoredGenerationTask<TextTask>("text", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }

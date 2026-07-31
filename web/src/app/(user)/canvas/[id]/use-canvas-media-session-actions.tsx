@@ -188,10 +188,11 @@ export function useCanvasMediaSessionActions({ state, interactions, files }: { s
     );
 
     const pasteAssistantImage = useCallback(
-        (file: File) => {
+        async (file: File) => {
             const position = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-            void createImageFileNode(file, position);
-            message.success("已从剪切板添加图片");
+            const nodeId = await createImageFileNode(file, position, true);
+            message.success("图片已添加到本轮引用");
+            return nodeId;
         },
         [createImageFileNode, message, screenToCanvas, size.height, size.width],
     );

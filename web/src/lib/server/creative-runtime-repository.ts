@@ -34,6 +34,7 @@ export type CreateRunBundleInput<T extends AgentRunBase> = {
     prompt: string;
     conversationId?: string;
     assetIds: string[];
+    acknowledgement?: string;
     ttlMs: number;
 };
 
@@ -64,6 +65,7 @@ export type CreativeRunBundleResult<T extends AgentRunBase> = {
 const RUNTIME_FILE = "creative-runtime.json";
 const RECENT_CONTEXT_MESSAGES = 12;
 const MAX_CONTEXT_SUMMARY_LENGTH = 8000;
+const CREATIVE_RUN_NOTIFY_CHANNEL = "vozeb_pro_run_events";
 
 export async function createPostgresRunBundle<T extends AgentRunBase>(userId: string, input: CreateRunBundleInput<T>) {
     await ensurePostgresSchema();
@@ -76,7 +78,7 @@ export async function createPostgresRunBundle<T extends AgentRunBase>(userId: st
         const sequence = Number(sequenceResult.rows[0]?.sequence || 0) + 1;
         const now = input.run.createdAt;
         const userMessage = message(input.run.inputMessageId, conversation.id, sequence, "user", "completed", input.prompt, input.run.id, { assetIds: input.assetIds }, now);
-        const assistantMessage = message(input.run.assistantMessageId, conversation.id, sequence + 1, "assistant", "running", "正在理解你的需求。", input.run.id, {}, now);
+        const assistantMessage = message(input.run.assistantMessageId, conversation.id, sequence + 1, "assistant", "running", input.acknowledgement || "已收到你的需求。", input.run.id, {}, now);
         await insertPostgresMessage(client, userMessage);
         await insertPostgresMessage(client, assistantMessage);
         await client.query(
@@ -87,6 +89,7 @@ export async function createPostgresRunBundle<T extends AgentRunBase>(userId: st
             [input.run.id, userId, JSON.stringify(input.run), new Date(now), new Date(now + input.ttlMs), conversation.id, input.run.surface, input.run.projectId || null, input.run.clientRequestId],
         );
         const eventResult = await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, 'run.created', NULL, $2) RETURNING *", [input.run.id, new Date(now)]);
+        await client.query(`SELECT pg_notify('${CREATIVE_RUN_NOTIFY_CHANNEL}', $1)`, [input.run.id]);
         const nextTitle = conversation.title === "新对话" ? input.title : conversation.title;
         const conversationResult = await client.query("UPDATE creative_conversations SET title = $2, updated_at = $3, last_message_at = $3 WHERE id = $1 RETURNING *", [conversation.id, nextTitle, new Date(now)]);
         return { run: input.run, conversation: mapConversation(conversationResult.rows[0]), userMessage, assistantMessage, event: mapEvent(eventResult.rows[0]), created: true };
@@ -104,8 +107,10 @@ export async function mutatePostgresRun<T extends AgentRunBase>(id: string, ttlM
         const now = Date.now();
         const run = { ...mutation.run, id: current.id, userId: current.userId, createdAt: current.createdAt, updatedAt: now };
         await client.query("UPDATE generation_tasks SET status = $2, payload = $3::jsonb, updated_at = $4, expires_at = $5 WHERE id = $1", [id, normalizeTaskStatus(run.status), JSON.stringify(run), new Date(now), new Date(now + ttlMs)]);
-        if (mutation.event)
+        if (mutation.event) {
             await client.query("INSERT INTO creative_run_events (run_id, type, data, created_at) VALUES ($1, $2, $3::jsonb, $4)", [id, mutation.event.type, mutation.event.data === undefined ? null : JSON.stringify(mutation.event.data), new Date(now)]);
+            await client.query(`SELECT pg_notify('${CREATIVE_RUN_NOTIFY_CHANNEL}', $1)`, [id]);
+        }
         if (mutation.assistant) await updatePostgresAssistant(client, run.assistantMessageId, mutation.assistant, now);
         return run;
     });

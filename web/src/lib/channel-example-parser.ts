@@ -20,6 +20,9 @@ type EndpointMatch = EndpointSpec & {
 };
 
 const ENDPOINT_SPECS: EndpointSpec[] = [
+    { marker: "/v1/seedance-special/videos", kind: "video" },
+    { marker: "/sdapi/v1/txt2img", kind: "image" },
+    { marker: "/sdapi/v1/img2img", kind: "image-edit" },
     { marker: "/contents/generations/tasks", kind: "video" },
     { marker: "/videos/videos", kind: "video" },
     { marker: "/videos/generations", kind: "video" },
@@ -102,10 +105,13 @@ export function parseChannelExampleConfig(example: string, channel: SystemModelC
     };
 
     if (kind === "video" && endpoint?.createPath) {
-        advancedPatch.createPath = endpoint.createPath;
+        if (referenceFields.some((field) => IMAGE_REFERENCE_KEYS.has(field))) advancedPatch.imageToVideoPath = endpoint.createPath;
+        else advancedPatch.createPath = endpoint.createPath;
         advancedPatch.queryPath = videoQueryPath(endpoint.createPath);
         advancedPatch.durationRange = inferDurationRange(requestBody, endpoint.createPath);
     }
+    if (kind === "image" && endpoint?.createPath) advancedPatch.createPath = endpoint.createPath;
+    if (kind === "image-edit" && endpoint?.createPath) advancedPatch.editPath = endpoint.createPath;
 
     const nextAdvanced: SystemChannelAdvancedConfig = { ...currentAdvanced, ...advancedPatch };
     const patch: Partial<SystemModelChannel> = { advancedConfig: nextAdvanced };
@@ -127,7 +133,10 @@ export function parseChannelExampleConfig(example: string, channel: SystemModelC
 
 function pickRequestUrl(text: string) {
     const urls = extractUrls(text);
-    return urls.find((url) => matchEndpointUrl(url)) || "";
+    const known = urls.find((url) => matchKnownEndpointUrl(url));
+    if (known) return known;
+    const explicit = text.match(/(?:--url\s+|\b(?:POST|PUT|PATCH)\s+)(?:["']?)(https?:\/\/[^\s"'\\<>]+)/i)?.[1];
+    return explicit?.replace(/[),.;]+$/g, "") || "";
 }
 
 function extractUrls(text: string) {
@@ -153,10 +162,24 @@ function matchEndpointUrl(value: string): EndpointMatch | null {
             const baseUrl = `${url.origin}${basePath}`;
             return { ...spec, createPath: spec.marker, requestUrl: value, baseUrl };
         }
+        if (url.protocol === "http:" || url.protocol === "https:") {
+            return {
+                marker: url.pathname,
+                kind: "unknown",
+                createPath: `${url.pathname}${url.search}`,
+                requestUrl: value,
+                baseUrl: url.origin,
+            };
+        }
     } catch {
         return null;
     }
     return null;
+}
+
+function matchKnownEndpointUrl(value: string) {
+    const endpoint = matchEndpointUrl(value);
+    return endpoint && endpoint.kind !== "unknown" ? endpoint : null;
 }
 
 function matchEndpointText(text: string): EndpointMatch | null {
@@ -251,9 +274,13 @@ function findModel(requestBody: unknown, blocks: unknown[], raw: string) {
 
 function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody: unknown, current: SystemChannelProtocol): SystemChannelProtocol {
     const source = `${raw}\n${endpoint?.requestUrl || ""}`.toLowerCase();
+    if (source.includes("/v1/seedance-special/videos") || source.includes("sd_2.0_special_") || source.includes("sd_2.0_fast_special_")) return "seedance-special";
+    if (source.includes("/sdapi/v1/txt2img") || source.includes("/sdapi/v1/img2img") || source.includes("alwayson_scripts")) return "custom";
     if (source.includes("sub2api") || source.includes("code2alita.com")) return "sub2api";
+    if (/\bnew\s*api\b|new-api|one-api/i.test(source)) return "newapi";
     if (isQingyanProvider({ baseUrl: endpoint?.requestUrl || "" }) || source.includes("qingyanzhiying")) return "qingyan";
     if (source.includes("globalaiopc.com") || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
+    if (source.includes("ark.cn-beijing.volces.com/api/v3")) return "volcengine-video";
     if (source.includes("seedance") || source.includes("/contents/generations/tasks") || source.includes("/api/plan/v3")) return "seedance";
     if (isRecord(requestBody) && hasSub2ApiImageReferenceShape(requestBody)) return "sub2api";
     if (/multipart\/form-data|\s-F\s|--form\b/i.test(raw)) return "openai";
@@ -345,6 +372,7 @@ function inferReferenceRule(raw: string, kind: ExampleKind, protocol: SystemChan
 }
 
 function videoQueryPath(createPath: string) {
+    if (createPath === "/v1/seedance-special/videos") return "/v1/result/:task_id";
     if (createPath === "/videos/videos") return "/result/:task_id";
     if (createPath === "/contents/generations/tasks") return "/contents/generations/tasks/:task_id";
     if (createPath === "/videos") return "/videos/:task_id";
@@ -352,6 +380,7 @@ function videoQueryPath(createPath: string) {
 }
 
 function inferDurationRange(requestBody: unknown, createPath: string) {
+    if (createPath === "/v1/seedance-special/videos") return "4-15 秒";
     if (createPath === "/videos/videos") return "4-15 秒";
     if (createPath === "/contents/generations/tasks") return "按模型限制，常用 5/10 秒";
     const value = isRecord(requestBody) ? stringValue(requestBody.duration || requestBody.seconds) : "";
@@ -407,9 +436,13 @@ function formatPath(path: Array<string | number>) {
 
 function protocolLabel(protocol: SystemChannelProtocol) {
     if (protocol === "sub2api") return "sub2api";
+    if (protocol === "newapi") return "New API";
     if (protocol === "qingyan") return "青衍智影";
     if (protocol === "globalaiopc") return "GlobalAiOpc";
     if (protocol === "seedance") return "Seedance";
+    if (protocol === "volcengine-video") return "火山方舟视频";
+    if (protocol === "seedance-special") return "Seedance 2.0 特价版";
+    if (protocol === "custom") return "自定义协议";
     if (protocol === "compatible") return "通用兼容";
     if (protocol === "openai") return "OpenAI";
     return "自动";

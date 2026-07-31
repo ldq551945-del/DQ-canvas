@@ -21,6 +21,7 @@ import {
     type CreativeAgentRun,
 } from "@/services/api/creative";
 import { getMaterializedCreativeProject, materializeCreativeProjectHandoff, type MaterializedCreativeProject } from "@/services/creative-project-handoff";
+import { agentRequirementAcknowledgement } from "@/lib/agent-requirement-acknowledgement";
 
 type PendingCreateSubmission = {
     clientRequestId: string;
@@ -365,7 +366,17 @@ export function useCreateAgent() {
             setMessages((current) => [
                 ...current,
                 { id: temporaryUserId, conversationId: optimisticConversationId, sequence, role: "user", status: "completed", content, metadata: { assetIds }, createdAt: now, updatedAt: now },
-                { id: temporaryAssistantId, conversationId: optimisticConversationId, sequence: sequence + 1, role: "assistant", status: "running", content: "正在理解你的需求", metadata: {}, createdAt: now, updatedAt: now },
+                {
+                    id: temporaryAssistantId,
+                    conversationId: optimisticConversationId,
+                    sequence: sequence + 1,
+                    role: "assistant",
+                    status: "running",
+                    content: agentRequirementAcknowledgement(content, "chat", assetIds.length > 0),
+                    metadata: {},
+                    createdAt: now,
+                    updatedAt: now,
+                },
             ]);
             setSelectedAssetIds((current) => current.filter((id) => !assetIds.includes(id)));
             return executeSubmission(snapshot);
@@ -422,6 +433,23 @@ export function useCreateAgent() {
         [messages, updateAssistant, watchRun],
     );
 
+    const retryRun = useCallback(
+        async (runId: string) => {
+            const result = await controlCreativeAgentRun(runId, "retry");
+            setRunDetails((current) => ({ ...current, [runId]: result.run }));
+            setActiveRunId(runId);
+            setActiveRunStatus(result.run.status);
+            const assistantMessage = messages.find((item) => item.runId === runId && item.role === "assistant");
+            if (assistantMessage) {
+                updateAssistant(assistantMessage.id, "正在重新分析并执行这次请求…", "running");
+                setSending(true);
+                submittingRef.current = true;
+                watchRun(result.run, assistantMessage.id, conversationGenerationRef.current);
+            }
+        },
+        [messages, updateAssistant, watchRun],
+    );
+
     const renameConversation = useCallback(async (id: string, title: string) => {
         const updated = await updateCreativeConversation(id, { title });
         setConversations((current) => current.map((item) => (item.id === id ? updated : item)).sort((a, b) => b.updatedAt - a.updatedAt));
@@ -459,6 +487,7 @@ export function useCreateAgent() {
         cancel,
         control,
         retryTask,
+        retryRun,
         retrySubmission,
         openConversation,
         newConversation,

@@ -58,12 +58,13 @@ describe("Canvas Agent 事件流", () => {
         vi.stubGlobal("EventSource", FakeEventSource);
         const plans: unknown[] = [];
         const paused: boolean[] = [];
+        const ops: unknown[] = [];
         const promise = watchCanvasAgentRun("run", {
             onPlan: (ops) => plans.push(ops),
             onAssistant: () => undefined,
             onStage: () => undefined,
             onPaused: (value) => paused.push(value),
-            onOps: () => undefined,
+            onOps: (value) => ops.push(...value),
         });
         const plan = { data: { ops: [{ type: "add_node", id: "brief-run" }] } };
         FakeEventSource.instance.emit("canvas.ops", plan);
@@ -71,11 +72,12 @@ describe("Canvas Agent 事件流", () => {
         FakeEventSource.instance.emit("run.snapshot", { status: "paused" });
         FakeEventSource.instance.emit("run.snapshot", { status: "paused" });
         FakeEventSource.instance.emit("run.snapshot", { status: "running" });
-        FakeEventSource.instance.emit("run.cancelled", {});
+        FakeEventSource.instance.emit("run.cancelled", { data: { ops: [{ type: "update_node", id: "output-run-0-0", metadata: { status: "cancelled" } }] } });
         await promise;
 
         expect(plans).toHaveLength(1);
         expect(paused).toEqual([true, false]);
+        expect(ops).toEqual([{ type: "update_node", id: "output-run-0-0", metadata: { status: "cancelled" } }]);
     });
 
     it("keeps failed task identity and applies retry repair operations", async () => {
@@ -89,13 +91,71 @@ describe("Canvas Agent 事件流", () => {
             onPaused: () => undefined,
             onOps: (value) => ops.push(...value),
         });
-        FakeEventSource.instance.emit("task.retry.requested", { data: { ops: [{ type: "connect_nodes", fromNodeId: "reference", toNodeId: "task-run-0" }] } });
-        FakeEventSource.instance.emit("task.failed", { data: { taskId: "task", title: "编辑图片", error: "生成渠道暂时无法连接" } });
+        FakeEventSource.instance.emit("task.retry.requested", { data: { ops: [{ type: "update_node", id: "output-run-0-0", metadata: { status: "loading" } }] } });
+        FakeEventSource.instance.emit("task.running", { data: { title: "编辑图片", ops: [{ type: "update_node", id: "output-run-0-0", metadata: { status: "loading" } }] } });
+        FakeEventSource.instance.emit("task.failed", { data: { taskId: "task", title: "编辑图片", error: "生成渠道暂时无法连接", ops: [{ type: "update_node", id: "output-run-0-0", metadata: { status: "error" } }] } });
         FakeEventSource.instance.emit("run.failed", { data: { message: "生成失败" } });
         await promise;
 
-        expect(ops).toEqual([{ type: "connect_nodes", fromNodeId: "reference", toNodeId: "task-run-0" }]);
+        expect(ops).toEqual([
+            { type: "update_node", id: "output-run-0-0", metadata: { status: "loading" } },
+            { type: "update_node", id: "output-run-0-0", metadata: { status: "loading" } },
+            { type: "update_node", id: "output-run-0-0", metadata: { status: "error" } },
+        ]);
         expect(messages).toEqual([{ text: "「编辑图片」执行失败：生成渠道暂时无法连接", detail: { taskType: undefined, nodeIds: [], taskId: "task", title: "编辑图片", runId: "run" } }]);
+    });
+
+    it("applies each child result immediately and keeps successful siblings visible", async () => {
+        vi.stubGlobal("EventSource", FakeEventSource);
+        const messages: Array<{ text: string; detail: unknown }> = [];
+        const stages: CanvasAgentRunStage[] = [];
+        const ops: unknown[] = [];
+        const promise = watchCanvasAgentRun("run", {
+            onPlan: () => undefined,
+            onAssistant: (text, detail) => messages.push({ text, detail }),
+            onStage: (stage) => stages.push(stage),
+            onPaused: () => undefined,
+            onOps: (value) => ops.push(...value),
+        });
+
+        FakeEventSource.instance.emit("task.child.completed", {
+            data: {
+                title: "角色图",
+                type: "image",
+                completedCount: 1,
+                failedCount: 0,
+                totalCount: 2,
+                outputNodeIds: ["output-run-0-0"],
+                ops: [{ type: "update_node", id: "output-run-0-0", metadata: { status: "success" } }],
+            },
+        });
+        FakeEventSource.instance.emit("task.child.failed", {
+            data: {
+                title: "角色图",
+                type: "image",
+                completedCount: 1,
+                failedCount: 1,
+                totalCount: 2,
+                outputNodeIds: ["output-run-0-1"],
+                ops: [{ type: "update_node", id: "output-run-0-1", metadata: { status: "error" } }],
+            },
+        });
+        FakeEventSource.instance.emit("run.completed", { data: { reply: "可用结果已经返回" } });
+        await promise;
+
+        expect(ops).toEqual([
+            { type: "update_node", id: "output-run-0-0", metadata: { status: "success" } },
+            { type: "update_node", id: "output-run-0-1", metadata: { status: "error" } },
+        ]);
+        expect(stages).toEqual([
+            { key: "executing", text: "「角色图」已完成 1/2" },
+            { key: "executing", text: "「角色图」已完成 1/2，失败 1" },
+        ]);
+        expect(messages).toEqual([
+            { text: "「角色图」已完成 1/2", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
+            { text: "「角色图」已完成 1/2，失败 1", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
+            { text: "可用结果已经返回", detail: { nodeIds: ["output-run-0-0"], taskType: "image" } },
+        ]);
     });
 
     it("exposes planning failures as retryable run failures", async () => {

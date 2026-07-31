@@ -2,16 +2,18 @@ import { createHash } from "node:crypto";
 
 export const SYSTEM_AI_LOGICAL_MODEL_HEADER = "x-vozeb-pro-logical-model";
 export const SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER = "x-vozeb-pro-points-idempotency-key";
+export const SYSTEM_AI_UPSTREAM_MODEL_HEADER = "x-vozeb-pro-upstream-model";
 
 export type SystemAiBilling = {
     pointsCost?: number;
     pointsRecordId?: string;
 };
 
-export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: string) {
+export function systemAiBillingHeaders(logicalModel: string, idempotencyKey?: string, upstreamModel?: string) {
     return {
         ...(logicalModel.trim() ? { [SYSTEM_AI_LOGICAL_MODEL_HEADER]: logicalModel.trim() } : {}),
         ...(idempotencyKey?.trim() ? { [SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER]: idempotencyKey.trim() } : {}),
+        ...(upstreamModel?.trim() ? { [SYSTEM_AI_UPSTREAM_MODEL_HEADER]: upstreamModel.trim() } : {}),
     };
 }
 

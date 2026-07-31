@@ -1,8 +1,8 @@
 "use client";
 
-import { Copy, Download, FileAudio, Film, PencilLine, Search, Trash2, Upload } from "lucide-react";
+import { FileAudio, FileDown, FileUp, Film, Plus, Search, Upload } from "lucide-react";
 import { useRef, useState, type DragEvent as ReactDragEvent } from "react";
-import { App, Button, Card, Drawer, Form, Image, Input, Modal, Pagination, Select, Space, Spin, Tag, Typography } from "antd";
+import { App, Button, Form, Input, Modal, Pagination, Segmented, Select, Space, Spin, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
 import { useRouter } from "next/navigation";
 
@@ -41,7 +41,7 @@ const kindOptions = [
     { label: "音频", value: "audio" },
 ];
 
-import { AssetCard, AssetDrawer } from "./asset-elements";
+import { AssetCard, AssetPreviewModal } from "./asset-elements";
 import { useAssetPage } from "./use-asset-page";
 
 export default function AssetsPage() {
@@ -258,125 +258,103 @@ export default function AssetsPage() {
     };
 
     return (
-        <div className="flex h-full flex-col overflow-hidden bg-background text-stone-900 dark:text-stone-100">
-            <main className="min-h-0 flex-1 overflow-y-auto px-2 py-2 sm:px-6 sm:py-8">
-                <div className="pb-2.5 sm:pb-8">
-                    <div className="mx-auto max-w-7xl">
-                        <h1 className="text-xl font-semibold text-stone-950 sm:text-2xl dark:text-stone-100">我的素材</h1>
-                        <p className="mt-1 text-xs leading-5 text-stone-500 sm:mt-3 sm:text-sm dark:text-stone-400">收藏常用文本、图片、视频和音频，按类型、标题和标签快速查找。</p>
-                    </div>
-
-                    <div className="mx-auto mt-2 w-full max-w-7xl sm:mt-6">
-                        <Input.Search
-                            className="w-full"
-                            size="middle"
-                            allowClear
-                            prefix={<Search className="size-4 text-stone-400" />}
-                            value={keyword}
-                            placeholder="搜索标题、内容、标签或来源"
-                            onChange={(event) => {
-                                setPage(1);
-                                setKeyword(event.target.value);
-                            }}
-                            onSearch={(value) => {
-                                setPage(1);
-                                setKeyword(value);
-                            }}
-                        />
-                    </div>
-
-                    <div className="mx-auto mt-2 grid max-w-6xl gap-2 text-left sm:mt-6 sm:gap-3">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="grid gap-2 sm:grid-cols-[56px_minmax(0,1fr)] sm:items-center">
-                                <div className="text-xs font-medium text-stone-500 dark:text-stone-400">类型</div>
-                                <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                                    {kindOptions.map((option) => (
-                                        <Tag.CheckableTag
-                                            key={option.value}
-                                            checked={kindFilter === option.value}
-                                            className={cn("prompt-filter-tag", kindFilter === option.value && "is-active")}
-                                            onChange={() => {
-                                                setPage(1);
-                                                setKindFilter(option.value as AssetKind | "all");
-                                            }}
-                                        >
-                                            {option.label}
-                                        </Tag.CheckableTag>
-                                    ))}
-                                </div>
+        <div className="h-full min-h-0 overflow-hidden bg-background text-foreground">
+            <main className="h-full min-h-0 overflow-y-auto px-3 py-3 sm:px-6 sm:py-6">
+                <div className="mx-auto max-w-[1560px]">
+                    <header className="border-b border-border pb-3 sm:pb-4">
+                        <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                                <h1 className="text-lg font-semibold sm:text-xl">我的素材</h1>
+                                <p className="mt-0.5 text-xs text-muted-foreground">{total ? `${total} 项素材` : "集中管理创作中复用的内容"}</p>
                             </div>
-                            <div className="flex flex-wrap gap-4">
-                                <button
-                                    type="button"
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline dark:text-stone-300"
-                                    onClick={() => void exportAllAssets()}
-                                >
-                                    导出素材
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!ready || importing}
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-stone-300"
-                                    onClick={() => assetInputRef.current?.click()}
-                                >
-                                    {importing ? "正在导入" : "导入素材"}
-                                </button>
-                                <button
-                                    type="button"
-                                    disabled={!ready}
-                                    className="cursor-pointer text-sm font-medium text-stone-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:underline disabled:cursor-not-allowed disabled:opacity-40 dark:text-stone-300"
-                                    onClick={openCreate}
-                                >
-                                    新增素材
-                                </button>
+                            <div className="flex shrink-0 items-center gap-1">
+                                <Tooltip title="导出素材">
+                                    <Button type="text" shape="circle" icon={<FileDown className="size-4" />} aria-label="导出素材" onClick={() => void exportAllAssets()} />
+                                </Tooltip>
+                                <Tooltip title={importing ? "正在导入" : "导入素材"}>
+                                    <Button type="text" shape="circle" icon={<FileUp className="size-4" />} aria-label="导入素材" disabled={!ready || importing} loading={importing} onClick={() => assetInputRef.current?.click()} />
+                                </Tooltip>
+                                <Tooltip title="新增素材">
+                                    <Button type="primary" shape="circle" icon={<Plus className="size-4" />} aria-label="新增素材" disabled={!ready} onClick={openCreate} />
+                                </Tooltip>
                             </div>
                         </div>
-                    </div>
-                </div>
 
-                <div className="mx-auto flex max-w-7xl flex-col gap-1.5 sm:gap-5">
-                    <div className={cn("grid gap-1.5 transition-opacity sm:grid-cols-2 sm:gap-5 lg:grid-cols-3 xl:grid-cols-4", loading && assets.length && "opacity-60")} aria-busy={loading}>
-                        {assets.map((asset) => (
-                            <AssetCard
-                                key={asset.id}
-                                asset={asset}
-                                onOpen={() => setPreviewAsset(asset)}
-                                onEdit={() => openEdit(asset)}
-                                onCopy={copyAssetText}
-                                onDownload={downloadImage}
-                                onDelete={() => setDeletingAsset(asset)}
-                                onPublish={asset.kind === "text" ? undefined : () => router.push(`/works?sourceType=media&sourceId=${encodeURIComponent(asset.id)}`)}
+                        <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(260px,520px)_auto] lg:items-center lg:justify-between">
+                            <Input.Search
+                                className="w-full"
+                                size="middle"
+                                allowClear
+                                prefix={<Search className="size-4 text-stone-400" />}
+                                value={keyword}
+                                placeholder="搜索标题、内容、标签或来源"
+                                onChange={(event) => {
+                                    setPage(1);
+                                    setKeyword(event.target.value);
+                                }}
+                                onSearch={(value) => {
+                                    setPage(1);
+                                    setKeyword(value);
+                                }}
                             />
-                        ))}
-                    </div>
+                            <div className="min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                                <Segmented
+                                    block
+                                    value={kindFilter}
+                                    options={kindOptions}
+                                    onChange={(value) => {
+                                        setPage(1);
+                                        setKindFilter(value as AssetKind | "all");
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    </header>
 
-                    {loading && !assets.length ? (
-                        <section className="flex min-h-32 items-center justify-center sm:min-h-56">
-                            <Spin description="正在加载素材" />
-                        </section>
-                    ) : error ? (
-                        <section className="flex min-h-32 flex-col items-center justify-center gap-3 border-y border-border px-4 text-center sm:min-h-56">
-                            <p className="text-sm text-stone-500 dark:text-stone-400">{error}</p>
-                            <Button size="small" onClick={reload}>
-                                重新加载
-                            </Button>
-                        </section>
-                    ) : !assets.length ? (
-                        <CompactEmptyState title="没有找到素材" description="调整筛选条件，或新增一条常用素材。" />
-                    ) : null}
+                    <div className="flex flex-col gap-3 pt-3 sm:gap-5 sm:pt-5">
+                        <div className={cn("grid grid-cols-1 gap-3 transition-opacity sm:grid-cols-[repeat(auto-fill,minmax(240px,280px))] sm:justify-start", loading && assets.length && "opacity-60")} aria-busy={loading}>
+                            {assets.map((asset) => (
+                                <AssetCard
+                                    key={asset.id}
+                                    asset={asset}
+                                    onOpen={() => setPreviewAsset(asset)}
+                                    onEdit={() => openEdit(asset)}
+                                    onCopy={copyAssetText}
+                                    onDownload={downloadImage}
+                                    onDelete={() => setDeletingAsset(asset)}
+                                    onPublish={asset.kind === "text" ? undefined : () => router.push(`/works?sourceType=media&sourceId=${encodeURIComponent(asset.id)}`)}
+                                />
+                            ))}
+                        </div>
 
-                    <div className="flex justify-center">
-                        <Pagination
-                            current={page}
-                            pageSize={pageSize}
-                            total={total}
-                            showSizeChanger
-                            pageSizeOptions={[10, 20, 50, 100]}
-                            onChange={(nextPage, nextPageSize) => {
-                                setPage(nextPage);
-                                setPageSize(nextPageSize);
-                            }}
-                        />
+                        {loading && !assets.length ? (
+                            <section className="flex min-h-32 items-center justify-center sm:min-h-56">
+                                <Spin description="正在加载素材" />
+                            </section>
+                        ) : error ? (
+                            <section className="flex min-h-32 flex-col items-center justify-center gap-3 border-y border-border px-4 text-center sm:min-h-56">
+                                <p className="text-sm text-stone-500 dark:text-stone-400">{error}</p>
+                                <Button size="small" onClick={reload}>
+                                    重新加载
+                                </Button>
+                            </section>
+                        ) : !assets.length ? (
+                            <CompactEmptyState title="没有找到素材" description="调整筛选条件，或新增一条常用素材。" />
+                        ) : null}
+
+                        <div className="flex justify-center overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                            <Pagination
+                                current={page}
+                                pageSize={pageSize}
+                                total={total}
+                                showSizeChanger
+                                pageSizeOptions={[10, 20, 50, 100]}
+                                onChange={(nextPage, nextPageSize) => {
+                                    setPage(nextPage);
+                                    setPageSize(nextPageSize);
+                                }}
+                            />
+                        </div>
                     </div>
                 </div>
             </main>
@@ -401,7 +379,7 @@ export default function AssetsPage() {
                         <Form.Item name="title" label="标题" rules={[{ required: true, message: "请输入标题" }]}>
                             <Input size="large" placeholder="给素材起一个容易检索的名字" />
                         </Form.Item>
-                        <Form.Item name="coverUrl" label="封面 URL">
+                        <Form.Item label="封面 URL">
                             <div
                                 className={cn("rounded-md transition", isCoverDragActive && "ring-2 ring-cyan-300 ring-offset-2 ring-offset-white dark:ring-cyan-500 dark:ring-offset-stone-950")}
                                 onDragEnter={handleCoverDragOver}
@@ -410,7 +388,9 @@ export default function AssetsPage() {
                                 onDrop={handleCoverDrop}
                             >
                                 <Space.Compact className="w-full">
-                                    <Input placeholder="可粘贴图片 URL，也可以上传本地封面" />
+                                    <Form.Item name="coverUrl" noStyle>
+                                        <Input placeholder="可粘贴图片 URL，也可以上传本地封面" />
+                                    </Form.Item>
                                     <Button icon={<Upload className="size-3.5" />} onClick={() => coverInputRef.current?.click()}>
                                         上传
                                     </Button>
@@ -518,7 +498,7 @@ export default function AssetsPage() {
                 />
             </Modal>
 
-            <AssetDrawer asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
+            <AssetPreviewModal asset={previewAsset} onClose={() => setPreviewAsset(null)} onCopy={copyAssetText} onDownload={downloadImage} />
 
             <input ref={assetInputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importAssetZip(event.target.files?.[0])} />
 

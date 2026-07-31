@@ -17,6 +17,7 @@
 <p align="center">
   <a href="https://www.vozeb.com">演示站</a> ·
   <a href="docs/index.md">文档索引</a> ·
+  <a href="docs/content/docs/overview/configuration.mdx">0.0.3 发布说明</a> ·
   <a href="docs/content/docs/overview/project-structure.mdx">项目结构</a> ·
   <a href="docs/content/docs/overview/page-gallery.mdx">页面图册</a> ·
   <a href="https://linux.do">LINUX DO</a> ·
@@ -397,6 +398,8 @@ VOZEB PRO 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、P
 
 ## 快速开始
 
+> 安装过 0.0.2 的用户必须先删除旧数据库或数据库卷，再重新安装 0.0.3，并通过 `/install` 重新初始化数据库；不支持沿用旧数据库或原地升级。
+
 ### Docker Compose
 
 环境要求：可运行 Docker Compose 的 Linux 服务器、HTTPS 域名，以及按业务需要准备的模型渠道。
@@ -469,8 +472,8 @@ pnpm run dev
 ## 首次配置顺序
 
 1. 在 `/install` 完成数据库初始化和首个管理员创建。
-2. 在后台“模型渠道”配置 Base URL、API Key、协议和模型目录。
-3. 检测文本、图片、视频和音频能力，创建逻辑模型并设置默认值。
+2. 在后台“模型渠道”按六步向导选择协议、配置连接、获取模型并验证能力；无鉴权协议无需 API Key，未知上游可生成自定义协议草稿。
+3. 把真实上游模型绑定为稳定逻辑模型，设置默认值，并在验证记录中复核结果。
 4. 配置套餐、积分规则和可选支付渠道。
 5. 配置 SMTP、注册策略、本地媒体或 S3 兼容对象存储。
 6. 在“初始化配置”检查上线项，再验证真实生成、退款和备份恢复。

@@ -31,8 +31,10 @@ import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
+import { channelHealthKinds, createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
+import { normalizeModelId } from "@/lib/model-capability";
+import { channelConnectionReady, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -432,8 +434,8 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const testChannelHealth = async (channel: SystemModelChannel, kind: ChannelHealthKind, options?: { quiet?: boolean; loadingKey?: string; keepLoading?: boolean }) => {
-        if (!channel.baseUrl.trim() || (!channel.apiKey.trim() && !channel.hasApiKey)) {
-            message.error("请先填写该渠道的 Base URL 和 API Key");
+        if (!channelConnectionReady(channel)) {
+            message.error("请先填写该渠道需要的连接信息");
             return null;
         }
         const model = selectChannelHealthModel(channel, settings.defaultModels, kind);
@@ -456,9 +458,24 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                     model,
                     kind,
                     protocol: channel.advancedConfig?.protocol,
+                    authMode: channel.advancedConfig?.authMode,
+                    authHeader: channel.advancedConfig?.authHeader,
+                    authPrefix: channel.advancedConfig?.authPrefix,
                     globalAiOpcPreset: channel.advancedConfig?.globalAiOpcPreset,
                     globalAiOpcPresets: channel.advancedConfig?.globalAiOpcPresets,
                     createPath: channel.advancedConfig?.createPath,
+                    editPath: channel.advancedConfig?.editPath,
+                    imageToVideoPath: channel.advancedConfig?.imageToVideoPath,
+                    queryPath: channel.advancedConfig?.queryPath,
+                    requestTemplate: channel.advancedConfig?.requestTemplate,
+                    resultField: channel.advancedConfig?.resultField,
+                    statusField: channel.advancedConfig?.statusField,
+                    durationRange: channel.advancedConfig?.durationRange,
+                    referenceRule: channel.advancedConfig?.referenceRule,
+                    supportsReferenceImage: channel.advancedConfig?.supportsReferenceImage,
+                    supportsReferenceVideo: channel.advancedConfig?.supportsReferenceVideo,
+                    supportsReferenceAudio: channel.advancedConfig?.supportsReferenceAudio,
+                    modelConfig: channel.advancedConfig?.modelConfigs?.[normalizeModelId(model)] || channel.advancedConfig?.operationConfigs?.[kind],
                 }),
             });
             const payload = (await response.json()) as { result?: ChannelHealthResult; error?: string };
@@ -483,11 +500,10 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     };
 
     const testAllChannelHealth = async (channel: SystemModelChannel) => {
-        if (!channel.baseUrl.trim() || (!channel.apiKey.trim() && !channel.hasApiKey)) {
-            message.error("请先填写该渠道的 Base URL 和 API Key");
+        if (!channelConnectionReady(channel)) {
+            message.error("请先填写该渠道需要的连接信息");
             return;
         }
-        const kinds: ChannelHealthKind[] = ["text", "image", "video", "audio"];
         const loadingKey = `${channel.id}:all`;
         setTestingChannelKey(loadingKey);
         const results: ChannelHealthResult[] = [];
@@ -507,6 +523,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             detectedModels = uniqueList([...detectedModels, ...suggestedChannelModels(channel)]);
             channelForTest = { ...channelForTest, models: detectedModels };
             if (detectedModels.length) updateChannel(channel.id, adminModelsChannelPatch(channelForTest, { models: detectedModels, globalAiOpcPresets: channelForTest.advancedConfig?.globalAiOpcPresets }));
+            const kinds = channelHealthKinds(channelForTest);
+            if (!kinds.length) {
+                message.warning("没有识别到该协议可检测的真实模型");
+                return;
+            }
             for (const kind of kinds) {
                 const result = await testChannelHealth(channelForTest, kind, { quiet: true, loadingKey, keepLoading: true });
                 if (result) results.push(result);
@@ -516,8 +537,11 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                 models: uniqueList([...detectedModels, ...results.map((result) => result.model).filter(Boolean)]),
                 advancedConfig,
             });
-            const okKinds = results.filter((result) => result.ok).map((result) => healthKindLabel(result.kind));
-            const failedKinds = results.filter((result) => !result.ok).map((result) => healthKindLabel(result.kind));
+            const okKinds: string[] = results.filter((result) => result.ok).map((result) => healthKindLabel(result.kind));
+            const failedKinds: string[] = results.filter((result) => !result.ok).map((result) => healthKindLabel(result.kind));
+            const imageReferenceTest = results.find((result) => result.kind === "image")?.referenceImageTest;
+            if (imageReferenceTest?.ok) okKinds.push("图生图");
+            else if (imageReferenceTest && !imageReferenceTest.ok) failedKinds.push("图生图");
             const summary = `可用：${okKinds.join("、") || "无"}${failedKinds.length ? `；需检查：${failedKinds.join("、")}` : ""}`;
             if (failedKinds.length) message.warning(`${channel.name || "渠道"} 智能检测完成，${summary}`);
             else message.success(`${channel.name || "渠道"} 智能检测完成，${summary}`);
@@ -562,7 +586,7 @@ function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModel
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
     const models = uniqueList([...channel.models, ...result.models]);
     const modelCapabilities = { ...(advanced.modelCapabilities || {}), ...(result.modelCapabilities || {}) };
-    const modelConfigs = mergeAdminModelConfigs(advanced.modelConfigs, result.modelConfigs);
+    const modelConfigs = mergeAdminModelConfigs(advanced.modelConfigs, result.modelConfigs, advanced.protocol);
     if (!result.globalAiOpcPresets?.length) {
         return {
             models,
@@ -601,10 +625,11 @@ function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModel
     };
 }
 
-function mergeAdminModelConfigs(current: SystemChannelAdvancedConfig["modelConfigs"], discovered: SystemChannelAdvancedConfig["modelConfigs"]) {
+function mergeAdminModelConfigs(current: SystemChannelAdvancedConfig["modelConfigs"], discovered: SystemChannelAdvancedConfig["modelConfigs"], channelProtocol: SystemChannelAdvancedConfig["protocol"]) {
     const merged = { ...(current || {}), ...(discovered || {}) };
     Object.entries(current || {}).forEach(([model, config]) => {
-        if (config.source === "manual") merged[model] = config;
+        const protocol = config.protocol || channelProtocol;
+        if (config.source === "manual" && (protocol !== channelProtocol || !channelProtocolDefinition(protocol).strict || !merged[model])) merged[model] = config;
     });
-    return merged;
+    return Object.fromEntries(Object.entries(merged).map(([model, config]) => [model, normalizeStrictProtocolModelConfig(config, channelProtocol)]));
 }

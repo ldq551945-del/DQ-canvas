@@ -83,6 +83,7 @@ export function ResultImageCard({
     image,
     index,
     large,
+    fluid,
     missing,
     selected,
     onSelectedChange,
@@ -94,6 +95,7 @@ export function ResultImageCard({
     image: GeneratedImage;
     index: number;
     large?: boolean;
+    fluid?: boolean;
     missing?: boolean;
     selected?: boolean;
     onSelectedChange?: (checked: boolean) => void;
@@ -103,18 +105,18 @@ export function ResultImageCard({
     onSaveAsset: (image: GeneratedImage, index: number) => void;
 }) {
     const hasImage = Boolean(image.dataUrl) && !missing;
-    const cardWidth = resultImageCardWidth(image.width, image.height, large);
+    const cardWidth = fluid ? undefined : resultImageCardWidth(image.width, image.height, large);
     return (
-        <div className="relative max-w-full overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800" style={{ width: cardWidth }}>
+        <div data-testid="image-result-card" className={cn("relative max-w-full overflow-hidden rounded-lg border border-border/80 bg-card shadow-sm shadow-black/[0.03] dark:shadow-black/20", fluid && "w-full")} style={{ width: cardWidth }}>
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
-            <div className="flex w-full items-center justify-center bg-stone-50 dark:bg-stone-950" style={{ aspectRatio: `${Math.max(1, image.width)} / ${Math.max(1, image.height)}` }}>
+            <div className={cn("flex w-full items-center justify-center overflow-hidden bg-stone-50 dark:bg-stone-950", fluid && "aspect-square")} style={fluid ? undefined : { aspectRatio: `${Math.max(1, image.width)} / ${Math.max(1, image.height)}` }}>
                 {hasImage ? (
                     <Image
                         rootClassName="!h-full !w-full"
                         src={imagePreviewUrl(image.dataUrl, 960)}
                         alt={`生成结果 ${index + 1}`}
-                        className="!h-full !w-full object-contain"
-                        style={{ objectFit: "contain" }}
+                        className={cn("!h-full !w-full", fluid ? "object-cover" : "object-contain")}
+                        style={{ objectFit: fluid ? "cover" : "contain" }}
                         preview={{ src: imagePreviewUrl(image.dataUrl, 1920) }}
                         onError={onMissing}
                     />
@@ -125,12 +127,12 @@ export function ResultImageCard({
                     </div>
                 )}
             </div>
-            <div className="flex min-w-0 items-center justify-between gap-2 border-t border-stone-200 px-2.5 py-2 dark:border-stone-800">
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-stone-500 dark:text-stone-400">
+            <div className="flex min-w-0 items-center justify-between gap-2 border-t border-border/80 px-2.5 py-1.5">
+                <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap text-[11px] text-stone-500 dark:text-stone-400">
                     <span>
                         {image.width}x{image.height}
                     </span>
-                    <span>{formatBytes(image.bytes)}</span>
+                    {image.bytes ? <span className="hidden xl:inline">{formatBytes(image.bytes)}</span> : null}
                     <span>{formatDuration(image.durationMs)}</span>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
@@ -157,12 +159,12 @@ export function resultImageCardWidth(width: number, height: number, large = fals
 }
 
 export function PendingImageCard({ large }: { large?: boolean }) {
-    return <WorkbenchGenerationPlaceholder kind="image" className={large ? "h-[156px] sm:h-[240px]" : "h-[136px] sm:h-[220px]"} />;
+    return <WorkbenchGenerationPlaceholder kind="image" className={large ? "h-[156px] w-full max-w-[320px] sm:h-[240px]" : "h-[136px] w-full sm:h-[220px]"} />;
 }
 
 export function FailedImageCard({ error, large, selected, onSelectedChange, onRetry }: { error: string; large?: boolean; selected?: boolean; onSelectedChange?: (checked: boolean) => void; onRetry: () => void }) {
     return (
-        <div className="relative overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
+        <div className={cn("relative w-full overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20", large && "max-w-[320px]")}>
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
             <div className={`flex flex-col items-center justify-center gap-2 p-3 text-center sm:gap-3 sm:p-5 ${large ? "h-[156px] sm:h-[240px]" : "h-[136px] sm:h-[220px]"}`}>
                 <div className="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>

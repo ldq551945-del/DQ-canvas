@@ -493,11 +493,12 @@ export function normalizeStoredLog(log: Partial<StoredGenerationLog>): StoredGen
 export function normalizeGenerationLogRequestSnapshot(value: unknown): GenerationLogRequestSnapshot | undefined {
     const source = jsonObject(value);
     if (!source || Number(source.version) !== 1) return undefined;
+    const userPrompt = normalizeOptionalText(source.userPrompt, undefined, 4000);
     const parameters = normalizeSnapshotParameters(source.parameters);
     const references = Array.isArray(source.references) ? source.references.flatMap(normalizeSnapshotReference).slice(0, 32) : [];
     const slots = Array.isArray(source.slots) ? source.slots.flatMap(normalizeSnapshotSlot).slice(0, MAX_GENERATION_LOG_ASSETS) : [];
-    if (!Object.keys(parameters).length && !references.length && !slots.length) return undefined;
-    return { version: 1, parameters, references, slots };
+    if (!userPrompt && !Object.keys(parameters).length && !references.length && !slots.length) return undefined;
+    return { version: 1, ...(userPrompt ? { userPrompt } : {}), parameters, references, slots };
 }
 
 function normalizeSnapshotParameters(value: unknown): GenerationLogSnapshotParameters {

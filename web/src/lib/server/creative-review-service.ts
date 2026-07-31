@@ -3,6 +3,7 @@ import { normalizeCreativeReview, unavailableCreativeReview, type CreativeFounda
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveLogicalModel } from "@/lib/server/logical-model-router";
 import { fetchOptionalResponses } from "@/lib/server/responses-request";
+import { TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/server/model-request-policy";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 
@@ -80,6 +81,7 @@ async function callChat(origin: string, channelId: string, upstreamModel: string
         method: "POST",
         headers,
         cache: "no-store",
+        signal: AbortSignal.timeout(TEXT_MODEL_REQUEST_TIMEOUT_MS),
         body: JSON.stringify({
             model: upstreamModel,
             messages,

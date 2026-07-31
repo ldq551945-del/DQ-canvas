@@ -97,6 +97,8 @@ describe("BillingOrderRepository.getSummary", () => {
         expect(String(sql)).toContain("WITH scoped_orders AS MATERIALIZED");
         expect(String(sql)).toContain("scoped_payments AS MATERIALIZED");
         expect(String(sql)).toContain("order_row.status NOT IN ('paid', 'refunded')");
+        expect(String(sql).match(/FROM payment_transactions/g)).toHaveLength(1);
+        expect(String(sql).match(/FROM scoped_payments/g)).toHaveLength(4);
         expect(String(sql)).not.toMatch(/SELECT\s+\*/i);
         expect(params).toEqual(["2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z"]);
     });

@@ -45,7 +45,15 @@ export type ImageApiResponse = {
     code?: number;
     msg?: string;
 };
-export type ImageTaskResult = { dataUrl: string; remoteUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
+export type ImageTaskResult = {
+    dataUrl: string;
+    remoteUrl?: string;
+    width?: number;
+    height?: number;
+    bytes?: number;
+    mimeType?: string;
+    pending?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
+};
 export type ImageTaskRunResult = ImageTaskResult & { pointsRemaining?: number; pointsCost?: number; pointsRecordId?: string };
 
 export type GeminiPart = {
@@ -76,9 +84,6 @@ export const QUALITY_ALIASES: Record<string, string> = {
 export const DEFAULT_IMAGE_SHORT_SIDE = 1024;
 export const IMAGE_SIZE_STEP = 16;
 export const IMAGE_MIN_PIXELS = 655360;
-export const IMAGE_MAX_PIXELS = 8294400;
-export const IMAGE_MAX_EDGE = 3840;
-export const IMAGE_MAX_RATIO = 3;
 export const IMAGE_OUTPUT_FORMAT = "png";
 export const TASK_HEARTBEAT_MS = 30 * 1000;
 export const MODEL_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;

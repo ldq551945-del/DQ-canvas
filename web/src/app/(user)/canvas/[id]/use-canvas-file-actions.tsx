@@ -41,7 +41,7 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
     } = state;
     const { getCanvasCenter, setConnecting, deleteNodes, deleteConnection, copySelectedNodes, pasteCopiedNodes, undoCanvas, redoCanvas } = interactions;
 
-    const createImageFileNode = useCallback(async (file: File, position: Position) => {
+    const createImageFileNode = useCallback(async (file: File, position: Position, preserveSelection = false) => {
         const image = await uploadCanvasImage(file);
         const size = fitNodeSize(image.width, image.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -56,9 +56,10 @@ export function useCanvasFileActions({ state, interactions }: { state: CanvasPag
         };
 
         setNodes((prev) => [...prev, newNode]);
-        setSelectedNodeIds(new Set([id]));
+        setSelectedNodeIds((current) => (preserveSelection ? new Set([...current, id]) : new Set([id])));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
+        return id;
     }, []);
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {

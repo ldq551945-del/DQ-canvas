@@ -144,19 +144,19 @@ export class BillingOrderRepository {
                         WHERE order_row.status = 'paid'
                           AND NOT EXISTS (
                               SELECT 1
-                              FROM payment_transactions payment_row
+                              FROM scoped_payments payment_row
                               WHERE payment_row.order_id = order_row.id AND payment_row.status = 'succeeded'
                           )
                     ) AS paid_orders_without_succeeded_payment,
                     (
                         SELECT count(*)
-                        FROM payment_transactions payment_row
+                        FROM scoped_payments payment_row
                         JOIN scoped_orders order_row ON order_row.id = payment_row.order_id
                         WHERE payment_row.status = 'succeeded' AND order_row.status NOT IN ('paid', 'refunded')
                     ) AS succeeded_payments_without_paid_order,
                     (
                         SELECT count(*)
-                        FROM payment_transactions payment_row
+                        FROM scoped_payments payment_row
                         JOIN scoped_orders order_row ON order_row.id = payment_row.order_id
                         WHERE payment_row.status IN ('succeeded', 'refunded') AND payment_row.amount_cents <> order_row.amount_cents
                     ) AS amount_mismatch_payments

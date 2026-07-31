@@ -9,9 +9,11 @@ import { formatCreditAmount } from "@/constant/credits";
 import { parseChannelExampleConfig } from "@/lib/channel-example-parser";
 import { buildGlobalAiOpcSelection, GLOBAL_AIOPC_PRESETS, globalAiOpcPresetOptions, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPresets } from "@/lib/globalaiopc-catalog";
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelModelConfig, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
+import { capabilityLabel, channelDetectedCapabilities, channelModelCapability } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { revealAdminChannelApiKey } from "@/services/api/admin-settings";
+import { AdminChannelProtocolSetup } from "@/components/admin/admin-channel-protocol-setup";
+import { applyModelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
 export type ChannelHealthKind = "text" | "image" | "video" | "audio";
 
@@ -24,7 +26,11 @@ export type ChannelHealthResult = {
     protocol?: string;
     referenceHint?: string;
     createPath?: string;
+    editPath?: string;
+    imageToVideoPath?: string;
     queryPath?: string;
+    cancelPath?: string;
+    cancelMethod?: "POST" | "DELETE";
     requestTemplate?: string;
     resultField?: string;
     statusField?: string;
@@ -33,6 +39,13 @@ export type ChannelHealthResult = {
     supportsReferenceImage?: boolean;
     supportsReferenceVideo?: boolean;
     supportsReferenceAudio?: boolean;
+    referenceImageTest?: {
+        ok: boolean;
+        status: number;
+        taskId?: string;
+        remoteUrl?: string;
+        error?: string;
+    };
     pointsCost?: number;
     pointsRemaining?: number;
     taskId?: string;
@@ -40,15 +53,7 @@ export type ChannelHealthResult = {
     error?: string;
 };
 
-const channelProtocolOptions: Array<{ value: SystemChannelProtocol; label: string }> = [
-    { value: "auto", label: "自动" },
-    { value: "openai", label: "OpenAI" },
-    { value: "sub2api", label: "sub2api" },
-    { value: "qingyan", label: "青衍智影" },
-    { value: "globalaiopc", label: "GlobalAiOpc" },
-    { value: "seedance", label: "Seedance" },
-    { value: "compatible", label: "通用兼容" },
-];
+const protocolOptions = channelProtocolOptions().map(({ value, label }) => ({ value, label }));
 const ALL_GLOBAL_AIOPC_PRESETS = "__all_globalaiopc_presets__";
 const modelCapabilityOptions: Array<{ label: string; value: LogicalModelCapability }> = [
     { label: "文本", value: "text" },
@@ -58,22 +63,7 @@ const modelCapabilityOptions: Array<{ label: string; value: LogicalModelCapabili
 ];
 
 export function createDefaultChannelAdvancedConfig(): SystemChannelAdvancedConfig {
-    return {
-        protocol: "auto",
-        textModel: "",
-        imageModel: "",
-        videoModel: "",
-        createPath: "",
-        queryPath: "",
-        requestTemplate: "",
-        resultField: "",
-        statusField: "",
-        durationRange: "",
-        referenceRule: "",
-        supportsReferenceImage: false,
-        supportsReferenceVideo: false,
-        supportsReferenceAudio: false,
-    };
+    return emptyAdvancedConfig();
 }
 
 export function SystemChannelEditor({
@@ -102,10 +92,12 @@ export function SystemChannelEditor({
     const [revealedApiKey, setRevealedApiKey] = useState("");
     const [apiKeyVisible, setApiKeyVisible] = useState(false);
     const [apiKeyLoading, setApiKeyLoading] = useState(false);
-    const healthKinds: ChannelHealthKind[] = ["text", "image", "video", "audio"];
+    const healthKinds = channelHealthKinds(channel);
     const visibleHealthResults = healthKinds.map((kind) => healthResults[`${channel.id}:${kind}`]).filter((item): item is ChannelHealthResult => Boolean(item));
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
+    const protocolDefinition = channelProtocolDefinition(advanced.protocol);
     const capabilitySummary = channelCapabilitySummary(channel);
+    const detectedCapabilities = channelDetectedCapabilities(channel);
     const selectedGlobalPresets = resolveGlobalAiOpcPresets(advanced);
     const multipleGlobalPresets = advanced.protocol === "globalaiopc" && selectedGlobalPresets.length > 1;
     const updateAdvanced = (patch: Partial<SystemChannelAdvancedConfig>) => onChange({ advancedConfig: { ...advanced, ...patch } });
@@ -181,6 +173,7 @@ export function SystemChannelEditor({
         onChange({ apiKey: "", hasApiKey: false, clearApiKey: true });
     };
     const displayedApiKey = channel.apiKey || revealedApiKey;
+    const requiresApiKey = channelRequiresApiKey(channel);
     return (
         <div className="rounded-lg border border-stone-200 bg-white p-3 shadow-sm shadow-stone-200/40 sm:p-4 dark:border-stone-800 dark:bg-stone-950 dark:shadow-black/20">
             <div className="flex items-start justify-between gap-2 sm:flex-col sm:gap-3 lg:flex-row lg:justify-between">
@@ -197,7 +190,7 @@ export function SystemChannelEditor({
                         {capabilitySummary ? <Tag className="m-0">{capabilitySummary}</Tag> : null}
                     </div>
                     <div className="mt-1 truncate text-xs text-stone-500 dark:text-stone-400">{channel.baseUrl || "未填写 Base URL"}</div>
-                    <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">新手只需要填写名称、Base URL 和 API Key，再点一键检测接口。</div>
+                    <div className="mt-1 text-xs text-stone-400 dark:text-stone-500">{requiresApiKey ? "填写名称、Base URL 和 API Key，再执行渠道检测。" : "填写名称和 Base URL 后即可执行渠道检测；当前协议无需 API Key。"}</div>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 sm:w-full sm:justify-start sm:gap-2 lg:w-auto lg:justify-end">
                     <Button type="primary" size="small" aria-label="一键检测接口" title="一键检测接口" icon={<RefreshCw className="size-3.5" />} loading={testingKey === `${channel.id}:all`} onClick={onTestAllHealth}>
@@ -209,6 +202,7 @@ export function SystemChannelEditor({
                     </Popconfirm>
                 </div>
             </div>
+            <AdminChannelProtocolSetup channel={channel} onChange={onChange} />
             <div className="mt-3 grid gap-3 sm:mt-4 lg:grid-cols-[180px_minmax(0,1fr)_minmax(220px,0.8fr)]">
                 <LabeledControl label="渠道名称">
                     <Input value={channel.name} placeholder="青岩智影、123NHH、VOZEB PRO、自定义接口" onChange={(event) => onChange({ name: event.target.value })} />
@@ -216,41 +210,47 @@ export function SystemChannelEditor({
                 <LabeledControl label="Base URL">
                     <Input value={channel.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => onChange({ baseUrl: event.target.value })} />
                 </LabeledControl>
-                <LabeledControl label="API Key">
-                    <div className="flex min-w-0 items-center gap-2">
-                        <Input
-                            type={apiKeyVisible ? "text" : "password"}
-                            value={displayedApiKey}
-                            placeholder={channel.hasApiKey ? "已安全保存，留空不修改" : "sk-..."}
-                            autoComplete="off"
-                            spellCheck={false}
-                            onChange={(event) => {
-                                setRevealedApiKey(event.target.value);
-                                onChange({ apiKey: event.target.value, clearApiKey: false });
-                            }}
-                            suffix={
-                                <Tooltip title={apiKeyVisible ? "隐藏 API Key" : "查看 API Key"}>
-                                    <Button
-                                        type="text"
-                                        size="small"
-                                        loading={apiKeyLoading}
-                                        disabled={!displayedApiKey && !channel.hasApiKey}
-                                        icon={apiKeyVisible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-                                        aria-label={apiKeyVisible ? "隐藏 API Key" : "查看 API Key"}
-                                        onClick={() => void toggleApiKey()}
-                                    />
-                                </Tooltip>
-                            }
-                        />
-                        {channel.hasApiKey ? (
-                            <Popconfirm title="清除已保存的 API Key？" okText="清除" cancelText="取消" onConfirm={clearApiKey}>
-                                <Button size="small" danger className="shrink-0">
-                                    清除
-                                </Button>
-                            </Popconfirm>
-                        ) : null}
-                    </div>
-                </LabeledControl>
+                {requiresApiKey ? (
+                    <LabeledControl label="API Key">
+                        <div className="flex min-w-0 items-center gap-2">
+                            <Input
+                                type={apiKeyVisible ? "text" : "password"}
+                                value={displayedApiKey}
+                                placeholder={channel.hasApiKey ? "已安全保存，留空不修改" : "sk-..."}
+                                autoComplete="off"
+                                spellCheck={false}
+                                onChange={(event) => {
+                                    setRevealedApiKey(event.target.value);
+                                    onChange({ apiKey: event.target.value, clearApiKey: false });
+                                }}
+                                suffix={
+                                    <Tooltip title={apiKeyVisible ? "隐藏 API Key" : "查看 API Key"}>
+                                        <Button
+                                            type="text"
+                                            size="small"
+                                            loading={apiKeyLoading}
+                                            disabled={!displayedApiKey && !channel.hasApiKey}
+                                            icon={apiKeyVisible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                                            aria-label={apiKeyVisible ? "隐藏 API Key" : "查看 API Key"}
+                                            onClick={() => void toggleApiKey()}
+                                        />
+                                    </Tooltip>
+                                }
+                            />
+                            {channel.hasApiKey ? (
+                                <Popconfirm title="清除已保存的 API Key？" okText="清除" cancelText="取消" onConfirm={clearApiKey}>
+                                    <Button size="small" danger className="shrink-0">
+                                        清除
+                                    </Button>
+                                </Popconfirm>
+                            ) : null}
+                        </div>
+                    </LabeledControl>
+                ) : (
+                    <LabeledControl label="鉴权">
+                        <Input value="无需 API Key" disabled />
+                    </LabeledControl>
+                )}
             </div>
             <ChannelCapabilitySummary channel={channel} results={visibleHealthResults} />
             {visibleHealthResults.length ? (
@@ -263,27 +263,26 @@ export function SystemChannelEditor({
             <details className="mt-3 rounded-lg border border-stone-200 bg-stone-50/70 dark:border-stone-800 dark:bg-stone-900/40">
                 <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-stone-800 dark:text-stone-100">高级设置</summary>
                 <div className="grid gap-3 border-t border-stone-200 p-3 md:grid-cols-2 dark:border-stone-800">
-                    <div className="md:col-span-2 rounded-lg border border-dashed border-stone-300 bg-white/70 p-3 dark:border-stone-700 dark:bg-stone-950/50">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                            <div>
-                                <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">上游示例识别</div>
-                                <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">粘贴文档里的 cURL、请求 JSON 或返回 JSON，系统会自动填入协议、模型、路径、模板、结果字段和参考素材规则；不会请求上游。</div>
+                    {protocolDefinition.advanced && advanced.protocol !== "custom" ? (
+                        <div className="md:col-span-2 rounded-lg border border-dashed border-stone-300 bg-white/70 p-3 dark:border-stone-700 dark:bg-stone-950/50">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                    <div className="text-sm font-semibold text-stone-800 dark:text-stone-100">上游示例识别</div>
+                                    <div className="mt-1 text-xs leading-5 text-stone-500 dark:text-stone-400">粘贴文档里的 cURL、请求 JSON 或返回 JSON，系统会自动填入协议、模型、路径、模板、结果字段和参考素材规则；不会请求上游。</div>
+                                </div>
+                                <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={applyExampleConfig}>
+                                    识别示例并填入
+                                </Button>
                             </div>
-                            <Button size="small" icon={<Sparkles className="size-3.5" />} onClick={applyExampleConfig}>
-                                识别示例并填入
-                            </Button>
+                            <Input.TextArea
+                                className="mt-3"
+                                value={exampleText}
+                                rows={5}
+                                placeholder='例如：curl https://api.example.com/v1/images/edits ... -d {"model":"gpt-image-2","prompt":"...","image":"https://..."}'
+                                onChange={(event) => setExampleText(event.target.value)}
+                            />
                         </div>
-                        <Input.TextArea
-                            className="mt-3"
-                            value={exampleText}
-                            rows={5}
-                            placeholder='例如：curl https://api.example.com/v1/images/edits ... -d {"model":"gpt-image-2","prompt":"...","image":"https://..."}'
-                            onChange={(event) => setExampleText(event.target.value)}
-                        />
-                    </div>
-                    <LabeledControl label="接口协议">
-                        <Select className="w-full" value={advanced.protocol} options={channelProtocolOptions} onChange={(protocol: SystemChannelProtocol) => updateAdvanced({ protocol })} />
-                    </LabeledControl>
+                    ) : null}
                     {advanced.protocol === "globalaiopc" ? (
                         <LabeledControl label="GlobalAiOpc 接口范围">
                             <Select
@@ -305,60 +304,117 @@ export function SystemChannelEditor({
                         </LabeledControl>
                     ) : null}
                     <LabeledControl label="模型目录路径">
-                        <Select className="w-full" mode="tags" maxTagCount="responsive" value={advanced.modelCatalogPaths || []} placeholder="默认 /v1/models；可填写多个非标准路径" onChange={(modelCatalogPaths) => updateAdvanced({ modelCatalogPaths })} />
+                        <Select
+                            disabled={!protocolDefinition.advanced}
+                            className="w-full"
+                            mode="tags"
+                            maxTagCount="responsive"
+                            value={advanced.modelCatalogPaths || []}
+                            placeholder="默认 /v1/models；可填写多个非标准路径"
+                            onChange={(modelCatalogPaths) => updateAdvanced({ modelCatalogPaths })}
+                        />
                     </LabeledControl>
                     <LabeledControl label="模型列表">
-                        <Select className="w-full" mode="tags" maxTagCount="responsive" value={channel.models} placeholder="检测会自动填，也可以手动输入模型名" onChange={(models) => onChange({ models })} />
+                        <Select
+                            disabled={Boolean(protocolDefinition.builtInModels?.length)}
+                            className="w-full"
+                            mode="tags"
+                            maxTagCount="responsive"
+                            value={channel.models}
+                            placeholder="检测会自动填，也可以手动输入模型名"
+                            onChange={(models) => onChange({ models })}
+                        />
                     </LabeledControl>
-                    <LabeledControl label="文本模型">
-                        <Input value={advanced.textModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ textModel: event.target.value })} />
-                    </LabeledControl>
-                    <LabeledControl label="图片模型">
-                        <Input value={advanced.imageModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ imageModel: event.target.value })} />
-                    </LabeledControl>
-                    <LabeledControl label="视频模型">
-                        <Input value={advanced.videoModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ videoModel: event.target.value })} />
-                    </LabeledControl>
+                    {detectedCapabilities.has("text") ? (
+                        <LabeledControl label="文本模型">
+                            <Input value={advanced.textModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ textModel: event.target.value })} />
+                        </LabeledControl>
+                    ) : null}
+                    {detectedCapabilities.has("image") ? (
+                        <LabeledControl label="图片模型">
+                            <Input value={advanced.imageModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ imageModel: event.target.value })} />
+                        </LabeledControl>
+                    ) : null}
+                    {detectedCapabilities.has("video") ? (
+                        <LabeledControl label="视频模型">
+                            <Input value={advanced.videoModel} placeholder="检测后自动填" onChange={(event) => updateAdvanced({ videoModel: event.target.value })} />
+                        </LabeledControl>
+                    ) : null}
                     <ModelRouteConfigEditor channel={channel} advanced={advanced} onChange={updateAdvanced} />
-                    <LabeledControl label="支持时长">
-                        <Input disabled={multipleGlobalPresets} value={advanced.durationRange} placeholder={multipleGlobalPresets ? "按模型自动匹配" : "例如：5、10、15 秒"} onChange={(event) => updateAdvanced({ durationRange: event.target.value })} />
-                    </LabeledControl>
-                    <LabeledControl label="兜底创建路径">
-                        <Input disabled={multipleGlobalPresets} value={advanced.createPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/video/generations"} onChange={(event) => updateAdvanced({ createPath: event.target.value })} />
-                    </LabeledControl>
-                    <LabeledControl label="兜底查询路径">
-                        <Input disabled={multipleGlobalPresets} value={advanced.queryPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/video/generations/:task_id"} onChange={(event) => updateAdvanced({ queryPath: event.target.value })} />
-                    </LabeledControl>
-                    <LabeledControl label="结果字段">
-                        <Input value={advanced.resultField} placeholder="例如：data[0].url / content.video_url" onChange={(event) => updateAdvanced({ resultField: event.target.value })} />
-                    </LabeledControl>
-                    <LabeledControl label="状态字段">
-                        <Input value={advanced.statusField} placeholder="例如：status / state" onChange={(event) => updateAdvanced({ statusField: event.target.value })} />
-                    </LabeledControl>
-                    <div className="md:col-span-2">
-                        <LabeledControl label="请求字段模板">
-                            <Input.TextArea value={advanced.requestTemplate} rows={3} placeholder='{"model":"{{model}}","prompt":"{{prompt}}"}' onChange={(event) => updateAdvanced({ requestTemplate: event.target.value })} />
-                        </LabeledControl>
-                    </div>
-                    <div className="md:col-span-2">
-                        <LabeledControl label="参考素材规则">
-                            <Input.TextArea value={advanced.referenceRule} rows={3} placeholder="例如：参考图必须是公网 URL；单图字段 image，多图字段 images。" onChange={(event) => updateAdvanced({ referenceRule: event.target.value })} />
-                        </LabeledControl>
-                    </div>
-                    <div className="md:col-span-2">
-                        <div className="mb-1.5 text-xs font-medium text-stone-500 dark:text-stone-400">参考素材能力</div>
-                        <div className="flex flex-wrap gap-4">
-                            <Checkbox checked={advanced.supportsReferenceImage} onChange={(event) => updateAdvanced({ supportsReferenceImage: event.target.checked })}>
-                                支持参考图
-                            </Checkbox>
-                            <Checkbox checked={advanced.supportsReferenceVideo} onChange={(event) => updateAdvanced({ supportsReferenceVideo: event.target.checked })}>
-                                支持参考视频
-                            </Checkbox>
-                            <Checkbox checked={advanced.supportsReferenceAudio} onChange={(event) => updateAdvanced({ supportsReferenceAudio: event.target.checked })}>
-                                支持参考音频
-                            </Checkbox>
-                        </div>
-                    </div>
+                    {protocolDefinition.advanced ? (
+                        <>
+                            {detectedCapabilities.has("video") ? (
+                                <LabeledControl label="兜底时长规则">
+                                    <Input
+                                        disabled={multipleGlobalPresets}
+                                        value={advanced.durationRange}
+                                        placeholder={multipleGlobalPresets ? "按模型自动匹配" : "例如：5、8、10 秒或 4-15 秒"}
+                                        onChange={(event) => updateAdvanced({ durationRange: event.target.value })}
+                                    />
+                                </LabeledControl>
+                            ) : null}
+                            <LabeledControl label="兜底创建路径">
+                                <Input disabled={multipleGlobalPresets} value={advanced.createPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/video/generations"} onChange={(event) => updateAdvanced({ createPath: event.target.value })} />
+                            </LabeledControl>
+                            {detectedCapabilities.has("image") ? (
+                                <LabeledControl label="兜底图生图路径">
+                                    <Input disabled={multipleGlobalPresets} value={advanced.editPath} placeholder={multipleGlobalPresets ? "按模型自动路由" : "/images/edits"} onChange={(event) => updateAdvanced({ editPath: event.target.value })} />
+                                </LabeledControl>
+                            ) : null}
+                            {detectedCapabilities.has("video") ? (
+                                <>
+                                    <LabeledControl label="兜底图生视频路径">
+                                        <Input
+                                            disabled={multipleGlobalPresets}
+                                            value={advanced.imageToVideoPath}
+                                            placeholder={multipleGlobalPresets ? "按模型自动路由" : "/videos"}
+                                            onChange={(event) => updateAdvanced({ imageToVideoPath: event.target.value })}
+                                        />
+                                    </LabeledControl>
+                                    <LabeledControl label="兜底查询路径">
+                                        <Input
+                                            disabled={multipleGlobalPresets}
+                                            value={advanced.queryPath}
+                                            placeholder={multipleGlobalPresets ? "按模型自动路由" : "/video/generations/:task_id"}
+                                            onChange={(event) => updateAdvanced({ queryPath: event.target.value })}
+                                        />
+                                    </LabeledControl>
+                                </>
+                            ) : null}
+                            <LabeledControl label="结果字段">
+                                <Input value={advanced.resultField} placeholder="例如：data[0].url / content.video_url" onChange={(event) => updateAdvanced({ resultField: event.target.value })} />
+                            </LabeledControl>
+                            <LabeledControl label="状态字段">
+                                <Input value={advanced.statusField} placeholder="例如：status / state" onChange={(event) => updateAdvanced({ statusField: event.target.value })} />
+                            </LabeledControl>
+                            <div className="md:col-span-2">
+                                <LabeledControl label="请求字段模板">
+                                    <Input.TextArea value={advanced.requestTemplate} rows={3} placeholder='{"model":"{{model}}","prompt":"{{prompt}}"}' onChange={(event) => updateAdvanced({ requestTemplate: event.target.value })} />
+                                </LabeledControl>
+                            </div>
+                            <div className="md:col-span-2">
+                                <LabeledControl label="参考素材规则">
+                                    <Input.TextArea value={advanced.referenceRule} rows={3} placeholder="例如：参考图必须是公网 URL；单图字段 image，多图字段 images。" onChange={(event) => updateAdvanced({ referenceRule: event.target.value })} />
+                                </LabeledControl>
+                            </div>
+                            <div className="md:col-span-2">
+                                <div className="mb-1.5 text-xs font-medium text-stone-500 dark:text-stone-400">参考素材能力</div>
+                                <div className="flex flex-wrap gap-4">
+                                    <Checkbox checked={advanced.supportsReferenceImage} onChange={(event) => updateAdvanced({ supportsReferenceImage: event.target.checked })}>
+                                        支持参考图
+                                    </Checkbox>
+                                    <Checkbox checked={advanced.supportsReferenceVideo} onChange={(event) => updateAdvanced({ supportsReferenceVideo: event.target.checked })}>
+                                        支持参考视频
+                                    </Checkbox>
+                                    <Checkbox checked={advanced.supportsReferenceAudio} onChange={(event) => updateAdvanced({ supportsReferenceAudio: event.target.checked })}>
+                                        支持参考音频
+                                    </Checkbox>
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="md:col-span-2 text-xs leading-5 text-stone-500 dark:text-stone-400">当前协议的路径、请求字段、结果字段和参考素材能力由协议注册表固定；如需非标准字段，请在模型级路由中选择“自定义协议”。</div>
+                    )}
                     <div className="flex flex-wrap gap-2 md:col-span-2">
                         <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetching} onClick={onFetchModels}>
                             拉取模型
@@ -378,18 +434,29 @@ export function SystemChannelEditor({
 
 function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: SystemModelChannel; advanced: SystemChannelAdvancedConfig; onChange: (patch: Partial<SystemChannelAdvancedConfig>) => void }) {
     const [selected, setSelected] = useState("");
-    const selectedModel = channel.models.some((model) => normalizeModelId(model) === normalizeModelId(selected)) ? channel.models.find((model) => normalizeModelId(model) === normalizeModelId(selected)) || "" : channel.models[0] || "";
+    const models = channel.models;
+    const selectedModel = models.some((model) => normalizeModelId(model) === normalizeModelId(selected)) ? models.find((model) => normalizeModelId(model) === normalizeModelId(selected)) || "" : models[0] || "";
     const key = normalizeModelId(selectedModel);
     const stored = key ? advanced.modelConfigs?.[key] : undefined;
     const config: SystemChannelModelConfig | undefined = selectedModel ? stored || { capability: channelModelCapability(channel, selectedModel) } : undefined;
-    const update = (patch: Partial<SystemChannelModelConfig>) => {
-        if (!key || !config) return;
-        const next = { ...config, ...patch, source: "manual" as const };
+    const selectedProtocol = config?.protocol || advanced.protocol;
+    const definition = channelProtocolDefinition(selectedProtocol);
+    const showImageEditPath = config?.capability === "image";
+    const showImageToVideoPath = config?.capability === "video";
+    const showAsyncFields = config?.capability === "video" || (!definition.strict && config?.capability !== "text");
+    const write = (next: SystemChannelModelConfig) => {
+        if (!key) return;
         onChange({
             modelCapabilities: { ...(advanced.modelCapabilities || {}), [key]: next.capability },
-            modelConfigs: { ...(advanced.modelConfigs || {}), [key]: next },
+            modelConfigs: { ...(advanced.modelConfigs || {}), [key]: { ...next, source: "manual" } },
         });
     };
+    const update = (patch: Partial<SystemChannelModelConfig>) => {
+        if (!key || !config) return;
+        write({ ...config, ...patch });
+    };
+    const selectProtocol = (protocol: SystemChannelProtocol | undefined) => config && write(applyModelProtocol(config, protocol || advanced.protocol));
+    const selectCapability = (capability: LogicalModelCapability) => config && write(applyModelProtocol({ ...config, capability }, selectedProtocol));
     const clearRoutes = () => {
         if (!key || !config) return;
         const next = { ...(advanced.modelConfigs || {}) };
@@ -414,10 +481,10 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
                 <>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                         <LabeledControl label="模型">
-                            <Select className="w-full" showSearch optionFilterProp="label" value={selectedModel} options={channel.models.map((model) => ({ label: model, value: model }))} onChange={setSelected} />
+                            <Select className="w-full" showSearch optionFilterProp="label" value={selectedModel} options={models.map((model) => ({ label: model, value: model }))} onChange={setSelected} />
                         </LabeledControl>
                         <LabeledControl label="能力">
-                            <Select className="w-full" value={config.capability} options={modelCapabilityOptions} onChange={(capability) => update({ capability })} />
+                            <Select className="w-full" value={config.capability} options={definition.strict ? modelCapabilityOptions.filter((item) => definition.capabilities.includes(item.value)) : modelCapabilityOptions} onChange={selectCapability} />
                         </LabeledControl>
                         <LabeledControl label="API 格式">
                             <Select
@@ -433,41 +500,86 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
                             />
                         </LabeledControl>
                         <LabeledControl label="协议">
-                            <Select className="w-full" allowClear placeholder="沿用渠道" value={config.protocol} options={channelProtocolOptions} onChange={(protocol) => update({ protocol })} />
+                            <Select className="w-full" allowClear placeholder="沿用渠道" value={config.protocol} options={protocolOptions} onChange={selectProtocol} />
                         </LabeledControl>
-                        <LabeledControl label="创建路径">
+                        <LabeledControl label={config.capability === "text" ? "文本生成路径" : config.capability === "image" ? "文生图路径" : config.capability === "video" ? "文生视频路径" : "语音生成路径"}>
                             <Input
+                                disabled={definition.strict}
                                 value={config.createPath || ""}
                                 placeholder={config.capability === "text" ? "/chat/completions" : config.capability === "video" ? "/videos" : "/images/generations"}
                                 onChange={(event) => update({ createPath: event.target.value })}
                             />
                         </LabeledControl>
-                        <LabeledControl label="查询路径">
-                            <Input value={config.queryPath || ""} placeholder="/videos/:task_id" onChange={(event) => update({ queryPath: event.target.value })} />
-                        </LabeledControl>
+                        {showImageEditPath ? (
+                            <LabeledControl label="图生图路径">
+                                <Input disabled={definition.strict} value={config.editPath || ""} placeholder="/images/edits" onChange={(event) => update({ editPath: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {showImageToVideoPath ? (
+                            <LabeledControl label="图生视频路径">
+                                <Input disabled={definition.strict} value={config.imageToVideoPath || ""} placeholder="/videos" onChange={(event) => update({ imageToVideoPath: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {showAsyncFields ? (
+                            <LabeledControl label="查询路径">
+                                <Input disabled={definition.strict} value={config.queryPath || ""} placeholder="/videos/:task_id" onChange={(event) => update({ queryPath: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {showAsyncFields ? (
+                            <LabeledControl label="取消路径">
+                                <Input disabled={definition.strict} value={config.cancelPath || ""} placeholder="/videos/:task_id/cancel" onChange={(event) => update({ cancelPath: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {showAsyncFields && config.cancelPath ? (
+                            <LabeledControl label="取消方式">
+                                <Select
+                                    className="w-full"
+                                    disabled={definition.strict}
+                                    value={config.cancelMethod || "POST"}
+                                    options={[
+                                        { label: "POST", value: "POST" },
+                                        { label: "DELETE", value: "DELETE" },
+                                    ]}
+                                    onChange={(cancelMethod) => update({ cancelMethod })}
+                                />
+                            </LabeledControl>
+                        ) : null}
                         <LabeledControl label="结果字段">
-                            <Input value={config.resultField || ""} placeholder="video_url / data[0].url" onChange={(event) => update({ resultField: event.target.value })} />
+                            <Input disabled={definition.strict} value={config.resultField || ""} placeholder="video_url / data[0].url" onChange={(event) => update({ resultField: event.target.value })} />
                         </LabeledControl>
-                        <LabeledControl label="状态字段">
-                            <Input value={config.statusField || ""} placeholder="status / state" onChange={(event) => update({ statusField: event.target.value })} />
-                        </LabeledControl>
+                        {showAsyncFields ? (
+                            <LabeledControl label="状态字段">
+                                <Input disabled={definition.strict} value={config.statusField || ""} placeholder="status / state" onChange={(event) => update({ statusField: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
+                        {config.capability === "video" ? (
+                            <LabeledControl label="时长规则">
+                                <Input disabled={definition.strict} value={config.durationRange || ""} placeholder="5、8、10 秒或 4-15 秒" onChange={(event) => update({ durationRange: event.target.value })} />
+                            </LabeledControl>
+                        ) : null}
                     </div>
                     <details className="mt-3 border-t border-stone-200 pt-2 dark:border-stone-800">
                         <summary className="cursor-pointer text-xs font-medium text-stone-600 dark:text-stone-300">请求模板与参考素材</summary>
                         <div className="mt-3 grid gap-3 sm:grid-cols-2">
                             <div className="sm:col-span-2">
                                 <LabeledControl label="请求字段模板">
-                                    <Input.TextArea rows={3} value={config.requestTemplate || ""} placeholder='{"model":"{{model}}","prompt":"{{prompt}}"}' onChange={(event) => update({ requestTemplate: event.target.value })} />
+                                    <Input.TextArea
+                                        disabled={definition.strict}
+                                        rows={3}
+                                        value={config.requestTemplate || ""}
+                                        placeholder='{"model":"{{model}}","prompt":"{{prompt}}"}'
+                                        onChange={(event) => update({ requestTemplate: event.target.value })}
+                                    />
                                 </LabeledControl>
                             </div>
                             <div className="sm:col-span-2 flex flex-wrap gap-4 text-xs text-stone-600 dark:text-stone-300">
-                                <Checkbox checked={config.supportsReferenceImage === true} onChange={(event) => update({ supportsReferenceImage: event.target.checked })}>
+                                <Checkbox disabled={definition.strict} checked={config.supportsReferenceImage === true} onChange={(event) => update({ supportsReferenceImage: event.target.checked })}>
                                     参考图片
                                 </Checkbox>
-                                <Checkbox checked={config.supportsReferenceVideo === true} onChange={(event) => update({ supportsReferenceVideo: event.target.checked })}>
+                                <Checkbox disabled={definition.strict} checked={config.supportsReferenceVideo === true} onChange={(event) => update({ supportsReferenceVideo: event.target.checked })}>
                                     参考视频
                                 </Checkbox>
-                                <Checkbox checked={config.supportsReferenceAudio === true} onChange={(event) => update({ supportsReferenceAudio: event.target.checked })}>
+                                <Checkbox disabled={definition.strict} checked={config.supportsReferenceAudio === true} onChange={(event) => update({ supportsReferenceAudio: event.target.checked })}>
                                     参考音频
                                 </Checkbox>
                             </div>
@@ -492,22 +604,36 @@ function channelCapabilitySummary(channel: SystemModelChannel) {
         .join(" · ");
 }
 
+export function channelHealthKinds(channel: SystemModelChannel): ChannelHealthKind[] {
+    const supported = new Set(channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").capabilities);
+    const detected = channelDetectedCapabilities(channel);
+    return (["text", "image", "video", "audio"] as ChannelHealthKind[]).filter((kind) => supported.has(kind) && detected.has(kind));
+}
+
 function ChannelCapabilitySummary({ channel, results }: { channel: SystemModelChannel; results: ChannelHealthResult[] }) {
     const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
-    const text = results.find((result) => result.kind === "text");
-    const image = results.find((result) => result.kind === "image");
-    const video = results.find((result) => result.kind === "video");
-    const audio = results.find((result) => result.kind === "audio");
+    const credentialsReady = channelConnectionReady(channel);
+    const verifiedResults = credentialsReady ? results : [];
+    const text = verifiedResults.find((result) => result.kind === "text");
+    const image = verifiedResults.find((result) => result.kind === "image");
+    const video = verifiedResults.find((result) => result.kind === "video");
+    const audio = verifiedResults.find((result) => result.kind === "audio");
     const needsPublicReference = /公网|public|localhost|NEXT_PUBLIC_SITE_URL/i.test(advanced.referenceRule || video?.referenceHint || "");
-    const items = [
-        { label: "文本", value: healthStateText(text), tone: healthStateTone(text) },
-        { label: "生图", value: healthStateText(image), tone: healthStateTone(image) },
-        { label: "图生图", value: referenceImageText(image, advanced, needsPublicReference), tone: referenceImageTone(image, advanced) },
-        { label: "视频", value: healthStateText(video), tone: healthStateTone(video) },
-        { label: "音频", value: healthStateText(audio), tone: healthStateTone(audio) },
-        { label: "图生视频", value: referenceVideoText(video, advanced, needsPublicReference), tone: referenceImageTone(video, advanced) },
-        { label: "参考视频/音频", value: referenceMediaText(video, advanced), tone: advanced.supportsReferenceVideo || advanced.supportsReferenceAudio ? "green" : video?.ok ? "default" : "default" },
-    ] as const;
+    const pending = credentialsReady ? undefined : "未配置";
+    const capabilities = new Set(channelHealthKinds(channel));
+    const items: Array<{ label: string; value: string; tone: "default" | "green" | "red" }> = [];
+    if (capabilities.has("text")) items.push({ label: "文本", value: pending || healthStateText(text), tone: pending ? "default" : healthStateTone(text) });
+    if (capabilities.has("image")) {
+        items.push({ label: "生图", value: pending || healthStateText(image), tone: pending ? "default" : healthStateTone(image) });
+        items.push({ label: "图生图", value: pending || referenceImageText(image, advanced, needsPublicReference), tone: pending ? "default" : referenceImageTone(image) });
+    }
+    if (capabilities.has("video")) {
+        items.push({ label: "视频", value: pending || healthStateText(video), tone: pending ? "default" : healthStateTone(video) });
+        items.push({ label: "图生视频", value: pending || referenceVideoText(video, advanced, needsPublicReference), tone: pending ? "default" : referenceImageTone(video) });
+        items.push({ label: "参考视频/音频", value: pending || referenceMediaText(video, advanced), tone: pending ? "default" : video && !video.ok ? "red" : "default" });
+    }
+    if (capabilities.has("audio")) items.push({ label: "音频", value: pending || healthStateText(audio), tone: pending ? "default" : healthStateTone(audio) });
+    if (!items.length) return null;
     return (
         <div className="mt-3 grid grid-cols-2 gap-1.5 sm:gap-2 xl:grid-cols-3">
             {items.map((item) => (
@@ -533,31 +659,30 @@ function healthStateTone(result?: ChannelHealthResult) {
 }
 
 function referenceImageText(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig, needsPublicReference: boolean) {
-    if (!result) return advanced.supportsReferenceImage ? "未实测" : "未检测";
+    if (!result) return "未检测";
     if (!result.ok) return "需检查";
     if (!advanced.supportsReferenceImage) return "不支持";
-    return needsPublicReference ? "需要公网参考图" : "可用";
+    if (result.referenceImageTest) return result.referenceImageTest.ok ? "可用" : "需检查";
+    return needsPublicReference ? "需公网图，未实测" : "未实测";
 }
 
 function referenceVideoText(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig, needsPublicReference: boolean) {
-    if (!result) return advanced.supportsReferenceImage ? "未实测" : "未检测";
+    if (!result) return "未检测";
     if (!result.ok) return "需检查";
     if (!advanced.supportsReferenceImage) return "不支持";
-    return needsPublicReference ? "需要公网参考图" : "可用";
+    return needsPublicReference ? "需公网图，未实测" : "未实测";
 }
 
-function referenceImageTone(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig) {
+function referenceImageTone(result: ChannelHealthResult | undefined) {
     if (result && !result.ok) return "red";
-    if (result?.ok && advanced.supportsReferenceImage) return "green";
+    if (result?.referenceImageTest) return result.referenceImageTest.ok ? "green" : "red";
     return "default";
 }
 
 function referenceMediaText(result: ChannelHealthResult | undefined, advanced: SystemChannelAdvancedConfig) {
-    if (advanced.supportsReferenceVideo && advanced.supportsReferenceAudio) return "视频/音频可用";
-    if (advanced.supportsReferenceVideo) return "参考视频可用";
-    if (advanced.supportsReferenceAudio) return "参考音频可用";
     if (!result) return "未检测";
-    return result.ok ? "不支持" : "需检查";
+    if (!result.ok) return "需检查";
+    return advanced.supportsReferenceVideo || advanced.supportsReferenceAudio ? "未实测" : "不支持";
 }
 
 function ChannelHealthResultRow({ result }: { result: ChannelHealthResult }) {
@@ -573,6 +698,7 @@ function ChannelHealthResultRow({ result }: { result: ChannelHealthResult }) {
             <span>状态：{result.status || "-"}</span>
             <span>扣费：{typeof result.pointsCost === "number" ? formatCreditAmount(result.pointsCost) : "-"}</span>
             {result.referenceHint ? <span className="min-w-0 flex-1 basis-full truncate sm:basis-auto">参考图：{result.referenceHint}</span> : null}
+            {result.referenceImageTest ? <span className="min-w-0 basis-full truncate">图生图：{result.referenceImageTest.ok ? "成功" : `失败（${result.referenceImageTest.error || `状态码 ${result.referenceImageTest.status || "-"}`}）`}</span> : null}
             <span className="min-w-0 flex-1 truncate">
                 {result.remoteUrl ? "远程地址：" : result.taskId ? "任务：" : result.error ? "原因：" : ""}
                 {detail}

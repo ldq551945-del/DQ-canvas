@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { LogicalModel, SystemModelChannel } from "@/lib/auth/store";
-import { deriveLogicalModelsConfig, isLogicalModelResolvable, modelRoutingValidationErrors, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig, resolveLogicalModelConfig } from "./model-routing-config";
+import {
+    channelDetectedCapabilities,
+    channelModelCapability,
+    deriveLogicalModelsConfig,
+    isLogicalModelResolvable,
+    mergeChannelModelsIntoLogicalModels,
+    modelRoutingValidationErrors,
+    normalizeDefaultModelsConfig,
+    normalizeLogicalModelsConfig,
+    resolveLogicalModelConfig,
+} from "./model-routing-config";
 
 const channel = (id: string, models: string[], enabled = true): SystemModelChannel => ({ id, name: id, baseUrl: `https://${id}.example.com/v1`, apiKey: "test-secret", apiFormat: "openai", models, enabled });
 
@@ -63,6 +73,29 @@ describe("model routing config", () => {
         expect(models.find((model) => model.id === "stable-video-diffusion")?.capability).toBe("video");
     });
 
+    it("merges the same upstream model from multiple channels into one logical model", () => {
+        const channels = [channel("one", ["models/GPT-IMAGE-2"]), channel("two", ["gpt-image-2"])];
+        const existing: LogicalModel[] = [{ id: "gpt-image-2", name: "GPT Image 2", capability: "image", enabled: true, bindings: [{ id: "one:gpt-image-2", channelId: "one", upstreamModel: "gpt-image-2", enabled: true, priority: 1 }] }];
+
+        const models = mergeChannelModelsIntoLogicalModels(existing, channels);
+
+        expect(models).toHaveLength(1);
+        expect(models[0].bindings).toEqual([existing[0].bindings[0], expect.objectContaining({ channelId: "two", upstreamModel: "gpt-image-2" })]);
+    });
+
+    it("keeps the upstream auto model classified as text", () => {
+        const source = channel("one", ["auto"]);
+        source.advancedConfig = { modelCapabilities: { auto: "audio" }, modelConfigs: { auto: { capability: "audio", source: "health" } } } as never;
+
+        expect(channelModelCapability(source, "auto")).toBe("text");
+    });
+
+    it("only exposes capabilities represented by real channel models", () => {
+        const source = channel("one", ["auto", "gpt-5-3", "gpt-image-2"]);
+
+        expect(Array.from(channelDetectedCapabilities(source))).toEqual(["text", "image"]);
+    });
+
     it("requires an enabled matching binding for defaults", () => {
         const channels = [channel("one", ["vendor/writer"]), channel("off", ["voice"], false)];
         const models: LogicalModel[] = [
@@ -71,6 +104,16 @@ describe("model routing config", () => {
         ];
         expect(isLogicalModelResolvable(models, channels, "text", "writer")).toBe(true);
         expect(normalizeDefaultModelsConfig({ textModel: "writer", imageModel: "writer", videoModel: "", audioModel: "voice" }, models, channels)).toEqual({ textModel: "writer", imageModel: "", videoModel: "", audioModel: "" });
+    });
+
+    it("switches a stale default to another resolvable model of the same capability", () => {
+        const channels = [channel("off", ["gpt-image-2"], false), channel("backup", ["flux-pro"])];
+        const models: LogicalModel[] = [
+            { id: "gpt-image-2", name: "GPT Image 2", capability: "image", enabled: true, bindings: [{ id: "off", channelId: "off", upstreamModel: "gpt-image-2", enabled: true, priority: 1 }] },
+            { id: "flux-pro", name: "Flux Pro", capability: "image", enabled: true, bindings: [{ id: "backup", channelId: "backup", upstreamModel: "flux-pro", enabled: true, priority: 1 }] },
+        ];
+
+        expect(normalizeDefaultModelsConfig({ textModel: "", imageModel: "gpt-image-2", videoModel: "", audioModel: "" }, models, channels).imageModel).toBe("flux-pro");
     });
 
     it("uses binding priority and falls back from a disabled channel", () => {

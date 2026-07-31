@@ -13,6 +13,7 @@ import type { InsertAssetPayload } from "@/app/(user)/canvas/components/asset-pi
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
+import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
@@ -210,7 +211,7 @@ export default function ImagePage() {
                             historyContent={(query, closeHistory) => {
                                 const filteredLogs = logs.filter((log) => {
                                     const session = agentSessionByRecordId.get(log.id);
-                                    return matchesWorkbenchHistoryQuery(query, log.title, log.prompt, session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
+                                    return matchesWorkbenchHistoryQuery(query, log.title, generationLogPublicPrompt(log), session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
                                 });
                                 return (
                                     <LogPanel
@@ -412,35 +413,36 @@ export default function ImagePage() {
                             </div>
                         </div>
                         {results.length ? (
-                            <div className="flex w-full flex-wrap items-start gap-2.5 sm:gap-4">
-                                {results.map((result, index) =>
-                                    result.status === "success" && result.image ? (
-                                        <ResultImageCard
-                                            key={result.id}
-                                            image={result.image}
-                                            index={index}
-                                            large={results.length === 1}
-                                            missing={missingResultIds.includes(result.id) || !result.image.dataUrl}
-                                            selected={selectedResultIds.includes(result.id)}
-                                            onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                            onMissing={() => markResultMissing(result.id)}
-                                            onEdit={addResultToReferences}
-                                            onDownload={downloadImage}
-                                            onSaveAsset={saveResultToAssets}
-                                        />
-                                    ) : result.status === "failed" ? (
-                                        <FailedImageCard
-                                            key={result.id}
-                                            error={result.error || "生成失败"}
-                                            large={results.length === 1}
-                                            selected={selectedResultIds.includes(result.id)}
-                                            onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                            onRetry={() => retryResult(index)}
-                                        />
-                                    ) : (
-                                        <PendingImageCard key={result.id} large={results.length === 1} />
-                                    ),
-                                )}
+                            <div data-testid="image-results-grid" className={results.length === 1 ? "flex w-full items-start" : "grid w-full grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4"}>
+                                {results.map((result, index) => (
+                                    <div key={result.id} data-testid="image-result-slot" className={results.length === 1 ? "w-[320px] max-w-full" : "min-w-0"}>
+                                        {result.status === "success" && result.image ? (
+                                            <ResultImageCard
+                                                image={result.image}
+                                                index={index}
+                                                large={results.length === 1}
+                                                fluid={results.length > 1}
+                                                missing={missingResultIds.includes(result.id) || !result.image.dataUrl}
+                                                selected={selectedResultIds.includes(result.id)}
+                                                onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
+                                                onMissing={() => markResultMissing(result.id)}
+                                                onEdit={addResultToReferences}
+                                                onDownload={downloadImage}
+                                                onSaveAsset={saveResultToAssets}
+                                            />
+                                        ) : result.status === "failed" ? (
+                                            <FailedImageCard
+                                                error={result.error || "生成失败"}
+                                                large={results.length === 1}
+                                                selected={selectedResultIds.includes(result.id)}
+                                                onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
+                                                onRetry={() => retryResult(index)}
+                                            />
+                                        ) : (
+                                            <PendingImageCard large={results.length === 1} />
+                                        )}
+                                    </div>
+                                ))}
                             </div>
                         ) : (
                             <CompactEmptyState title="还没有生成图片" description="完成一次生成后，结果会按时间保留在这里。" icon={<ImagePlus className="size-4" />} className="min-h-20 sm:min-h-40 lg:min-h-[360px]" />

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
+import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
 export type AudioTaskConfig = {
     apiSource?: "system" | "custom";
@@ -36,32 +37,23 @@ export type AudioTask = GenerationTaskContext & {
     attemptNo?: number;
 };
 
-const TTL = 60 * 60 * 1000;
-const TASK_STALE_MS = 5 * 60 * 1000;
-
 export function createAudioTask(input: Omit<AudioTask, "id" | "status" | "createdAt" | "updatedAt">) {
     const now = Date.now();
-    return createStoredGenerationTask("audio", { ...input, id: randomUUID(), status: "pending", createdAt: now, updatedAt: now } satisfies AudioTask, TTL);
+    return createStoredGenerationTask("audio", { ...input, id: randomUUID(), status: "pending", createdAt: now, updatedAt: now } satisfies AudioTask, GENERATION_TASK_RETENTION_MS);
 }
 
 export async function getAudioTask(id: string) {
-    const task = await getStoredGenerationTask<AudioTask>("audio", id);
-    if (!task || !isStale(task)) return task;
-    return (await transitionAudioTask(task, ["pending", "running"], { status: "error", error: "音频任务已中断，请重新生成。", config: { ...task.config, apiKey: "" } })) || getStoredGenerationTask<AudioTask>("audio", id);
+    return getStoredGenerationTask<AudioTask>("audio", id);
 }
 
 export async function updateAudioTask(id: string, patch: Partial<Pick<AudioTask, "status" | "config" | "upstream" | "result" | "billing" | "error" | "candidateConfigs" | "attempts" | "attemptNo">>) {
-    return mutateStoredGenerationTask<AudioTask>("audio", id, TTL, (task) => ({ ...task, ...patch }));
+    return mutateStoredGenerationTask<AudioTask>("audio", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }
 
 export function transitionAudioTask(task: AudioTask, allowedStatuses: Array<AudioTask["status"]>, patch: Partial<Pick<AudioTask, "config" | "upstream" | "result" | "billing" | "error">> & { status: AudioTask["status"] }) {
-    return transitionStoredGenerationTask<AudioTask>("audio", task.id, task.userId, allowedStatuses, patch, TTL);
+    return transitionStoredGenerationTask<AudioTask>("audio", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS);
 }
 
 export function touchAudioTask(id: string) {
-    return touchStoredGenerationTask("audio", id, Date.now(), TTL);
-}
-
-function isStale(task: AudioTask) {
-    return (task.status === "pending" || task.status === "running") && task.updatedAt < Date.now() - TASK_STALE_MS;
+    return touchStoredGenerationTask("audio", id, Date.now(), GENERATION_TASK_RETENTION_MS);
 }

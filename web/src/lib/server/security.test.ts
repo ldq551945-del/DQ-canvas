@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkPublicMediaRateLimit, checkRateLimit, getClientIp, rateLimitHeaders } from "./security";
+import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkPublicMediaRateLimit, checkRateLimit, getClientIp, isSafeOutboundUrl, rateLimitHeaders } from "./security";
 
 describe("checkRateLimit", () => {
     it("blocks requests beyond the configured window limit", async () => {
@@ -96,5 +96,24 @@ describe("checkRateLimit", () => {
         vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
         expect(rateLimitHeaders({ allowed: false, remaining: 0, resetAt: Date.now() + 1500 })).toEqual({ "Retry-After": "2" });
         vi.useRealTimers();
+    });
+
+    it("allows private upstreams only through an explicit exact host allowlist", async () => {
+        vi.stubEnv("VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS", "");
+        vi.stubEnv("VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS", "");
+        await expect(isSafeOutboundUrl("http://127.0.0.1:4010/v1/models")).resolves.toBe(false);
+
+        vi.stubEnv("VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS", "1");
+        await expect(isSafeOutboundUrl("http://127.0.0.1:4010/v1/models")).resolves.toBe(false);
+
+        vi.stubEnv("VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1, provider.internal");
+        await expect(isSafeOutboundUrl("http://127.0.0.1:4010/v1/models")).resolves.toBe(true);
+        await expect(isSafeOutboundUrl("http://127.0.0.2:4010/v1/models")).resolves.toBe(false);
+        await expect(isSafeOutboundUrl("ftp://127.0.0.1/file")).resolves.toBe(false);
+        await expect(isSafeOutboundUrl("http://user:secret@127.0.0.1/file")).resolves.toBe(false);
+
+        vi.stubEnv("NODE_ENV", "production");
+        await expect(isSafeOutboundUrl("http://127.0.0.1:4010/v1/models")).resolves.toBe(true);
+        vi.unstubAllEnvs();
     });
 });

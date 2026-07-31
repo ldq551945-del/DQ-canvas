@@ -238,11 +238,50 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS project_id text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS parent_task_id text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS attempt_no integer;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS client_request_id text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS execution_phase text NOT NULL DEFAULT 'created';
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS upstream_task_id text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS channel_id text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS provider text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS query_path text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS submitted_at timestamptz;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS next_poll_at timestamptz;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_poll_at timestamptz;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_upstream_status text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS result_payload jsonb;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS worker_id text;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS lease_until timestamptz;
+ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_heartbeat_at timestamptz;
+ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_execution_phase;
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
+
 DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
 CREATE UNIQUE INDEX generation_tasks_user_client_request_idx ON generation_tasks (user_id, task_type, client_request_id, COALESCE(attempt_no, 0)) WHERE client_request_id IS NOT NULL AND client_request_id <> '';
 CREATE INDEX IF NOT EXISTS generation_tasks_conversation_idx ON generation_tasks (conversation_id, updated_at DESC) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_run_idx ON generation_tasks (run_id, updated_at DESC) WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_user_project_idx ON generation_tasks (user_id, project_id, task_type, status) WHERE project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
+
+CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
+    worker_id text PRIMARY KEY,
+    last_seen_at timestamptz NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS generation_worker_heartbeats_seen_idx ON generation_worker_heartbeats (last_seen_at DESC);
+
+CREATE TABLE IF NOT EXISTS generation_webhook_events (
+    channel_id text NOT NULL,
+    event_id text NOT NULL,
+    upstream_task_id text NOT NULL,
+    task_id text,
+    task_type text,
+    payload_hash text NOT NULL,
+    status text NOT NULL DEFAULT 'received',
+    received_at timestamptz NOT NULL DEFAULT now(),
+    processed_at timestamptz,
+    PRIMARY KEY (channel_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS generation_webhook_events_received_idx ON generation_webhook_events (received_at DESC);
 
 CREATE TABLE IF NOT EXISTS creative_conversations (
     id text PRIMARY KEY,

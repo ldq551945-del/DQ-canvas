@@ -242,7 +242,7 @@ export function WorkPublicationEditor({
                                                         <video src={candidate.previewUrl} className="size-full object-cover" preload="metadata" muted />
                                                     ) : null}
                                                     <Checkbox
-                                                        className="absolute left-2 top-2 rounded bg-white/90 p-1 leading-none shadow-sm dark:bg-stone-950/90"
+                                                        className="!absolute !left-2 !top-2 !m-0 [&_.ant-checkbox-inner]:!size-5 [&_.ant-checkbox-inner]:!border-white/90 [&_.ant-checkbox-inner]:!bg-white/95 [&_.ant-checkbox-checked_.ant-checkbox-inner]:!border-stone-950 [&_.ant-checkbox-checked_.ant-checkbox-inner]:!bg-stone-950 dark:[&_.ant-checkbox-inner]:!border-stone-700 dark:[&_.ant-checkbox-inner]:!bg-stone-900 dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:!border-white dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:!bg-white dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:after:!border-stone-950"
                                                         checked={selected}
                                                         aria-label={`选择 ${candidate.originalName}`}
                                                         onChange={(event) => setSelectedKeys((keys) => (event.target.checked ? [...new Set([...keys, candidate.storageKey])] : keys.filter((key) => key !== candidate.storageKey)))}

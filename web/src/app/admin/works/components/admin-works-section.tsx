@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminAccountId, AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { workStatusToneClass } from "@/lib/work-publication-status";
 import {
     deleteAdminWorkPublication,
     listAdminWorkPublications,
@@ -456,14 +457,11 @@ function AdminWorkStatus({ work }: { work: WorkPublication }) {
     const version = work.currentVersion;
     if (!version) return <Tag className="m-0">未知</Tag>;
     const moderationSignal = version.moderationStatus === "pending" ? moderationSignalText(version.moderationProvider, version.moderationSignal) : "";
-    const tag =
-        work.lifecycleStatus === "revoked" ? (
-            <Tag className="m-0">用户已下架</Tag>
-        ) : (
-            <Tag color={adminStatusColor(version.moderationStatus)} className="m-0">
-                {adminStatusLabel(version.moderationStatus)}
-            </Tag>
-        );
+    const tag = (
+        <span className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium leading-none ${workStatusToneClass(work.lifecycleStatus === "revoked" ? "revoked" : version.moderationStatus)}`}>
+            {work.lifecycleStatus === "revoked" ? "用户已下架" : adminStatusLabel(version.moderationStatus)}
+        </span>
+    );
     return (
         <div className="flex flex-col items-start gap-1">
             {moderationSignal ? <Tooltip title={moderationSignal}>{tag}</Tooltip> : tag}
@@ -592,10 +590,6 @@ function formatAdminTime(value: string) {
 
 function adminStatusLabel(status: WorkPublicationModerationStatus) {
     return status === "pending" ? "待审核" : status === "approved" ? "已通过" : status === "rejected" ? "已驳回" : status === "taken_down" ? "已下架" : "草稿";
-}
-
-function adminStatusColor(status: WorkPublicationModerationStatus) {
-    return status === "pending" ? "processing" : status === "approved" ? "success" : status === "rejected" || status === "taken_down" ? "error" : "default";
 }
 
 function moderationSignalText(provider: string | undefined, value: unknown) {

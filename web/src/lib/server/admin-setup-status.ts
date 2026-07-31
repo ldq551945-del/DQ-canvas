@@ -2,6 +2,7 @@ import { getAuthSettings, getPublicUserSummary, type AuthSettings, type PublicUs
 import { listBillingProducts } from "@/lib/server/billing-service";
 import { getDatabaseProvider, getPostgresConnectionString, type BillingProductRecord } from "@/lib/server/database";
 import { getPaymentConfigSummary, hasPaymentProductionSecret } from "@/lib/server/payment-config-status";
+import { channelConnectionReady } from "@/lib/channel-protocol-registry";
 
 export type AdminSetupStepStatus = "done" | "attention" | "pending";
 export type AdminSetupAccent = "blue" | "emerald" | "amber" | "rose" | "violet" | "slate";
@@ -42,7 +43,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
     const { settings, userSummary } = input;
     const products = input.products || [];
     const admins = userSummary.activeAdmins;
-    const enabledChannels = settings.systemChannels.filter((channel) => channel.enabled && channel.baseUrl.trim() && channel.apiKey.trim()).length;
+    const enabledChannels = settings.systemChannels.filter((channel) => channel.enabled && channelConnectionReady(channel)).length;
     const enabledProducts = products.filter((product) => product.enabled).length;
     const enabledPlanProducts = countEnabledPlanProducts(products);
     const paymentConfig = input.paymentConfig;

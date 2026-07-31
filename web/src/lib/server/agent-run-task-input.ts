@@ -4,6 +4,7 @@ import type { AgentRun, AgentRunReference, AgentRunTask } from "@/lib/server/age
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
 
 import { selectedCanvasNodeIds } from "./agent-run-surface-policy";
+import { agentCanvasOutputNodeIds, agentCanvasTaskNodeId } from "./agent-run-canvas-node-ids";
 
 export type CanvasTaskReferenceNode = {
     title: string;
@@ -102,30 +103,59 @@ export function agentSurfaceImageSize(surface: AgentRun["surface"], snapshot: un
 
 export function normalizeCanvasPlanForSelection(plan: AgentPlan, snapshot: unknown, requestPrompt: string): AgentPlan {
     const nodes = canvasSnapshotNodes(snapshot);
-    const selectedTextEntry = selectedCanvasNodeIds(snapshot)
-        .map((id) => [id, nodes.get(id)] as const)
-        .find((entry): entry is readonly [string, CanvasTaskReferenceNode] => entry[1]?.type === "text");
-    if (!selectedTextEntry || !requestsSelectedTextEdit(requestPrompt)) return plan;
-    const [targetNodeId, target] = selectedTextEntry;
-    const plannedText = plan.deliverables.find((item) => item.type === "text");
-    const original = target.content?.trim() || "";
-    const prompt = ["请按用户要求改写当前提示词，只返回修改后的完整提示词，不要解释、标题或 Markdown。", `用户要求：${requestPrompt}`, original ? `当前提示词：${original}` : ""].filter(Boolean).join("\n\n");
+    const selectedEntries = selectedCanvasNodeIds(snapshot).map((id) => [id, nodes.get(id)] as const);
+    const selectedTextEntry = selectedEntries.find((entry): entry is readonly [string, CanvasTaskReferenceNode] => entry[1]?.type === "text");
+    if (selectedTextEntry && requestsSelectedTextEdit(requestPrompt)) {
+        const [targetNodeId, target] = selectedTextEntry;
+        const plannedText = plan.deliverables.find((item) => item.type === "text");
+        const original = target.content?.trim() || "";
+        const prompt = ["请按用户要求改写当前提示词，只返回修改后的完整提示词，不要解释、标题或 Markdown。", `用户要求：${requestPrompt}`, original ? `当前提示词：${original}` : ""].filter(Boolean).join("\n\n");
+        return {
+            ...plan,
+            intent: "generation",
+            objective: requestPrompt,
+            reply: "我会直接修改当前提示词节点，不会自动生成图片。",
+            decisions: [],
+            projectHandoff: undefined,
+            deliverables: [
+                {
+                    id: plannedText?.id?.trim() || "edit-selected-text",
+                    targetNodeId,
+                    title: `修改${target.title || "提示词"}`,
+                    type: "text",
+                    model: plannedText?.model,
+                    prompt,
+                    count: 1,
+                    dependencies: [],
+                    assetIds: [],
+                },
+            ],
+        };
+    }
+
+    const selectedImageEntry = selectedEntries.find((entry): entry is readonly [string, CanvasTaskReferenceNode] => entry[1]?.type === "image");
+    if (!selectedImageEntry || !requestsSelectedImageEdit(requestPrompt)) return plan;
+    const [targetNodeId, target] = selectedImageEntry;
+    const plannedImage = plan.deliverables.find((item) => item.type === "image");
     return {
         ...plan,
         intent: "generation",
         objective: requestPrompt,
-        reply: "我会直接修改当前提示词节点，不会自动生成图片。",
+        reply: "我会直接编辑当前图片，不会改成视频任务。",
+        skillIds: [],
         decisions: [],
         projectHandoff: undefined,
         deliverables: [
             {
-                id: plannedText?.id?.trim() || "edit-selected-text",
+                id: plannedImage?.id?.trim() || "edit-selected-image",
                 targetNodeId,
-                title: `修改${target.title || "提示词"}`,
-                type: "text",
-                model: plannedText?.model,
-                prompt,
-                count: 1,
+                title: `编辑${target.title || "图片"}`,
+                type: "image",
+                model: plannedImage?.model,
+                prompt: requestPrompt,
+                count: plannedImage?.count || 1,
+                ratio: plannedImage?.ratio,
+                quality: plannedImage?.quality,
                 dependencies: [],
                 assetIds: [],
             },
@@ -168,9 +198,27 @@ export function failedAgentTaskRetryOps(run: AgentRun, task: AgentRunTask) {
     if (run.surface !== "canvas") return [];
     const taskIndex = run.tasks.findIndex((item) => item.id === task.id);
     if (taskIndex < 0) return [];
-    const taskNodeId = `task-${run.id}-${taskIndex}`;
+    const taskNodeId = agentCanvasTaskNodeId(run.id, taskIndex);
+    const outputNodeIds = task.type === "text" ? [] : agentCanvasOutputNodeIds(run.id, taskIndex, task);
     return [
-        { type: "update_node", id: taskNodeId, metadata: { targetNodeId: task.targetNodeId, agentTaskStatus: "ready", agentTaskError: undefined, agentTaskAttempts: task.attempts } },
+        { type: "update_node", id: taskNodeId, metadata: { targetNodeId: task.targetNodeId, agentTaskStatus: "ready", agentTaskError: "", agentTaskAttempts: task.attempts, agentTaskOutputNodeIds: outputNodeIds, agentGenerationTaskIds: [] } },
+        ...outputNodeIds.map((id) => ({
+            type: "update_node",
+            id,
+            metadata: {
+                agentRunId: run.id,
+                agentTaskId: task.id,
+                agentTaskType: task.type,
+                model: task.model,
+                prompt: task.prompt,
+                size: task.ratio,
+                quality: task.quality,
+                count: task.count,
+                status: "loading",
+                errorDetails: "",
+                agentGenerationTaskIds: [],
+            },
+        })),
         ...(task.targetNodeId ? [{ type: "connect_nodes", fromNodeId: task.targetNodeId, toNodeId: taskNodeId }] : []),
     ];
 }
@@ -192,6 +240,12 @@ function requestsSelectedTextEdit(prompt: string) {
     const requestsEdit = /修改|改写|优化|润色|调整|重写|精简|扩写|翻译/u.test(normalized);
     const requestsMedia = /(?:生成|生图|出图|绘制|制作).{0,10}(?:图片|图像|画面|视频|音频)|(?:图片|图像|画面|视频|音频).{0,10}(?:生成|生图|出图|绘制|制作)/u.test(normalized);
     return requestsEdit && !requestsMedia;
+}
+
+function requestsSelectedImageEdit(prompt: string) {
+    const explicitlyRequestsAnotherMedium = /(?:视频|短视频|动画|动起来|运动起来|运镜|音频|配音|朗读|歌曲|音乐)/u.test(prompt);
+    if (explicitlyRequestsAnotherMedium) return false;
+    return /换成|替换|换掉|改成|改为|变成|变为|做成|修改|调整|重绘|重做|修图|扩图|去掉|移除|删除|添加|增加|上色|改色|换背景|风格化/u.test(prompt);
 }
 
 function positiveNumber(value: unknown) {

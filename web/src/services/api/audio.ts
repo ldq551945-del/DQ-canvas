@@ -1,11 +1,24 @@
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = {
+    signal?: AbortSignal;
+    source?: string;
+    conversationId?: string;
+    runId?: string;
+    surface?: "chat" | "canvas" | "drama";
+    projectId?: string;
+    parentTaskId?: string;
+    attemptNo?: number;
+    clientRequestId?: string;
+};
 
-type AudioTaskPayload = { task?: { id: string; status: "pending" | "running" | "success" | "error" | "cancelled"; model: string; result?: { url: string; mimeType: string }; error?: string }; error?: string };
+export type AudioGenerationTask = { id: string; status?: "pending" | "running" | "success" | "error" | "cancelled"; model: string };
+
+type AudioTaskPayload = { task?: AudioGenerationTask & GenerationTaskExecutionState & { result?: { url: string; mimeType: string }; error?: string }; error?: string };
 
 const AUDIO_TASK_POLL_INTERVAL_MS = 1800;
 const AUDIO_TASK_TIMEOUT_MS = 30 * 60 * 1000;
@@ -13,65 +26,88 @@ const AUDIO_TASK_TIMEOUT_MS = 30 * 60 * 1000;
 export type GeneratedAudioResult = { blob: Blob; url: string; mimeType: string };
 
 export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<GeneratedAudioResult> {
+    const task = await createAudioGenerationTask(config, prompt, options);
+    return waitForAudioGenerationTask(config, task, options);
+}
+
+export async function createAudioGenerationTask(config: AiConfig, prompt: string, options?: RequestOptions): Promise<AudioGenerationTask> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const model = requestConfig.model.trim();
     if (!model) throw new Error("请先配置音频模型");
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
-    let taskId = "";
+    const response = await fetch("/api/audio-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            config: {
+                model,
+                voice: normalizeAudioVoiceValue(config.audioVoice),
+                format,
+                speed: normalizeAudioSpeedValue(config.audioSpeed),
+                ...(instructions ? { instructions } : {}),
+            },
+            prompt,
+            source: options?.source,
+            context: taskContext(options),
+        }),
+        signal: options?.signal,
+    });
+    syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
+    if (!response.ok) throw new Error(await readFetchError(response, "创建音频任务失败"));
+    const payload = (await response.json()) as AudioTaskPayload;
+    if (!payload.task?.id) throw new Error(payload.error || "创建音频任务失败");
+    return payload.task;
+}
 
+export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGenerationTask, options?: RequestOptions): Promise<GeneratedAudioResult> {
+    const requestConfig = resolveModelRequestConfig(config, task.model);
+    const format = normalizeAudioFormatValue(config.audioFormat);
     try {
-        const response = await fetch("/api/audio-tasks", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                config: {
-                    model,
-                    voice: normalizeAudioVoiceValue(config.audioVoice),
-                    format,
-                    speed: normalizeAudioSpeedValue(config.audioSpeed),
-                    ...(instructions ? { instructions } : {}),
-                },
-                prompt,
-            }),
-            signal: options?.signal,
-        });
-        syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
-        if (!response.ok) throw new Error(await readFetchError(response, "创建音频任务失败"));
-        const payload = (await response.json()) as AudioTaskPayload;
-        taskId = payload.task?.id || "";
-        if (!taskId) throw new Error(payload.error || "创建音频任务失败");
-
         const startedAt = Date.now();
         for (;;) {
             if (options?.signal?.aborted) throw new DOMException("请求已取消", "AbortError");
             if (Date.now() - startedAt > AUDIO_TASK_TIMEOUT_MS) throw new Error("音频生成超时，请稍后重试");
-            const taskResponse = await fetch(`/api/audio-tasks/${encodeURIComponent(taskId)}`, { cache: "no-store", signal: options?.signal });
+            const taskResponse = await fetch(`/api/audio-tasks/${encodeURIComponent(task.id)}`, { cache: "no-store", signal: options?.signal });
             syncUserPointsFromHeaders(taskResponse.headers, requestConfig.apiSource);
             if (!taskResponse.ok) throw new Error(await readFetchError(taskResponse, "读取音频任务失败"));
             const taskPayload = (await taskResponse.json()) as AudioTaskPayload;
-            const task = taskPayload.task;
-            if (!task) throw new Error(taskPayload.error || "音频任务不存在");
-            if (task.status === "success") {
-                if (!task.result?.url) throw new Error("音频任务没有返回结果");
-                const audioResponse = await fetch(task.result.url, { signal: options?.signal });
+            const current = taskPayload.task;
+            if (!current) throw new Error(taskPayload.error || "音频任务不存在");
+            if (current.needsReview) throw new GenerationTaskNeedsReviewError();
+            if (current.status === "success") {
+                if (!current.result?.url) throw new Error("音频任务没有返回结果");
+                const audioResponse = await fetch(current.result.url, { signal: options?.signal });
                 if (!audioResponse.ok) throw new Error(await readFetchError(audioResponse, "读取音频结果失败"));
                 const blob = await audioResponse.blob();
                 await assertAudioBlob(blob);
                 await refreshUserPointsIfSystem(requestConfig.apiSource);
                 const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
-                return { blob: audio, url: task.result.url, mimeType: task.result.mimeType || audio.type };
+                return { blob: audio, url: current.result.url, mimeType: current.result.mimeType || audio.type };
             }
-            if (task.status === "error" || task.status === "cancelled") throw new Error(task.error || (task.status === "cancelled" ? "请求已取消" : "音频生成失败"));
+            if (current.status === "error" || current.status === "cancelled") throw new Error(current.error || (current.status === "cancelled" ? "请求已取消" : "音频生成失败"));
             await delay(AUDIO_TASK_POLL_INTERVAL_MS, options?.signal);
         }
     } catch (error) {
-        if (taskId && (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError"))) {
-            await fetch(`/api/audio-tasks/${encodeURIComponent(taskId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(() => undefined);
+        if (options?.signal?.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+            await fetch(`/api/audio-tasks/${encodeURIComponent(task.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(() => undefined);
         }
         await refreshUserPointsIfSystem(requestConfig.apiSource);
         throw error instanceof Error ? error : new Error("音频生成失败");
     }
+}
+
+function taskContext(options?: RequestOptions) {
+    if (!options) return undefined;
+    return {
+        conversationId: options.conversationId,
+        runId: options.runId,
+        surface: options.surface,
+        projectId: options.projectId,
+        parentTaskId: options.parentTaskId,
+        attemptNo: options.attemptNo,
+        clientRequestId: options.clientRequestId,
+    };
 }
 
 export async function storeGeneratedAudio(result: GeneratedAudioResult | Blob, format = "mp3"): Promise<UploadedFile> {

@@ -5,6 +5,25 @@ import { CanvasNodeType } from "../types";
 const snapshot: CanvasAgentSnapshot = { projectId: "p", title: "画布", nodes: [], connections: [], selectedNodeIds: [], viewport: { x: 0, y: 0, k: 1 } };
 
 describe("Agent 产物排版", () => {
+    it("keeps the current selection while stable loading nodes are planned and replayed", () => {
+        const selected: CanvasAgentSnapshot = {
+            ...snapshot,
+            nodes: [{ id: "reference", type: CanvasNodeType.Image, title: "参考图", position: { x: 0, y: 0 }, width: 340, height: 240, metadata: { status: "success" } }],
+            selectedNodeIds: ["reference"],
+        };
+        const ops = [
+            { type: "add_node" as const, id: "output-run-0-0", nodeType: CanvasNodeType.Image, position: { x: 400, y: 0 }, metadata: { agentRunId: "run", agentTaskId: "task", status: "loading" as const, size: "16:9" } },
+            { type: "update_node" as const, id: "output-run-0-0", metadata: { status: "success" as const, naturalWidth: 1600, naturalHeight: 900 } },
+        ];
+
+        const first = applyCanvasAgentOps(selected, ops);
+        const replay = applyCanvasAgentOps(first, ops);
+
+        expect(first.selectedNodeIds).toEqual(["reference"]);
+        expect(replay.nodes.filter((node) => node.id === "output-run-0-0")).toHaveLength(1);
+        expect(replay.nodes.find((node) => node.id === "output-run-0-0")).toMatchObject({ width: 340, height: 191.25, metadata: { status: "success", naturalWidth: 1600, naturalHeight: 900 } });
+    });
+
     it("places every Agent Run node in a free position and replays stable ids idempotently", () => {
         const occupied: CanvasAgentSnapshot = {
             ...snapshot,

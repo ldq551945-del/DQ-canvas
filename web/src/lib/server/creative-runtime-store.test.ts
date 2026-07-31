@@ -2,13 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRun } from "./agent-run-store";
 
-const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>() }));
+const mocks = vi.hoisted(() => ({
+    files: new Map<string, unknown>(),
+    databaseProvider: "file" as "file" | "postgres",
+    query: vi.fn(),
+    transaction: vi.fn(),
+}));
 
 vi.mock("@/lib/server/database", () => ({
     ensurePostgresSchema: vi.fn(),
-    getDatabaseProvider: vi.fn(() => "file"),
-    postgresQuery: vi.fn(),
-    withPostgresTransaction: vi.fn(),
+    getDatabaseProvider: vi.fn(() => mocks.databaseProvider),
+    postgresQuery: mocks.query,
+    withPostgresTransaction: mocks.transaction,
 }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async (fileName: string, fallback: unknown) => structuredClone(mocks.files.has(fileName) ? mocks.files.get(fileName) : fallback)),
@@ -34,6 +39,9 @@ import {
 describe("creative runtime file provider", () => {
     beforeEach(() => {
         mocks.files = new Map();
+        mocks.databaseProvider = "file";
+        mocks.query.mockReset();
+        mocks.transaction.mockReset();
     });
 
     it("creates a run bundle once and keeps message sequence stable", async () => {
@@ -157,6 +165,36 @@ describe("creative runtime file provider", () => {
         expect((mocks.files.get("creative-runtime.json") as { conversations: Array<{ contextSummaryThroughSequence: number }> }).conversations[0].contextSummaryThroughSequence).toBe(4);
     });
 
+    it("queries only messages newer than the persisted PostgreSQL context summary", async () => {
+        mocks.databaseProvider = "postgres";
+        const query = vi
+            .fn()
+            .mockResolvedValueOnce({
+                rows: [
+                    {
+                        id: "conversation",
+                        user_id: "user",
+                        surface: "chat",
+                        source: "agent",
+                        title: "长对话",
+                        status: "active",
+                        context_summary: "已压缩内容",
+                        context_summary_through_sequence: 120,
+                        created_at: new Date(0),
+                        updated_at: new Date(0),
+                        last_message_at: new Date(0),
+                    },
+                ],
+            })
+            .mockResolvedValueOnce({ rows: [] });
+        mocks.transaction.mockImplementation(async (handler: (client: { query: typeof query }) => Promise<unknown>) => handler({ query }));
+
+        await expect(getCreativeConversationContext("conversation", "user", "current-run")).resolves.toEqual({ summary: "已压缩内容", summaryThroughSequence: 120, recentMessages: [] });
+
+        expect(String(query.mock.calls[1]?.[0])).toContain("sequence > $3");
+        expect(query.mock.calls[1]?.[1]).toEqual(["conversation", "current-run", 120]);
+    });
+
     it("appends a workbench exchange atomically and advances the sequence", async () => {
         await createCreativeConversation("user", { surface: "chat", source: "image-workbench" });
         const conversation = (mocks.files.get("creative-runtime.json") as { conversations: Array<{ id: string }> }).conversations[0];
@@ -172,6 +210,18 @@ describe("creative runtime file provider", () => {
         expect(exchange).toMatchObject({ userMessage: { sequence: 1, role: "user" }, assistantMessage: { sequence: 2, role: "assistant" } });
         expect(await listCreativeMessages(conversation.id)).toHaveLength(2);
         await expect(appendCreativeConversationExchange({ userId: "other", conversationId: conversation.id, userContent: "test", assistantContent: "reply" })).rejects.toMatchObject({ status: 404 });
+    });
+
+    it("is idempotent for the same request identity but keeps identical prompts from new requests", async () => {
+        const conversation = await createCreativeConversation("user", { surface: "chat", source: "image-workbench" });
+        const input = { userId: "user", conversationId: conversation.id, userContent: "相同提示词", assistantContent: "已收到生成需求。", runId: "request-one" };
+        const first = await appendCreativeConversationExchange(input);
+        const replay = await appendCreativeConversationExchange(input);
+        const second = await appendCreativeConversationExchange({ ...input, runId: "request-two" });
+
+        expect(replay).toEqual(first);
+        expect(second.userMessage.id).not.toBe(first.userMessage.id);
+        expect((await listCreativeMessages(conversation.id)).filter((message) => message.role === "user")).toHaveLength(2);
     });
 
     it("filters conversation sources before applying pagination", async () => {

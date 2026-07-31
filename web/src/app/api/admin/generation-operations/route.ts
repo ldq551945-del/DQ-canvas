@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { listAdminGenerationOperations } from "@/lib/server/generation-operations-service";
 
 export async function GET(request: Request) {
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     if (user.role !== "admin") return NextResponse.json({ code: 403, data: null, msg: "需要管理员权限" }, { status: 403 });
     const params = new URL(request.url).searchParams;

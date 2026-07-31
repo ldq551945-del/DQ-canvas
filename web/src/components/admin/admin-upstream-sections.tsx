@@ -24,15 +24,13 @@ import type { AgentReadiness } from "@/components/admin/admin-generation-setting
 import { AdminLocalMediaStorage } from "@/components/admin/admin-local-media-storage";
 import { QuotaRuleTable } from "@/components/admin/admin-quota-rules";
 import { AdminOverview, buildOperationsSummary } from "@/components/admin/admin-overview";
-import { AdminLogicalModelManager } from "@/components/admin/admin-logical-model-manager";
+import { AdminChannelWorkspace } from "@/components/admin/channels/admin-channel-workspace";
 import { Metric, Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminSectionNav, adminSections } from "@/components/admin/admin-section-nav";
 import type { AdminSectionKey } from "@/components/admin/admin-sections";
 import { UpdateCenterPanel } from "@/components/admin/admin-update-center";
 import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from "@/components/admin/admin-settings-controls";
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
-import { createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
-import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -85,7 +83,6 @@ import {
     SettingsAnchorItem,
     FinanceFlowItem,
     FinanceMiniRow,
-    createSystemChannel,
     suggestedChannelModels,
     buildAdvancedConfigFromHealth,
     firstOkResult,
@@ -104,161 +101,41 @@ import {
 import { PROMPT_PAGE_SIZE, PROMPT_SEARCH_DEBOUNCE_MS, CDK_PAGE_SIZE, GENERATION_LOG_PAGE_SIZE } from "./use-admin-dashboard-controller";
 
 export function AdminChannelsSection({ controller }: { controller: AdminDashboardController }) {
-    const {
-        settings,
-        setSettings,
-        settingsLoading,
-        fetchingModelId,
-        testingChannelKey,
-        channelHealthResults,
-        activeSection,
-        settingsSummary,
-        saveSettings,
-        updateChannel,
-        addChannel,
-        deleteChannel,
-        fetchModelsForChannel,
-        fetchAllModels,
-        testChannelHealth,
-        testAllChannelHealth,
-    } = controller;
+    const { settings, setSettings, settingsLoading, fetchingModelId, testingChannelKey, channelHealthResults, activeSection, saveSettings, deleteChannel, fetchModelsForChannel, fetchAllModels, testChannelHealth, testAllChannelHealth } = controller;
     if (activeSection !== "channels") return null;
     return (
         <Panel>
             <PanelHeader
-                title="接口配置"
-                description="添加上游接口、拉取模型、测试文本/图片/视频可用性，并设置用户默认模型。"
+                title="模型渠道"
+                description="管理上游渠道、协议、模型能力与站内逻辑模型路由。"
                 actions={
-                    <div className="flex items-center justify-end gap-1.5 sm:w-auto sm:flex-row sm:gap-2">
-                        <div className="hidden flex-wrap gap-2 text-xs text-stone-500 sm:flex dark:text-stone-400">
-                            <Tag className="m-0">
-                                接口 {settingsSummary.enabledChannels}/{settingsSummary.totalChannels}
-                            </Tag>
-                            <Tag className="m-0">模型 {settingsSummary.models}</Tag>
-                        </div>
-                        <div className="flex items-center gap-1.5 sm:w-auto sm:flex-wrap sm:justify-end sm:gap-2">
-                            <Button aria-label="拉取全部模型" title="拉取全部模型" icon={<RefreshCw className="size-4" />} loading={fetchingModelId === "all"} onClick={() => void fetchAllModels()}>
-                                <span className="hidden sm:inline">拉取全部模型</span>
-                            </Button>
-                            <Button aria-label="新增接口" title="新增接口" icon={<Plus className="size-4" />} onClick={addChannel}>
-                                <span className="sm:hidden">新增</span>
-                                <span className="hidden sm:inline">新增接口</span>
-                            </Button>
-                            <Button
-                                type="primary"
-                                aria-label="保存接口配置"
-                                title="保存接口配置"
-                                loading={settingsLoading}
-                                icon={<Save className="size-4" />}
-                                onClick={() => saveSettings({ systemChannels: settings.systemChannels, logicalModels: settings.logicalModels, defaultModels: settings.defaultModels }, "接口与模型路由已保存")}
-                            >
-                                <span className="sm:hidden">保存</span>
-                                <span className="hidden sm:inline">保存接口配置</span>
-                            </Button>
-                        </div>
-                    </div>
+                    <Button
+                        type="primary"
+                        aria-label="保存模型渠道配置"
+                        title="保存模型渠道配置"
+                        loading={settingsLoading}
+                        icon={<Save className="size-4" />}
+                        onClick={() => saveSettings({ systemChannels: settings.systemChannels, logicalModels: settings.logicalModels, defaultModels: settings.defaultModels }, "模型渠道配置已保存")}
+                    >
+                        保存更改
+                    </Button>
                 }
             />
-            <div className="space-y-3 p-3 sm:space-y-5 sm:p-5">
-                <div className="hidden flex-col gap-3 rounded-lg border border-stone-200 bg-stone-50/70 p-3 sm:flex xl:flex-row xl:items-center xl:justify-between dark:border-stone-800 dark:bg-stone-900/40">
-                    <div className="text-sm leading-6 text-stone-600 dark:text-stone-300">用户端不再显示接口配置，所有模型与上游地址统一由管理员在这里匹配。</div>
-                </div>
-                <div className="space-y-3">
-                    {settings.systemChannels.map((channel) => (
-                        <SystemChannelEditor
-                            key={channel.id}
-                            channel={channel}
-                            fetching={fetchingModelId === channel.id}
-                            testingKey={testingChannelKey}
-                            healthResults={channelHealthResults}
-                            onChange={(patch) => updateChannel(channel.id, patch)}
-                            onDelete={() => deleteChannel(channel.id)}
-                            onFetchModels={() => void fetchModelsForChannel(channel)}
-                            onTestHealth={(kind) => void testChannelHealth(channel, kind)}
-                            onTestAllHealth={() => void testAllChannelHealth(channel)}
-                        />
-                    ))}
-                    {!settings.systemChannels.length ? (
-                        <div className="rounded-lg border border-dashed border-stone-200 bg-stone-50/70 p-5 text-center text-sm text-stone-500 sm:p-8 dark:border-stone-800 dark:bg-stone-900/30 dark:text-stone-400">还没有接口配置。</div>
-                    ) : null}
-                </div>
-                <AdminLogicalModelManager channels={settings.systemChannels} logicalModels={settings.logicalModels} defaultModels={settings.defaultModels} onChange={(routing) => setSettings((current) => ({ ...current, ...routing }))} />
-                <section className="hidden">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                        <SectionTitle icon={<Sparkles className="size-4" />} title="Agent Skills" />
-                        <Button
-                            icon={<Plus className="size-4" />}
-                            onClick={() =>
-                                setSettings((current) => ({
-                                    ...current,
-                                    agentSkills: [
-                                        ...current.agentSkills,
-                                        { id: nanoid(), name: "新 Skill", description: "", instructions: "", enabled: true, keywords: [], workspaces: ["image"], action: "generate", requiresReference: false, defaultConfig: {} },
-                                    ],
-                                }))
-                            }
-                        >
-                            新增 Skill
-                        </Button>
-                    </div>
-                    <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                        {settings.agentSkills.map((skill) => (
-                            <div key={skill.id} className="rounded-lg border border-stone-200 bg-white p-4 dark:border-stone-700 dark:bg-stone-950/40">
-                                <div className="mb-3 flex items-center justify-between gap-3">
-                                    <Switch
-                                        checked={skill.enabled}
-                                        checkedChildren="启用"
-                                        unCheckedChildren="停用"
-                                        onChange={(enabled) => setSettings((current) => ({ ...current, agentSkills: current.agentSkills.map((item) => (item.id === skill.id ? { ...item, enabled } : item)) }))}
-                                    />
-                                    <Button type="text" danger icon={<Trash2 className="size-4" />} onClick={() => setSettings((current) => ({ ...current, agentSkills: current.agentSkills.filter((item) => item.id !== skill.id) }))}>
-                                        删除
-                                    </Button>
-                                </div>
-                                <div className="grid gap-3 sm:grid-cols-2">
-                                    <Input
-                                        value={skill.name}
-                                        placeholder="Skill 名称"
-                                        onChange={(event) => setSettings((current) => ({ ...current, agentSkills: current.agentSkills.map((item) => (item.id === skill.id ? { ...item, name: event.target.value } : item)) }))}
-                                    />
-                                    <Input
-                                        value={skill.keywords.join("、")}
-                                        placeholder="触发词，用顿号分隔"
-                                        onChange={(event) =>
-                                            setSettings((current) => ({
-                                                ...current,
-                                                agentSkills: current.agentSkills.map((item) =>
-                                                    item.id === skill.id
-                                                        ? {
-                                                              ...item,
-                                                              keywords: event.target.value
-                                                                  .split(/[、,，]/)
-                                                                  .map((word) => word.trim())
-                                                                  .filter(Boolean),
-                                                          }
-                                                        : item,
-                                                ),
-                                            }))
-                                        }
-                                    />
-                                </div>
-                                <Input
-                                    className="mt-3"
-                                    value={skill.description}
-                                    placeholder="用途说明"
-                                    onChange={(event) => setSettings((current) => ({ ...current, agentSkills: current.agentSkills.map((item) => (item.id === skill.id ? { ...item, description: event.target.value } : item)) }))}
-                                />
-                                <Input.TextArea
-                                    className="mt-3"
-                                    autoSize={{ minRows: 4, maxRows: 10 }}
-                                    value={skill.instructions}
-                                    placeholder="给 Agent 的完整执行规则"
-                                    onChange={(event) => setSettings((current) => ({ ...current, agentSkills: current.agentSkills.map((item) => (item.id === skill.id ? { ...item, instructions: event.target.value } : item)) }))}
-                                />
-                            </div>
-                        ))}
-                    </div>
-                </section>
+            <div className="p-3 sm:p-5">
+                <AdminChannelWorkspace
+                    settings={{ systemChannels: settings.systemChannels, logicalModels: settings.logicalModels, defaultModels: settings.defaultModels }}
+                    fetchingModelId={fetchingModelId}
+                    testingChannelKey={testingChannelKey}
+                    healthResults={channelHealthResults}
+                    saving={settingsLoading}
+                    onChange={(next) => setSettings((current) => ({ ...current, ...next }))}
+                    onDeleteChannel={deleteChannel}
+                    onFetchModels={fetchModelsForChannel}
+                    onFetchAll={fetchAllModels}
+                    onTestHealth={testChannelHealth}
+                    onTestAll={testAllChannelHealth}
+                    onPersist={(next, successText) => saveSettings(next, successText)}
+                />
             </div>
         </Panel>
     );

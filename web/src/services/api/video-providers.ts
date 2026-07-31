@@ -13,6 +13,7 @@ import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSe
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 
 import {
     type VideoResponse,
@@ -305,6 +306,37 @@ export async function createSeedanceTask(config: AiConfig, model: string, prompt
     } catch (error) {
         await refreshUserPointsIfSystem(config.apiSource);
         throw new Error(videoCreationError(readAxiosError(error, "Seedance 任务创建失败")));
+    }
+}
+
+export async function createSeedanceSpecialTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    assertSeedanceVideoReferences(videoReferences);
+    assertSeedanceAudioReferences(audioReferences);
+    const createPath = config.advancedConfig?.createPath || "/v1/seedance-special/videos";
+    const duration = normalizeSeedanceDuration(config.videoSeconds);
+    const payload = buildSeedanceSpecialRequest({
+        model: modelOptionName(model),
+        prompt,
+        ratio: normalizeSeedanceRatio(config.size),
+        duration: duration === -1 ? 5 : duration,
+        generateAudio: boolConfig(config.videoGenerateAudio, true),
+        references: {
+            images: await Promise.all(references.map(resolveSeedanceImageUrl)),
+            videos: await Promise.all(videoReferences.map(resolveSeedanceVideoUrl)),
+            audios: await Promise.all(audioReferences.map(resolveSeedanceAudioUrl)),
+        },
+    });
+    try {
+        const response = await axios.post<ApiEnvelope<Record<string, unknown>>>(aiApiUrl(config, createPath), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal });
+        syncUserPointsFromHeaders(response.headers, config.apiSource);
+        const created = unwrapEnvelope(response.data, "Seedance 特价版接口没有返回任务") as Record<string, unknown>;
+        const id = readTaskId(created);
+        if (!id) throw new Error("Seedance 特价版接口没有返回任务 ID");
+        await refreshUserPointsIfSystem(config.apiSource);
+        return { id, provider: "generation", model, pollPath: createPath };
+    } catch (error) {
+        await refreshUserPointsIfSystem(config.apiSource);
+        throw new Error(videoCreationError(readAxiosError(error, "Seedance 特价版任务创建失败")));
     }
 }
 

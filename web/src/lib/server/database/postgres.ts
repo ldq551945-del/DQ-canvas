@@ -1,4 +1,4 @@
-import { Pool, type QueryResult, type QueryResultRow } from "pg";
+import { Client, Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { POSTGRESQL_SCHEMA_SQL } from "@/lib/server/database/schema";
 
@@ -55,6 +55,8 @@ const POSTGRES_TABLES = [
     "generation_logs",
     "generation_log_assets",
     "generation_tasks",
+    "generation_worker_heartbeats",
+    "generation_webhook_events",
     "creative_conversations",
     "creative_messages",
     "creative_assets",
@@ -130,6 +132,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "published_work_versions_public_category_idx",
     "published_work_versions_public_tags_idx",
     "published_work_versions_public_search_idx",
+    "published_work_assets_unique_role",
     "published_work_assets_version_order_idx",
     "published_work_assets_storage_idx",
     "published_work_cases_open_unique_idx",
@@ -154,6 +157,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "payment_provider_events_provider_created_idx",
     "payment_provider_events_provider_event_idx",
     "cdk_codes_status_idx",
+    "cdk_codes_status_created_idx",
     "cdk_redemptions_user_id_idx",
     "announcements_visible_idx",
     "prompts_scope_updated_idx",
@@ -170,7 +174,11 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "generation_tasks_conversation_idx",
     "generation_tasks_run_idx",
     "generation_tasks_user_project_idx",
+    "generation_tasks_recovery_due_idx",
+    "generation_worker_heartbeats_seen_idx",
+    "generation_webhook_events_received_idx",
     "creative_conversations_user_updated_idx",
+    "creative_conversations_user_source_idx",
     "creative_conversations_project_idx",
     "creative_messages_conversation_sequence_idx",
     "creative_messages_run_idx",
@@ -179,6 +187,8 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "local_media_assets_owner_created_idx",
     "local_media_assets_source_idx",
     "local_media_assets_expires_idx",
+    "local_media_assets_local_created_idx",
+    "local_media_assets_local_filter_idx",
     "local_media_assets_storage_provider_check",
     "local_media_assets_external_object_idx",
     "canvas_projects_user_updated_idx",
@@ -224,6 +234,15 @@ const POSTGRES_SCHEMA_OBJECTS = [
 const globalForPostgres = globalThis as typeof globalThis & {
     __vozebProPostgresPool?: Pool;
     __vozebProPostgresSchemaReady?: Promise<void>;
+    __vozebProPostgresNotifications?: PostgresNotificationState;
+};
+
+type PostgresNotificationListener = (payload: string) => void;
+type PostgresNotificationState = {
+    client?: Client;
+    connecting?: Promise<void>;
+    reconnectTimer?: ReturnType<typeof setTimeout>;
+    listeners: Map<string, Set<PostgresNotificationListener>>;
 };
 
 export function getDatabaseProvider(): DatabaseProvider {
@@ -259,22 +278,95 @@ export async function postgresQuery<T extends QueryResultRow = QueryResultRow>(t
 
 export async function withPostgresTransaction<T>(handler: (client: QueryExecutor) => Promise<T>) {
     const client = await getPostgresPool().connect();
+    let queryQueue = Promise.resolve();
+    let queryFailed = false;
+    let queryError: unknown;
     const executor: QueryExecutor = {
         query<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
-            return client.query<T>(prefixPostgresSql(text), values);
+            const pending = queryQueue.then(async () => {
+                if (queryFailed) throw queryError;
+                try {
+                    return await client.query<T>(prefixPostgresSql(text), values);
+                } catch (error) {
+                    queryFailed = true;
+                    queryError = error;
+                    throw error;
+                }
+            });
+            queryQueue = pending.then(
+                () => undefined,
+                () => undefined,
+            );
+            return pending;
         },
     };
     try {
         await client.query("BEGIN");
         const result = await handler(executor);
+        await queryQueue;
+        if (queryFailed) throw queryError;
         await client.query("COMMIT");
         return result;
     } catch (error) {
+        await queryQueue;
         await client.query("ROLLBACK");
         throw error;
     } finally {
         client.release();
     }
+}
+
+export async function subscribePostgresNotification(channel: string, listener: PostgresNotificationListener) {
+    const name = normalizeNotificationChannel(channel);
+    const state: PostgresNotificationState = globalForPostgres.__vozebProPostgresNotifications ?? (globalForPostgres.__vozebProPostgresNotifications = { listeners: new Map() });
+    const existing = state.listeners.get(name);
+    const listeners = existing || new Set<PostgresNotificationListener>();
+    listeners.add(listener);
+    state.listeners.set(name, listeners);
+    if (state.client && !existing) await state.client.query(`LISTEN ${name}`);
+    else await ensurePostgresNotificationClient(state);
+    return () => {
+        const current = state.listeners.get(name);
+        current?.delete(listener);
+        if (!current?.size) state.listeners.delete(name);
+    };
+}
+
+async function ensurePostgresNotificationClient(state: PostgresNotificationState) {
+    if (state.client) return;
+    if (state.connecting) return state.connecting;
+    const connectionString = getPostgresConnectionString();
+    if (!connectionString) throw new Error("DATABASE_URL is required for PostgreSQL notifications");
+    const client = new Client({ connectionString, ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined });
+    state.connecting = (async () => {
+        await client.connect();
+        client.on("notification", (message) => {
+            for (const listener of [...(state.listeners.get(message.channel) || [])]) listener(message.payload || "");
+        });
+        client.on("error", () => reconnectPostgresNotifications(state, client));
+        for (const channel of state.listeners.keys()) await client.query(`LISTEN ${channel}`);
+        state.client = client;
+    })().finally(() => {
+        state.connecting = undefined;
+    });
+    return state.connecting;
+}
+
+function reconnectPostgresNotifications(state: PostgresNotificationState, client: Client) {
+    if (state.client === client) state.client = undefined;
+    void client.end().catch(() => undefined);
+    if (!state.listeners.size || state.reconnectTimer) return;
+    state.reconnectTimer = setTimeout(() => {
+        state.reconnectTimer = undefined;
+        void ensurePostgresNotificationClient(state).catch(() => reconnectPostgresNotifications(state, client));
+    }, 1_000);
+    state.reconnectTimer.unref?.();
+}
+
+function normalizeNotificationChannel(value: string) {
+    const channel = value.trim().toLowerCase();
+    if (!/^[a-z][a-z0-9_]{0,62}$/.test(channel)) throw new Error("Invalid PostgreSQL notification channel");
+    return channel;
 }
 
 export async function ensurePostgresSchema() {

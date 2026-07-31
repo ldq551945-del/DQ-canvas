@@ -4,7 +4,8 @@ import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "qingyan" | "globalaiopc" | "seedance" | "compatible";
+export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+export type SystemChannelAuthMode = "none" | "bearer" | "x-api-key" | "custom-header";
 
 export type SystemChannelModelConfig = {
     capability: LogicalModelCapability;
@@ -12,7 +13,11 @@ export type SystemChannelModelConfig = {
     apiFormat?: ApiCallFormat;
     protocol?: SystemChannelProtocol;
     createPath?: string;
+    editPath?: string;
+    imageToVideoPath?: string;
     queryPath?: string;
+    cancelPath?: string;
+    cancelMethod?: "POST" | "DELETE";
     requestTemplate?: string;
     resultField?: string;
     statusField?: string;
@@ -25,13 +30,21 @@ export type SystemChannelModelConfig = {
 
 export type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
+    authMode?: SystemChannelAuthMode;
+    authHeader?: string;
+    authPrefix?: string;
+    documentationUrl?: string;
     globalAiOpcPreset?: GlobalAiOpcPresetId;
     globalAiOpcPresets?: GlobalAiOpcPresetId[];
     textModel: string;
     imageModel: string;
     videoModel: string;
     createPath: string;
+    editPath?: string;
+    imageToVideoPath?: string;
     queryPath: string;
+    cancelPath?: string;
+    cancelMethod?: "POST" | "DELETE";
     requestTemplate: string;
     resultField: string;
     statusField: string;
@@ -43,6 +56,7 @@ export type SystemChannelAdvancedConfig = {
     modelCatalogPaths?: string[];
     modelCapabilities?: Record<string, LogicalModelCapability>;
     modelConfigs?: Record<string, SystemChannelModelConfig>;
+    operationConfigs?: Partial<Record<LogicalModelCapability, SystemChannelModelConfig>>;
 };
 
 export type LegacyUserQuota = {
@@ -119,6 +133,7 @@ export type AgentSkill = {
     id: string;
     name: string;
     description: string;
+    plannerSummary?: string;
     instructions: string;
     enabled: boolean;
     keywords: string[];
@@ -330,6 +345,7 @@ export type PublicUser = {
     status: UserStatus;
     planId: string;
     planName: string;
+    hasActivePlan: boolean;
     pointsBalance: number;
     permanentPointsBalance: number;
     dailyPointsBalance: number;
@@ -349,7 +365,7 @@ export type PublicUserSummary = {
     totalPointsBalance: number;
 };
 
-export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
+export type StoredUser = Omit<PublicUser, "avatarUrl" | "planName" | "hasActivePlan" | "permanentPointsBalance" | "dailyPointsBalance" | "dailyPointsExpiresAt"> & {
     avatarStorageKey?: string;
     passwordHash: string;
 };

@@ -7,11 +7,12 @@ import { useCallback, useEffect } from "react";
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
 import { resolveImageRequestSize } from "@/lib/image-size";
 import { readImageMeta } from "@/lib/image-utils";
-import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
+import { createAudioGenerationTask } from "@/services/api/audio";
 import { createTextGenerationTask } from "@/services/api/text";
 import { createServerVideoGenerationTask } from "@/services/api/video";
 import type { InsertAssetPayload } from "../components/asset-picker-modal";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "../components/canvas-agent-panel-motion";
+import { retryCanvasAgentNode } from "../components/canvas-agent-node-retry";
 import { buildNodeGenerationContext, buildNodeResponseMessages, hydrateNodeGenerationContext } from "../components/canvas-node-generation";
 import { type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -26,7 +27,6 @@ const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: ()
 
 import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
 import {
-    audioMetadata,
     buildAudioGenerationMetadata,
     buildGenerationConfig,
     buildImageGenerationMetadata,
@@ -75,8 +75,8 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         agentCloseTimerRef,
         autoOpenedAgentRef,
     } = state;
-    const { startGenerationRequest, finishGenerationRequest, completeVideoTask, startAndCompleteImageTask, completeTextTask } = tasks;
-    const { screenToCanvas } = interactions;
+    const { startGenerationRequest, finishGenerationRequest, completeVideoTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
+    const { screenToCanvas, applyAgentOps } = interactions;
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -342,8 +342,16 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     if (!isEmptyAudioNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: audioId }]);
                     const controller = startGenerationRequest(audioId, nodeId, nodeId, runController);
                     try {
-                        const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, effectivePrompt, { signal: controller.signal }), generationConfig.audioFormat);
-                        setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, ...audioMetadata(audio), prompt: effectivePrompt, ...buildAudioGenerationMetadata(generationConfig) } } : node)));
+                        const task = await createAudioGenerationTask(generationConfig, effectivePrompt, {
+                            signal: controller.signal,
+                            source: "canvas",
+                            conversationId: currentProject?.creativeConversationId,
+                            surface: "canvas",
+                            projectId,
+                            ...createFreshGenerationTaskContext("canvas-audio", [projectId, audioId]),
+                        });
+                        setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, audioTask: task } } : node)));
+                        await completeAudioTask(audioId, generationConfig, task, controller, effectivePrompt);
                     } finally {
                         finishGenerationRequest(audioId, controller);
                     }
@@ -428,7 +436,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 setRunningNodeId(null);
             }
         },
-        [completeTextTask, completeVideoTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
+        [completeAudioTask, completeTextTask, completeVideoTask, currentProject?.creativeConversationId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startAndCompleteImageTask, startGenerationRequest],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -436,6 +444,21 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
+            if (node.metadata?.agentRunId && node.metadata.agentTaskId) {
+                setRunningNodeId(node.id);
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: "" } } : item)));
+                try {
+                    await retryCanvasAgentNode(node, applyAgentOps);
+                    message.success("Agent 任务已重新生成");
+                } catch (error) {
+                    const errorDetails = error instanceof Error ? error.message : "Agent 任务重试失败";
+                    message.error(errorDetails);
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                } finally {
+                    setRunningNodeId(null);
+                }
+                return;
+            }
             const sourceNode = findRetrySourceNode(node.id, nodesRef.current, connectionsRef.current) || node;
             const batchRoot = node.metadata?.batchRootId ? nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
             const savedImageMetadata = isCanvasImageNodeType(node.type) ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
@@ -502,8 +525,16 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     return;
                 }
                 if (node.type === CanvasNodeType.Audio) {
-                    const audio = await storeGeneratedAudio(await requestAudioGeneration(generationConfig, prompt, { signal: controller.signal }), generationConfig.audioFormat);
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, ...audioMetadata(audio), prompt, ...buildAudioGenerationMetadata(generationConfig) } } : item)));
+                    const task = await createAudioGenerationTask(generationConfig, prompt, {
+                        signal: controller.signal,
+                        source: "canvas",
+                        conversationId: currentProject?.creativeConversationId,
+                        surface: "canvas",
+                        projectId,
+                        ...createFreshGenerationTaskContext("canvas-audio-retry", [projectId, node.id]),
+                    });
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, audioTask: task } } : item)));
+                    await completeAudioTask(node.id, generationConfig, task, controller, prompt);
                     return;
                 }
 
@@ -526,13 +557,31 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 message.error(errorDetails);
-                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined, textTask: undefined } } : item)));
+                setNodes((prev) =>
+                    prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined, textTask: undefined, videoTask: undefined, audioTask: undefined } } : item)),
+                );
             } finally {
                 finishGenerationRequest(node.id, controller);
                 setRunningNodeId(null);
             }
         },
-        [completeTextTask, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, startAndCompleteImageTask, startGenerationRequest],
+        [
+            applyAgentOps,
+            completeAudioTask,
+            completeTextTask,
+            completeVideoTask,
+            currentProject?.creativeConversationId,
+            effectiveConfig,
+            finishGenerationRequest,
+            isAiConfigReady,
+            message,
+            openConfigDialog,
+            projectId,
+            setNodes,
+            setRunningNodeId,
+            startAndCompleteImageTask,
+            startGenerationRequest,
+        ],
     );
 
     const generateImageFromTextNode = useCallback(

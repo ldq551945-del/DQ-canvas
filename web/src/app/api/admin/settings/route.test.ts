@@ -69,6 +69,19 @@ describe("admin settings model routing", () => {
         expect(response.status).toBe(200);
         expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ logicalModels: [] }));
     });
+
+    it("saves a disabled channel after clearing its now-unresolvable default", async () => {
+        const response = await PATCH(
+            request({
+                systemChannels: [{ ...savedSettings.systemChannels[0], enabled: false, apiKey: "", hasApiKey: true }],
+                logicalModels: savedSettings.logicalModels,
+                defaultModels: savedSettings.defaultModels,
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.setAuthSettings).toHaveBeenCalledWith(expect.objectContaining({ defaultModels: expect.objectContaining({ textModel: "" }) }));
+    });
 });
 
 function request(body: unknown) {

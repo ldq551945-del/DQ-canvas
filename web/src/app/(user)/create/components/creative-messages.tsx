@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { downloadAgentMedia, type AgentMediaDownload } from "@/components/agent/agent-media-download";
+import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
 import { formatAgentMessageText } from "@/components/agent/agent-message-format";
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
@@ -32,6 +33,7 @@ export function CreativeMessages({
     materializingProjectId,
     onMaterializeProject,
     onRetryTask,
+    onRetryRun,
     onRetrySubmission,
     onEditMessage,
     selectedAssetIds,
@@ -49,6 +51,7 @@ export function CreativeMessages({
     materializingProjectId?: string;
     onMaterializeProject: (handoff: CreativeProjectHandoff) => Promise<MaterializedCreativeProject>;
     onRetryTask: (runId: string, taskId: string) => void;
+    onRetryRun: (runId: string) => void;
     onRetrySubmission: (messageId: string) => void;
     onEditMessage: (message: CreativeMessage) => void;
     selectedAssetIds: string[];
@@ -94,6 +97,8 @@ export function CreativeMessages({
                 const handoff = isCreativeProjectHandoff(item.metadata.projectHandoff) ? item.metadata.projectHandoff : null;
                 const displayContent = formatAgentMessageText(item.content);
                 const downloads = agentAssetDownloads(itemAssets);
+                const run = item.runId ? runDetails[item.runId] : undefined;
+                const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
                 return (
                     <article key={item.id} className={cn("group/message flex items-start gap-3", item.role === "user" ? "justify-end" : "justify-start")}>
                         {item.role === "assistant" ? (
@@ -103,9 +108,9 @@ export function CreativeMessages({
                         ) : null}
                         <div className={cn("min-w-0", item.role === "user" ? "max-w-[85%] py-1" : "min-w-0 flex-1")}>
                             {item.role === "user" && itemAssets.length ? <CreativeReferenceStrip assets={itemAssets} /> : null}
-                            <div className={cn("whitespace-pre-wrap break-words text-[15px] leading-7", item.status === "failed" && "text-red-600 dark:text-red-300", item.status === "cancelled" && "text-stone-400")}>
+                            <div className={cn("break-words text-[15px] leading-7", item.status === "failed" && "text-red-600 dark:text-red-300", item.status === "cancelled" && "text-stone-400")}>
                                 {item.role === "assistant" && item.status === "running" ? <LoaderCircle className="mr-2 inline size-4 animate-spin text-stone-400" /> : null}
-                                {displayContent}
+                                {item.role === "assistant" && item.status === "completed" ? <AgentMarkdown>{displayContent}</AgentMarkdown> : <span className="whitespace-pre-wrap">{displayContent}</span>}
                             </div>
                             {item.role !== "user" && itemAssets.length ? <CreativeAssetGrid assets={itemAssets} messageText={displayContent} selectedAssetIds={selectedAssetIds} onToggleAsset={onToggleAsset} /> : null}
                             {handoff ? (
@@ -117,7 +122,8 @@ export function CreativeMessages({
                                     onMaterialize={() => void onMaterializeProject(handoff).catch(() => undefined)}
                                 />
                             ) : null}
-                            {item.role === "assistant" && item.runId && runDetails[item.runId]?.tasks.some((task) => task.status === "failed") ? <FailedTaskActions run={runDetails[item.runId]} onRetryTask={onRetryTask} /> : null}
+                            {item.role === "assistant" && run && failedTasks.length ? <FailedTaskActions run={run} onRetryTask={onRetryTask} /> : null}
+                            {item.role === "assistant" && item.status === "failed" && run?.status === "failed" && !run.tasks.length ? <FailedPlanningAction onRetry={() => onRetryRun(run.id)} /> : null}
                             {item.role === "assistant" && item.status === "failed" && !item.runId ? <FailedSubmissionAction onRetry={() => onRetrySubmission(item.id)} /> : null}
                             {item.status !== "running" ? (
                                 <AgentMessageActions
@@ -164,6 +170,24 @@ function FailedSubmissionAction({ onRetry }: { onRetry: () => void }) {
                 重试
             </Button>
         </Tooltip>
+    );
+}
+
+function FailedPlanningAction({ onRetry }: { onRetry: () => void }) {
+    return (
+        <div className="mt-2 flex items-center gap-2">
+            <Button
+                type="text"
+                size="small"
+                className="!h-8 !rounded-md !px-2 !text-xs !font-medium !text-red-700 hover:!bg-red-50 hover:!text-red-800 dark:!text-red-300 dark:hover:!bg-red-950/30 dark:hover:!text-red-200"
+                icon={<RotateCcw className="size-3.5" />}
+                onClick={onRetry}
+                aria-label="重新分析本次请求"
+            >
+                重新分析
+            </Button>
+            <span className="text-xs text-stone-500 dark:text-stone-400">仅在你确认后重新请求</span>
+        </div>
     );
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, Bot, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -16,9 +16,12 @@ import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelO
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { watchCanvasAgentRun } from "./canvas-agent-run-client";
+import { withCanvasAgentRunWatch } from "./canvas-agent-run-watch-guard";
 import type { CanvasAgentRunStage } from "./canvas-agent-progress";
 import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/agent-message-format";
 import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
+import { useCanvasAgentAttachments } from "./use-canvas-agent-attachments";
+import { useCanvasAgentMessageScroll } from "./use-canvas-agent-message-scroll";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "./canvas-agent-panel-motion";
 import { CanvasNodeType, type CanvasAssistantMessage, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "../types";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
@@ -38,7 +41,7 @@ type CanvasAssistantPanelProps = {
     onConversationChange: (conversationId: string) => void;
     onApplyOps: (ops?: CanvasAgentOp[]) => CanvasAgentSnapshot;
     onLocateNode: (nodeId: string) => void;
-    onPasteImage: (file: File) => void;
+    onPasteImage: (file: File) => Promise<string>;
     closing: boolean;
     onCollapse: () => void;
 };
@@ -46,7 +49,6 @@ type CanvasAssistantPanelProps = {
 import {
     AssistantHistory,
     AssistantReferenceChip,
-    assistantImageReferenceLabel,
     assistantMessageToChatMessage,
     formatSessionTime,
     sessionPreview,
@@ -94,6 +96,7 @@ export function CanvasAssistantPanel({
     const [localActiveSessionId, setLocalActiveSessionId] = useState<string | null>(activeSessionId);
     const snapshotRef = useRef(snapshot);
     const restoredRunRef = useRef("");
+    const watchingRunIdsRef = useRef(new Set<string>());
     const sessionsKey = useMemo(() => JSON.stringify(sessions), [sessions]);
     const localSessionsKey = useMemo(() => JSON.stringify(localSessions), [localSessions]);
 
@@ -118,6 +121,16 @@ export function CanvasAssistantPanel({
     const selectedNodeKey = useMemo(() => Array.from(selectedNodeIds).sort().join(","), [selectedNodeIds]);
     const allSelectedReferences = useMemo(() => buildAssistantReferences(nodes, selectedNodeIds), [nodes, selectedNodeIds]);
     const selectedReferences = useMemo(() => allSelectedReferences.filter((item) => !removedReferenceIds.has(item.id)), [allSelectedReferences, removedReferenceIds]);
+    const selectedImageReferences = selectedReferences.filter((item) => item.dataUrl);
+    const selectedTextReferences = selectedReferences.filter((item) => !item.dataUrl);
+    const readyReferenceIds = useMemo(() => allSelectedReferences.map((item) => item.id), [allSelectedReferences]);
+    const { uploads, addFiles, retryUpload, removeUpload } = useCanvasAgentAttachments(onPasteImage, readyReferenceIds);
+    const composerAttachments = [
+        ...selectedImageReferences.map((item, index) => ({ id: item.id, name: item.title, url: item.dataUrl!, label: imageReferenceLabel(index), status: "ready" as const })),
+        ...uploads.filter((item) => !item.nodeId || !readyReferenceIds.includes(item.nodeId)),
+    ];
+    const messageScrollKey = messages.map((item) => `${item.id}:${item.text.length}`).join("|") + `:${isRunning}:${runStage.key}`;
+    const { scrollRef, showLatestButton, requestLatest, scrollToLatest, handleScroll } = useCanvasAgentMessageScroll(view === "chat", messageScrollKey);
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const selectedModels = models.filter((model) => selectedModelIds.includes(model.id));
     const iconButtonStyle = { color: theme.node.muted };
@@ -153,6 +166,7 @@ export function CanvasAssistantPanel({
     };
 
     const startChatSession = () => {
+        requestLatest();
         setSelectedSkillId(undefined);
         setSelectedModelIds([]);
         setSmartPlanning(true);
@@ -193,12 +207,13 @@ export function CanvasAssistantPanel({
         const runSnapshot = compactSnapshot(snapshotRef.current);
         const userMessage: CanvasAssistantMessage = { id: nanoid(), role: "user", text, references: refs };
         const assistantId = nanoid();
+        requestLatest();
         appendMessage(session.id, userMessage);
         if (submittedReferenceIds.size) {
             setRemovedReferenceIds((current) => new Set([...current, ...submittedReferenceIds]));
             onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((id) => !submittedReferenceIds.has(id))));
         }
-        upsertMessage(session.id, { id: assistantId, role: "assistant", text: "已收到需求，正在分析画布并制定执行计划。" });
+        upsertMessage(session.id, { id: assistantId, role: "assistant", text: submittedReferenceIds.size ? "收到，我会基于当前选中素材处理这次创作需求。" : "收到，我会结合当前画布处理这次创作需求。" });
         setRunStage({ key: "planning", text: "正在理解你的需求" });
         setIsRunning(true);
         try {
@@ -220,6 +235,7 @@ export function CanvasAssistantPanel({
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.msg || "创建 Agent 任务失败");
             if (payload.data.run.conversationId && payload.data.run.conversationId !== conversationId) onConversationChange(payload.data.run.conversationId);
+            restoredRunRef.current = payload.data.run.id;
             setActiveRunId(payload.data.run.id);
             setSelectedSkillId(undefined);
             setRunPaused(false);
@@ -231,32 +247,34 @@ export function CanvasAssistantPanel({
     };
 
     const waitForBackendAgent = async (runId: string, sessionId: string, assistantId: string, retryTaskId?: string, replaceFirstFailure = false) => {
-        try {
-            await watchCanvasAgentRun(runId, {
-                onPlan: (ops, reply) => {
-                    onApplyOps(ops);
-                    upsertMessage(sessionId, { id: assistantId, role: "assistant", text: reply });
-                },
-                onAssistant: (text, detail) => {
-                    if (detail?.runId && detail.taskId) {
-                        const replace = detail.taskId === retryTaskId || (replaceFirstFailure && !retryTaskId);
-                        const failure = { id: replace ? assistantId : nanoid(), role: "error" as const, title: detail.title || "创作任务失败", text, detail };
-                        if (replace) upsertMessage(sessionId, failure);
-                        else appendMessage(sessionId, failure);
-                        return;
-                    }
-                    upsertMessage(sessionId, { id: assistantId, role: detail?.runId ? "error" : "assistant", title: detail?.title, text, ...(detail?.nodeIds?.length || detail?.runId ? { detail } : {}) });
-                },
-                onStage: setRunStage,
-                onPaused: setRunPaused,
-                onOps: onApplyOps,
-            });
-        } finally {
-            await refreshUserPointsIfSystem("system");
-            setIsRunning(false);
-            setActiveRunId("");
-            setRunPaused(false);
-        }
+        await withCanvasAgentRunWatch(watchingRunIdsRef.current, runId, async () => {
+            try {
+                await watchCanvasAgentRun(runId, {
+                    onPlan: (ops, reply) => {
+                        onApplyOps(ops);
+                        upsertMessage(sessionId, { id: assistantId, role: "assistant", text: reply });
+                    },
+                    onAssistant: (text, detail) => {
+                        if (detail?.runId && detail.taskId) {
+                            const replace = detail.taskId === retryTaskId || (replaceFirstFailure && !retryTaskId);
+                            const failure = { id: replace ? assistantId : nanoid(), role: "error" as const, title: detail.title || "创作任务失败", text, detail };
+                            if (replace) upsertMessage(sessionId, failure);
+                            else appendMessage(sessionId, failure);
+                            return;
+                        }
+                        upsertMessage(sessionId, { id: assistantId, role: detail?.runId ? "error" : "assistant", title: detail?.title, text, ...(detail?.nodeIds?.length || detail?.runId ? { detail } : {}) });
+                    },
+                    onStage: setRunStage,
+                    onPaused: setRunPaused,
+                    onOps: onApplyOps,
+                });
+            } finally {
+                await refreshUserPointsIfSystem("system");
+                setIsRunning(false);
+                setActiveRunId("");
+                setRunPaused(false);
+            }
+        });
     };
 
     useEffect(() => {
@@ -327,12 +345,6 @@ export function CanvasAssistantPanel({
             setIsRunning(false);
             setActiveRunId("");
         }
-    };
-
-    const addImagesToCanvas = (files: FileList | File[] | null) => {
-        Array.from(files || [])
-            .filter((item) => item.type.startsWith("image/"))
-            .forEach((file) => onPasteImage(file));
     };
 
     const toggleModel = (model: CreativeAgentModelOption) => {
@@ -411,69 +423,84 @@ export function CanvasAssistantPanel({
                 }
             />
 
-            <div className="thin-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
-                {view === "history" ? (
-                    <AssistantHistory
-                        sessions={historySessions}
-                        activeSession={activeSession}
-                        onOpen={(id) => {
-                            setLocalActiveSessionId(id);
-                            setView("chat");
-                        }}
-                        onDelete={(id) => setDeleteChatIds([id])}
-                    />
-                ) : messages.length ? (
-                    <>
-                        {messages.map((message) => (
-                            <div key={message.id} className="space-y-1">
-                                <AgentChatMessage
-                                    item={assistantMessageToChatMessage(message)}
-                                    theme={theme}
-                                    user={user}
-                                    onLocateNode={onLocateNode}
-                                    onRetryTask={(runId, taskId) => void retryFailedTask(runId, taskId, message.id)}
-                                    onEditMessage={() => {
-                                        setPrompt(message.text);
-                                        setRemovedReferenceIds(new Set());
-                                        onSelectNodeIds(new Set((message.references || []).map((item) => item.id).filter((id) => nodes.some((node) => node.id === id))));
-                                    }}
-                                />
-                            </div>
-                        ))}
-                        {isRunning ? (
-                            <>
-                                <AgentWorkingMessage theme={theme} stage={runStage} />
-                                <div className="flex justify-end gap-2">
-                                    <Button size="small" icon={runPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />} onClick={() => void controlRun(runPaused ? "resume" : "pause")}>
-                                        {runPaused ? "继续" : "暂停"}
-                                    </Button>
-                                    <Button size="small" danger icon={<Square className="size-3.5" />} onClick={() => void controlRun("cancel")}>
-                                        取消
-                                    </Button>
+            <div className="relative h-0 min-h-0 w-full flex-1 overflow-hidden">
+                <div ref={scrollRef} className="thin-scrollbar h-full space-y-4 overflow-y-auto px-4 pb-16 pt-4" onScroll={handleScroll}>
+                    {view === "history" ? (
+                        <AssistantHistory
+                            sessions={historySessions}
+                            activeSession={activeSession}
+                            onOpen={(id) => {
+                                requestLatest();
+                                setLocalActiveSessionId(id);
+                                setView("chat");
+                            }}
+                            onDelete={(id) => setDeleteChatIds([id])}
+                        />
+                    ) : messages.length ? (
+                        <>
+                            {messages.map((message) => (
+                                <div key={message.id} className="space-y-1">
+                                    <AgentChatMessage
+                                        item={assistantMessageToChatMessage(message)}
+                                        theme={theme}
+                                        user={user}
+                                        onLocateNode={onLocateNode}
+                                        onRetryTask={(runId, taskId) => void retryFailedTask(runId, taskId, message.id)}
+                                        onEditMessage={() => {
+                                            setPrompt(message.text);
+                                            setRemovedReferenceIds(new Set());
+                                            onSelectNodeIds(new Set((message.references || []).map((item) => item.id).filter((id) => nodes.some((node) => node.id === id))));
+                                        }}
+                                    />
                                 </div>
-                            </>
-                        ) : null}
-                    </>
-                ) : (
-                    <div className="flex h-full flex-col items-center justify-center px-1 text-center">
-                        <div className="relative font-serif text-4xl font-bold italic tracking-normal" style={{ color: theme.node.text }}>
-                            <span>VOZEB PRO Canvas</span>
-                            <DiaTextReveal className="absolute inset-0" colors={["#A97CF8", "#F38CB8", "#FDCC92"]} textColor="transparent" duration={1.8} startOnView={false} text="VOZEB PRO Canvas" />
+                            ))}
+                            {isRunning ? (
+                                <>
+                                    <AgentWorkingMessage theme={theme} stage={runStage} />
+                                    <div className="flex justify-end gap-2">
+                                        <Button size="small" icon={runPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />} onClick={() => void controlRun(runPaused ? "resume" : "pause")}>
+                                            {runPaused ? "继续" : "暂停"}
+                                        </Button>
+                                        <Button size="small" danger icon={<Square className="size-3.5" />} onClick={() => void controlRun("cancel")}>
+                                            取消
+                                        </Button>
+                                    </div>
+                                </>
+                            ) : null}
+                        </>
+                    ) : (
+                        <div className="flex h-full flex-col items-center justify-center px-1 text-center">
+                            <div className="relative font-serif text-4xl font-bold italic tracking-normal" style={{ color: theme.node.text }}>
+                                <span>VOZEB PRO Canvas</span>
+                                <DiaTextReveal className="absolute inset-0" colors={["#A97CF8", "#F38CB8", "#FDCC92"]} textColor="transparent" duration={1.8} startOnView={false} text="VOZEB PRO Canvas" />
+                            </div>
+                            <div className="mt-3 font-serif text-base italic tracking-wide opacity-60">One canvas, many ideas</div>
                         </div>
-                        <div className="mt-3 font-serif text-base italic tracking-wide opacity-60">One canvas, many ideas</div>
-                    </div>
-                )}
+                    )}
+                </div>
+                {view === "chat" && showLatestButton ? (
+                    <Tooltip title="回到最新消息">
+                        <Button
+                            type="default"
+                            shape="circle"
+                            className="absolute bottom-10 left-1/2 z-10 !h-8 !w-8 !min-w-8 -translate-x-1/2 shadow-sm"
+                            style={{ background: theme.toolbar.panel, borderColor: theme.node.stroke, color: theme.node.text }}
+                            icon={<ArrowDown className="size-3.5" />}
+                            onClick={scrollToLatest}
+                            aria-label="回到最新消息"
+                        />
+                    </Tooltip>
+                ) : null}
             </div>
 
             {view === "chat" ? (
                 <>
-                    {selectedReferences.length ? (
+                    {selectedTextReferences.length ? (
                         <div className="thin-scrollbar flex max-w-full gap-1.5 overflow-x-auto px-3 pb-1">
-                            {selectedReferences.map((item, index) => (
+                            {selectedTextReferences.map((item) => (
                                 <AssistantReferenceChip
                                     key={item.id}
                                     item={item}
-                                    label={assistantImageReferenceLabel(selectedReferences, index)}
                                     onRemove={() => {
                                         setRemovedReferenceIds((prev) => new Set(prev).add(item.id));
                                         if (selectedNodeIds.has(item.id)) onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((nodeId) => nodeId !== item.id)));
@@ -484,12 +511,20 @@ export function CanvasAssistantPanel({
                     ) : null}
                     <AgentChatComposer
                         prompt={prompt}
+                        attachments={composerAttachments}
                         sending={isRunning}
                         placeholder="描述你想让 Agent 如何操作画布"
                         theme={theme}
                         onPromptChange={setPrompt}
                         onSubmit={submit}
-                        onAddFiles={addImagesToCanvas}
+                        onAddFiles={addFiles}
+                        onRetryAttachment={retryUpload}
+                        onRemoveAttachment={(id) => {
+                            const reference = selectedImageReferences.find((item) => item.id === id);
+                            if (!reference) return removeUpload(id);
+                            setRemovedReferenceIds((prev) => new Set(prev).add(id));
+                            if (selectedNodeIds.has(id)) onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((nodeId) => nodeId !== id)));
+                        }}
                         beforeInput={selectedSkill ? <CreativeAgentSkillCard skill={selectedSkill} onRemove={() => setSelectedSkillId(undefined)} theme={controlTheme} className="pb-1" /> : null}
                         left={
                             <>

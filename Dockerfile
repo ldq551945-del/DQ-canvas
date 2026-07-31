@@ -21,7 +21,7 @@ RUN --mount=type=cache,target=/pnpm/store pnpm install --frozen-lockfile --store
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
-RUN --mount=type=cache,target=/app/web/.next/cache pnpm run build
+RUN --mount=type=cache,target=/app/web/.next/cache pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build
 
 FROM node:22-bookworm-slim
 
@@ -44,6 +44,8 @@ COPY --from=web-build /app/web/public /app/web/public
 COPY --from=web-build /app/web/.next/standalone /app/web
 COPY --from=web-build /app/web/.next/static /app/web/.next/static
 COPY web/scripts/reset-admin-password.mjs /app/web/scripts/reset-admin-password.mjs
+COPY web/scripts/generation-runtime.mjs /app/web/scripts/generation-runtime.mjs
+COPY web/scripts/generation-worker.mjs /app/web/scripts/generation-worker.mjs
 
 EXPOSE 3000
 CMD ["sh", "-c", "cd /app/web && PORT=3000 node server.js"]

@@ -10,6 +10,6 @@ describe("Canvas panorama interaction boundary", () => {
         expect(source).toContain('className="contents"');
         expect(source).toContain("onMouseDown={stopCanvasInteraction}");
         expect(source).toContain("onPointerDown={stopCanvasInteraction}");
-        expect(source).toContain("maskClosable={false}");
+        expect(source).toContain("mask={{ closable: false }}");
     });
 });

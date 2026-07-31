@@ -64,6 +64,14 @@ describe("agent message controls", () => {
         expect(agentMediaDownloadName("image", "海报.webp", "/api/reference-assets/image.webp", "image/png")).toMatch(/^\d{8}-\d{6}-[a-f0-9]{8}\.png$/);
         expect(imageName).not.toBe(videoName);
         expect(formatAgentMessageText('{"error":{"message":"/backend-anon/conversation failed: status=403"}}')).toBe("当前模型暂不可用，请切换模型或稍后重试。");
+        expect(formatAgentMessageText('{"error":{"message":"/backend-api/conversation failed: status=422, body="}}')).toBe("当前模型暂不可用，请切换模型或稍后重试。");
+        expect(formatAgentMessageText('{"error":"当前渠道无法读取站内参考素材，请联系管理员检查站点部署地址"}')).toBe("当前渠道无法读取站内参考素材，请联系管理员检查站点部署地址");
         expect(formatAgentMessageText('{"code":400,"data":null,"msg":"积分不足，无法生成"}')).toBe("积分不足");
+    });
+
+    it("keeps generated text while removing upstream display directives", () => {
+        expect(formatAgentMessageText('已完成 1 个创作任务。\n\n「狗提示词」已完成：\n:::writing{variant="document" id="58391"}\n一只温暖友善的狗，真实毛发，柔和自然光。\n:::\n可继续调整。')).toBe(
+            "已完成 1 个创作任务。\n\n「狗提示词」已完成：\n\n一只温暖友善的狗，真实毛发，柔和自然光。\n\n可继续调整。",
+        );
     });
 });

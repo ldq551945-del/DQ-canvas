@@ -16,6 +16,7 @@ import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentPara
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
+import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import { closestImageAspectRatio, resolveImageRequestSize } from "@/lib/image-size";
 import { mediaDownloadFileName } from "@/lib/media-file";
 import { originalMediaDownloadUrl } from "@/lib/media-image-url";
@@ -264,6 +265,7 @@ export function useVideoWorkbenchController() {
         throwOnFailure = false,
         keepFailedResult = true,
         promptOverride,
+        userPrompt,
         signal,
         parameterPatch,
         conversationId,
@@ -271,11 +273,12 @@ export function useVideoWorkbenchController() {
         throwOnFailure?: boolean;
         keepFailedResult?: boolean;
         promptOverride?: string;
+        userPrompt?: string;
         signal?: AbortSignal;
         parameterPatch?: WorkbenchAgentParameterPatch;
         conversationId?: string;
     } = {}) => {
-        const snapshot = buildRequestSnapshot(promptOverride, parameterPatch);
+        const snapshot = buildRequestSnapshot(promptOverride, parameterPatch, userPrompt);
         if (!snapshot) return;
         let sharedConversationId = conversationId || activeCreativeConversationId;
         try {
@@ -289,8 +292,7 @@ export function useVideoWorkbenchController() {
             message.warning("当前用户视频生成已达到并发上限，请稍后再试");
             return;
         }
-        const existingLog = previewLog ? getLatestLog(previewLog.id) || previewLog : null;
-        const baseResults = existingLog ? resultsFromLog(existingLog).filter((result) => result.status !== "pending") : [];
+        const baseResults: GenerationResult[] = [];
         const pendingResultId = nanoid();
         const startedResults = [...baseResults, { id: pendingResultId, status: "pending" as const }];
         beginStartingVideoTask();
@@ -305,7 +307,7 @@ export function useVideoWorkbenchController() {
                 source: "video-workbench",
                 clientRequestId: `video-workbench:${sharedConversationId}:${pendingResultId}`,
             });
-            const log = { ...buildLogFromVideoResults(existingLog, snapshot, startedResults, existingLog?.durationMs || 0, undefined, { task, taskResultId: pendingResultId }), creativeConversationId: sharedConversationId };
+            const log = { ...buildLogFromVideoResults(null, snapshot, startedResults, 0, undefined, { task, taskResultId: pendingResultId }), creativeConversationId: sharedConversationId };
             setActiveAgentRecordId(log.id);
             activeLogIdRef.current = log.id;
             setPreviewLog(log);
@@ -318,15 +320,15 @@ export function useVideoWorkbenchController() {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             if (signal?.aborted || !keepFailedResult) {
                 setResults(baseResults);
-                setPreviewLog(existingLog);
-                activeLogIdRef.current = existingLog?.id || null;
-                setActiveAgentRecordId(existingLog?.id);
+                setPreviewLog(null);
+                activeLogIdRef.current = null;
+                setActiveAgentRecordId(undefined);
                 startQueuedVideoLogs();
                 if (throwOnFailure) throw error instanceof Error ? error : new Error(errorMessage);
                 return;
             }
             const failedResults = startedResults.map((result) => (result.id === pendingResultId ? { id: pendingResultId, status: "failed" as const, error: errorMessage } : result));
-            const failedLog = { ...buildLogFromVideoResults(existingLog, snapshot, failedResults, (existingLog?.durationMs || 0) + performance.now() - batchStartedAt, errorMessage), creativeConversationId: sharedConversationId };
+            const failedLog = { ...buildLogFromVideoResults(null, snapshot, failedResults, performance.now() - batchStartedAt, errorMessage), creativeConversationId: sharedConversationId };
             setActiveAgentRecordId(failedLog.id);
             activeLogIdRef.current = failedLog.id;
             setPreviewLog(failedLog);
@@ -370,7 +372,7 @@ export function useVideoWorkbenchController() {
                 if (patchedModel) updateConfig("videoModel", patchedModel);
             }
         },
-        submitGeneration: ({ promptOverride, signal, parameterPatch, conversationId }) => generate({ throwOnFailure: true, keepFailedResult: false, promptOverride, signal, parameterPatch, conversationId }),
+        submitGeneration: ({ promptOverride, userPrompt, signal, parameterPatch, conversationId }) => generate({ throwOnFailure: true, keepFailedResult: false, promptOverride, userPrompt, signal, parameterPatch, conversationId }),
         onRequestSent: () => {
             setReferences([]);
             setVideoReferences([]);
@@ -386,7 +388,7 @@ export function useVideoWorkbenchController() {
         assets: [],
     });
 
-    const buildRequestSnapshot = (promptOverride?: string, parameterPatch?: WorkbenchAgentParameterPatch) => {
+    const buildRequestSnapshot = (promptOverride?: string, parameterPatch?: WorkbenchAgentParameterPatch, userPromptOverride?: string) => {
         const text = (promptOverride ?? prompt).trim();
         if (!text) {
             message.error("请输入视频提示词");
@@ -412,7 +414,7 @@ export function useVideoWorkbenchController() {
             message.error(`${videoReferenceError}。${seedanceVideoReferenceHint}`);
             return null;
         }
-        return { text, config: buildVideoConfig(requestConfig, requestModel), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
+        return { text, userText: (userPromptOverride ?? prompt).trim() || text, config: buildVideoConfig(requestConfig, requestModel), references: [...references], videoReferences: [...videoReferences], audioReferences: [...audioReferences] };
     };
 
     const retryResult = async () => {
@@ -662,7 +664,7 @@ export function useVideoWorkbenchController() {
                         remoteUrl: stored.remoteUrl,
                         serverUrl: stored.serverUrl,
                         storageKey: stored.storageKey,
-                        durationMs: Date.now() - (log.taskStartedAt || log.createdAt),
+                        durationMs: state.result.durationMs || (log.task.durationSeconds ? log.task.durationSeconds * 1000 : 0),
                         width: stored.width || 1280,
                         height: stored.height || 720,
                         bytes: stored.bytes,
@@ -701,9 +703,10 @@ export function useVideoWorkbenchController() {
         setPreviewLog(log);
         setLogsOpen(false);
         setSelectedResultIds([]);
-        const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.prompt);
+        const publicPrompt = generationLogPublicPrompt(log);
+        const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
         const fallbackMessages: WorkbenchAgentMessage[] = [
-            { id: `history-${log.id}-user`, role: "user", text: log.prompt },
+            ...(publicPrompt ? [{ id: `history-${log.id}-user`, role: "user" as const, text: publicPrompt }] : []),
             {
                 id: `history-${log.id}-assistant`,
                 role: log.status === "失败" ? "error" : "assistant",
@@ -715,7 +718,7 @@ export function useVideoWorkbenchController() {
         setActiveCreativeConversationId(session?.creativeConversationId || log.creativeConversationId);
         setAgentMessages(session?.loaded && session.messages.length ? session.messages : fallbackMessages);
         setPrompt(session?.prompt || "");
-        setLastAgentPrompt(session?.lastPrompt || log.prompt);
+        setLastAgentPrompt(session?.lastPrompt || publicPrompt);
         setSelectedSkill(undefined);
         resetPlanningToDefault(false);
         setReferences([]);
@@ -737,7 +740,7 @@ export function useVideoWorkbenchController() {
                     setActiveAgentSessionId(loaded.id);
                     setActiveCreativeConversationId(loaded.creativeConversationId);
                     setAgentMessages(loaded.messages.length ? loaded.messages : fallbackMessages);
-                    setLastAgentPrompt(loaded.lastPrompt || log.prompt);
+                    setLastAgentPrompt(loaded.lastPrompt || publicPrompt);
                 })
                 .catch(() => {
                     if (activeLogIdRef.current === log.id) message.warning("完整对话加载失败，已显示当前生成记录");

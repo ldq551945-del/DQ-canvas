@@ -32,4 +32,27 @@ describe("system channel model capabilities", () => {
             "sd2.0": { capability: "video", protocol: "seedance", createPath: "/videos", queryPath: "/videos/:task_id" },
         });
     });
+
+    it("normalizes capability-level protocol operations and cancellation settings", () => {
+        const normalized = normalizeSystemChannelAdvancedConfig({
+            protocol: "custom",
+            operationConfigs: {
+                video: {
+                    capability: "video",
+                    protocol: "custom",
+                    createPath: "/jobs",
+                    queryPath: "/jobs/:task_id",
+                    cancelPath: "/jobs/:task_id/cancel",
+                    cancelMethod: "DELETE",
+                    requestTemplate: '{"model":"{{model}}"}',
+                    resultField: "data.url",
+                },
+                text: { capability: "video", createPath: "/invalid" },
+            },
+        } as never);
+
+        expect(normalized?.operationConfigs).toEqual({
+            video: expect.objectContaining({ capability: "video", protocol: "custom", createPath: "/jobs", cancelPath: "/jobs/:task_id/cancel", cancelMethod: "DELETE" }),
+        });
+    });
 });

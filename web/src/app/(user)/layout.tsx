@@ -32,6 +32,7 @@ export default async function UserLayout({ children }: { children: ReactNode }) 
                 status: user.status,
                 planId: user.planId,
                 planName: user.planName,
+                hasActivePlan: user.hasActivePlan,
                 pointsBalance: user.pointsBalance,
                 permanentPointsBalance: user.permanentPointsBalance,
                 dailyPointsBalance: user.dailyPointsBalance,

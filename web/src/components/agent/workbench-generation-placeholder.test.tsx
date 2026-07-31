@@ -11,7 +11,10 @@ describe("workbench generation placeholders", () => {
         const activity = renderToStaticMarkup(<WorkbenchGenerationActivity kind="video" count={2} />);
 
         expect(placeholder).toContain('aria-label="图片正在生成"');
-        expect(placeholder).toContain('class="sr-only">图片正在生成</span>');
+        expect(placeholder).toContain('aria-busy="true"');
+        expect(placeholder).not.toContain("animate-spin");
+        expect(placeholder).not.toContain("bg-background/80");
+        expect(placeholder).not.toContain(">图片正在生成<");
         expect(activity).toContain('aria-label="2 个视频任务正在生成"');
         expect(activity).toContain('class="sr-only">2 个视频任务正在生成</span>');
         expect(activity).not.toContain(">生成中<");

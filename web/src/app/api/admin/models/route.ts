@@ -5,7 +5,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
 import { buildGlobalAiOpcSelection, getGlobalAiOpcPresetForModel, isGlobalAiOpcBaseUrl, resolveGlobalAiOpcCatalogPresets } from "@/lib/globalaiopc-catalog";
-import { inferModelCapability } from "@/lib/model-capability";
+import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { isProviderTimeoutError, resolveAdminChannelCredentials, sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
 import {
     buildModelCatalogUrls,
@@ -13,6 +13,7 @@ import {
     isModelCatalogUnsupported,
     mergeModelCatalogEntries,
     mergeModelConfigs,
+    modelConfigsFromOperations,
     modelCapabilitiesRecord,
     nextModelsPageUrl,
     normalizeModelConfigs,
@@ -24,6 +25,8 @@ import {
 import { isProviderBusinessError, readProviderError } from "@/lib/server/provider-task-config";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { isSafeOutboundUrl } from "@/lib/server/security";
+import { channelProtocolDefinition, protocolAuthHeaders, protocolModelConfig, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
+import type { SystemChannelAdvancedConfig, SystemChannelProtocol } from "@/lib/auth/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +39,9 @@ type ModelsPayload = {
     apiKey?: unknown;
     apiFormat?: unknown;
     protocol?: unknown;
+    authMode?: unknown;
+    authHeader?: unknown;
+    authPrefix?: unknown;
     globalAiOpcPreset?: unknown;
     globalAiOpcPresets?: unknown;
     createPath?: unknown;
@@ -43,6 +49,7 @@ type ModelsPayload = {
     configuredModels?: unknown;
     modelCapabilities?: unknown;
     modelConfigs?: unknown;
+    operationConfigs?: unknown;
 };
 
 type ModelsResponse = Record<string, unknown> & {
@@ -63,26 +70,56 @@ export async function POST(request: Request) {
 
     const [body, settings] = await Promise.all([readJsonBody<ModelsPayload>(request), getAuthSettings()]);
     const { baseUrl, apiKey, apiFormat, savedChannel } = resolveAdminChannelCredentials(settings, body);
-    if (!baseUrl || !apiKey) return NextResponse.json({ error: "请先填写 Base URL 和 API Key" }, { status: 400 });
+    if (!baseUrl) return NextResponse.json({ error: "请先填写 Base URL 和 API Key" }, { status: 400 });
 
     const advancedConfig = {
         ...(savedChannel?.advancedConfig || {}),
         ...(body.protocol !== undefined ? { protocol: body.protocol } : {}),
+        ...(body.authMode !== undefined ? { authMode: body.authMode } : {}),
+        ...(body.authHeader !== undefined ? { authHeader: body.authHeader } : {}),
+        ...(body.authPrefix !== undefined ? { authPrefix: body.authPrefix } : {}),
         ...(body.globalAiOpcPreset !== undefined ? { globalAiOpcPreset: body.globalAiOpcPreset } : {}),
         ...(body.globalAiOpcPresets !== undefined ? { globalAiOpcPresets: body.globalAiOpcPresets } : {}),
         ...(body.createPath !== undefined ? { createPath: body.createPath } : {}),
-    };
+    } as SystemChannelAdvancedConfig;
     const configuredModels = body.configuredModels !== undefined ? body.configuredModels : savedChannel?.models;
     const configuredCapabilities = body.modelCapabilities !== undefined ? body.modelCapabilities : savedChannel?.advancedConfig?.modelCapabilities;
     const configuredCatalog = configuredModelCatalog(configuredModels, configuredCapabilities);
     const configuredConfigs = normalizeModelConfigs(body.modelConfigs !== undefined ? body.modelConfigs : savedChannel?.advancedConfig?.modelConfigs);
+    const operationConfigs = body.operationConfigs !== undefined ? body.operationConfigs : savedChannel?.advancedConfig?.operationConfigs;
+    const protocol = (typeof body.protocol === "string" ? body.protocol : advancedConfig.protocol || "auto") as SystemChannelProtocol;
+    const protocolDefinition = channelProtocolDefinition(protocol);
+    advancedConfig.protocol = protocolDefinition.id;
+    advancedConfig.authMode = resolveChannelAuthMode(advancedConfig);
+    if (!apiKey && advancedConfig.authMode !== "none") return NextResponse.json({ error: "请先填写 Base URL 和 API Key" }, { status: 400 });
+
+    if (protocolDefinition.builtInModels?.length) {
+        const builtInCatalog = protocolDefinition.builtInModels.map(({ id, capability }) => ({ id, capability, source: "official" as const }));
+        const merged = mergeModelCatalogEntries(configuredCatalog, builtInCatalog);
+        const builtInConfigs = Object.fromEntries(
+            protocolDefinition.builtInModels.flatMap(({ id, capability }) => {
+                const config = protocolModelConfig(protocol, capability);
+                return config ? [[normalizeModelId(id), config] as const] : [];
+            }),
+        );
+        const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs), builtInConfigs);
+        return NextResponse.json({
+            models: merged.map((entry) => entry.id),
+            modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
+            modelConfigs,
+            discoveredCount: builtInCatalog.length,
+            totalCount: merged.length,
+            catalogSupported: false,
+            provider: protocol,
+        });
+    }
 
     const globalAiOpcPresets = resolveGlobalAiOpcCatalogPresets(baseUrl, advancedConfig);
     if (globalAiOpcPresets.length) {
         const selection = buildGlobalAiOpcSelection(globalAiOpcPresets.map((preset) => preset.id));
         const discovered = selection.models.map((id) => ({ id, capability: getGlobalAiOpcPresetForModel(id)?.capability || inferModelCapability(id), source: "official" as const }));
         const merged = mergeModelCatalogEntries(configuredCatalog, discovered);
-        const modelConfigs = mergeModelConfigs(merged, configuredConfigs);
+        const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs));
         return NextResponse.json({
             models: merged.map((entry) => entry.id),
             modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
@@ -94,7 +131,7 @@ export async function POST(request: Request) {
     }
     if (advancedConfig.protocol === "globalaiopc" || isGlobalAiOpcBaseUrl(baseUrl)) return NextResponse.json({ error: "未识别到 GlobalAiOpc 接口范围，请检查 Base URL 或重新选择接口范围" }, { status: 400 });
 
-    const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths);
+    const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths ?? protocolDefinition.modelCatalogPaths);
     if (!modelCatalogUrls.length || !(await Promise.all(modelCatalogUrls.map((url) => isSafeOutboundUrl(url)))).every(Boolean)) return NextResponse.json({ error: "模型目录地址不允许访问内网、保留地址或其他域名" }, { status: 400 });
 
     const cooldownKey = `${currentUser.id}:${baseUrl.toLowerCase()}`;
@@ -114,7 +151,7 @@ export async function POST(request: Request) {
                 visited.add(nextUrl);
                 if (!(await isSafeOutboundUrl(nextUrl))) throw new Error("模型分页地址不允许访问内网或保留地址");
                 const response = await fetch(nextUrl, {
-                    headers: apiFormat === "gemini" ? { "x-goog-api-key": apiKey } : { authorization: `Bearer ${apiKey}` },
+                    headers: protocolAuthHeaders(apiKey, advancedConfig, apiFormat),
                     cache: "no-store",
                     signal: AbortSignal.timeout(MODEL_FETCH_TIMEOUT_MS),
                 });
@@ -142,7 +179,16 @@ export async function POST(request: Request) {
         }
 
         const agnes = isAgnesApiBaseUrl(baseUrl);
-        const modelConfigs = mergeModelConfigs(merged, configuredConfigs, providerConfigs, officialModelConfigs(baseUrl));
+        const strictConfigs = Object.fromEntries(
+            merged.flatMap((entry) => {
+                if (!protocolDefinition.strict) return [];
+                const configuredProtocol = configuredConfigs[normalizeModelId(entry.id)]?.protocol;
+                if (configuredProtocol && configuredProtocol !== protocol) return [];
+                const config = protocolModelConfig(protocol, entry.capability);
+                return config ? [[normalizeModelId(entry.id), config] as const] : [];
+            }),
+        );
+        const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs), providerConfigs, officialModelConfigs(baseUrl), strictConfigs);
         return NextResponse.json({
             models: merged.map((entry) => entry.id),
             modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),

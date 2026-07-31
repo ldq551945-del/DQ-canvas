@@ -25,9 +25,7 @@ export function DramaProjectCard({ project }: { project: DramaProjectSummary }) 
                 </div>
                 <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
                     {pendingCount ? (
-                        <Tag color="processing" className="m-0">
-                            {pendingCount} 执行中
-                        </Tag>
+                        <span className="inline-flex h-6 items-center rounded-md border border-amber-200 bg-amber-50 px-2 text-xs font-medium text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-300">{pendingCount} 执行中</span>
                     ) : null}
                     {failedCount ? (
                         <Tag color="error" className="m-0">

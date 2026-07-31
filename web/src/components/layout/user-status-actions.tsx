@@ -58,6 +58,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
     const avatarFallback = userAvatarFallback(user?.displayName || user?.username || "用户");
     const accountName = user?.displayName || user?.username || "用户";
     const accountSecondary = user ? `ID：${user.accountId}` : "";
+    const planActionLabel = user?.hasActivePlan ? "续费套餐" : "升级套餐";
     const accountItems: MenuProps["items"] = [
         {
             type: "group",
@@ -87,8 +88,8 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                             <button
                                 type="button"
                                 className="account-upgrade-button inline-flex h-7 shrink-0 items-center justify-center gap-1 rounded-md bg-stone-950 px-2.5 text-[11px] font-semibold transition hover:bg-black dark:bg-white dark:hover:bg-stone-100"
-                                aria-label="升级套餐"
-                                title="升级套餐"
+                                aria-label={planActionLabel}
+                                title={planActionLabel}
                                 onClick={(event) => {
                                     event.preventDefault();
                                     event.stopPropagation();
@@ -96,7 +97,7 @@ export function UserStatusActions({ variant = "default", onOpenShortcuts, initia
                                     setPlansOpen(true);
                                 }}
                             >
-                                <Crown className="size-3.5" /> 升级套餐
+                                <Crown className="size-3.5" /> {planActionLabel}
                             </button>
                         </div>
                         <div className="mt-2 flex items-center justify-between gap-3 border-t border-stone-200 pt-2 text-xs dark:border-stone-800">

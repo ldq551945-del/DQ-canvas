@@ -35,6 +35,7 @@ import {
     type NewConversationExchange,
     type RunMutation,
 } from "./creative-runtime-repository";
+import { notifyCreativeRunEvent } from "./creative-run-event-signal";
 
 export { CreativeStoreConflict } from "./creative-runtime-repository";
 import { CreativeStoreConflict } from "./creative-runtime-repository";
@@ -165,6 +166,13 @@ export async function appendCreativeConversationExchange(input: NewConversationE
             if (!conversationResult.rows[0]) throw new CreativeStoreConflict("创作会话不存在", 404);
             const conversation = mapConversation(conversationResult.rows[0]);
             if (conversation.status !== "active") throw new CreativeStoreConflict("归档会话不能追加消息", 409);
+            if (input.runId) {
+                const existingResult = await client.query("SELECT * FROM creative_messages WHERE conversation_id = $1 AND run_id = $2 AND role IN ('user', 'assistant') ORDER BY sequence ASC", [input.conversationId, input.runId]);
+                const existingUser = existingResult.rows.find((row) => row.role === "user");
+                const existingAssistant = existingResult.rows.find((row) => row.role === "assistant");
+                if (existingUser && existingAssistant) return { userMessage: mapMessage(existingUser), assistantMessage: mapMessage(existingAssistant) };
+                if (existingUser || existingAssistant) throw new CreativeStoreConflict("工作台请求记录不完整，无法安全重试", 409);
+            }
             const sequenceResult = await client.query<{ sequence: number }>("SELECT COALESCE(MAX(sequence), 0)::int AS sequence FROM creative_messages WHERE conversation_id = $1", [input.conversationId]);
             const sequence = Number(sequenceResult.rows[0]?.sequence || 0) + 1;
             const userMessage = message(`message-${nanoid()}`, input.conversationId, sequence, "user", "completed", userContent, input.runId || "", input.userMetadata || {}, now);
@@ -181,6 +189,16 @@ export async function appendCreativeConversationExchange(input: NewConversationE
         const conversation = db.conversations.find((item) => item.id === input.conversationId && item.userId === input.userId);
         if (!conversation) throw new CreativeStoreConflict("创作会话不存在", 404);
         if (conversation.status !== "active") throw new CreativeStoreConflict("归档会话不能追加消息", 409);
+        if (input.runId) {
+            const existing = db.messages.filter((item) => item.conversationId === input.conversationId && item.runId === input.runId && (item.role === "user" || item.role === "assistant"));
+            const existingUser = existing.find((item) => item.role === "user");
+            const existingAssistant = existing.find((item) => item.role === "assistant");
+            if (existingUser && existingAssistant) {
+                exchange = { userMessage: existingUser, assistantMessage: existingAssistant };
+                return db;
+            }
+            if (existingUser || existingAssistant) throw new CreativeStoreConflict("工作台请求记录不完整，无法安全重试", 409);
+        }
         const sequence = nextMessageSequence(db.messages, input.conversationId);
         const userMessage = message(`message-${nanoid()}`, input.conversationId, sequence, "user", "completed", userContent, input.runId || "", input.userMetadata || {}, now);
         const assistantMessage = message(`message-${nanoid()}`, input.conversationId, sequence + 1, "assistant", "completed", assistantContent, input.runId || "", input.assistantMetadata || {}, now);
@@ -204,9 +222,9 @@ export async function getCreativeConversationContext(conversationId: string, use
             const messagesResult = await client.query(
                 `SELECT * FROM creative_messages
                  WHERE conversation_id = $1 AND ($2::text IS NULL OR run_id IS DISTINCT FROM $2)
-                   AND role IN ('user', 'assistant') AND status <> 'running'
+                   AND sequence > $3 AND role IN ('user', 'assistant') AND status <> 'running'
                  ORDER BY sequence ASC`,
-                [conversationId, excludeRunId || null],
+                [conversationId, excludeRunId || null, conversation.contextSummaryThroughSequence],
             );
             const prepared = prepareConversationContext(conversation, messagesResult.rows.map(mapMessage));
             if (prepared.conversation !== conversation)
@@ -218,7 +236,10 @@ export async function getCreativeConversationContext(conversationId: string, use
         const db = await readRuntimeFile();
         const conversation = db.conversations.find((item) => item.id === conversationId && item.userId === userId);
         if (!conversation) throw new CreativeStoreConflict("创作会话不存在", 404);
-        const messages = db.messages.filter((item) => item.conversationId === conversationId && (!excludeRunId || item.runId !== excludeRunId) && (item.role === "user" || item.role === "assistant") && item.status !== "running");
+        const messages = db.messages.filter(
+            (item) =>
+                item.conversationId === conversationId && item.sequence > conversation.contextSummaryThroughSequence && (!excludeRunId || item.runId !== excludeRunId) && (item.role === "user" || item.role === "assistant") && item.status !== "running",
+        );
         const prepared = prepareConversationContext(conversation, messages);
         if (prepared.conversation !== conversation) await writeRuntimeFile({ ...db, conversations: db.conversations.map((item) => (item.id === conversationId ? prepared.conversation : item)) });
         return prepared.context;
@@ -274,7 +295,9 @@ export async function getCreativeAssetsByIds(ids: string[]) {
 export async function createCreativeRunBundle<T extends AgentRunBase>(userId: string, input: CreateRunBundleInput<T>) {
     if (getDatabaseProvider() === "postgres") {
         try {
-            return await createPostgresRunBundle(userId, input);
+            const result = await createPostgresRunBundle(userId, input);
+            if (result.created) notifyCreativeRunEvent(input.run.id);
+            return result;
         } catch (error) {
             if (!isUniqueViolation(error)) throw error;
             const run = await getCreativeRunByClientRequestId<T>(userId, input.run.clientRequestId);
@@ -282,7 +305,7 @@ export async function createCreativeRunBundle<T extends AgentRunBase>(userId: st
             throw error;
         }
     }
-    return queueRuntimeFileOperation(() =>
+    const result = await queueRuntimeFileOperation(() =>
         withGenerationTaskFileMutation<CreativeRunBundleResult<T>>(async (tasks) => {
             const existing = tasks.find((item) => item.userId === userId && item.clientRequestId === input.run.clientRequestId && item.type === "agent");
             if (existing) return { tasks, result: { run: existing.payload as T, created: false } };
@@ -292,7 +315,7 @@ export async function createCreativeRunBundle<T extends AgentRunBase>(userId: st
             const now = input.run.createdAt;
             const sequence = nextMessageSequence(db.messages, conversation.id);
             const userMessage = message(input.run.inputMessageId, conversation.id, sequence, "user", "completed", input.prompt, input.run.id, { assetIds: input.assetIds }, now);
-            const assistantMessage = message(input.run.assistantMessageId, conversation.id, sequence + 1, "assistant", "running", "正在理解你的需求。", input.run.id, {}, now);
+            const assistantMessage = message(input.run.assistantMessageId, conversation.id, sequence + 1, "assistant", "running", input.acknowledgement || "已收到你的需求。", input.run.id, {}, now);
             const event = nextFileEvent(db, input.run.id, "run.created", undefined, now);
             const nextConversation = { ...conversation, title: conversation.title === "新对话" ? input.title : conversation.title, updatedAt: now, lastMessageAt: now };
             await writeRuntimeFile({
@@ -306,6 +329,8 @@ export async function createCreativeRunBundle<T extends AgentRunBase>(userId: st
             return { tasks: [record, ...tasks.filter((item) => item.id !== input.run.id)], result: { run: input.run, conversation: nextConversation, userMessage, assistantMessage, created: true } };
         }),
     );
+    if (result.created) notifyCreativeRunEvent(input.run.id);
+    return result;
 }
 
 export async function getCreativeRunByClientRequestId<T extends AgentRunBase>(userId: string, clientRequestId: string) {
@@ -321,8 +346,12 @@ export async function getCreativeRunByClientRequestId<T extends AgentRunBase>(us
 }
 
 export async function mutateCreativeRun<T extends AgentRunBase>(id: string, ttlMs: number, mutate: (current: T) => RunMutation<T> | null, allowedStatuses?: string[], expectedExecutionId?: string) {
-    if (getDatabaseProvider() === "postgres") return mutatePostgresRun(id, ttlMs, mutate, allowedStatuses, expectedExecutionId);
-    return queueRuntimeFileOperation(() =>
+    if (getDatabaseProvider() === "postgres") {
+        const result = await mutatePostgresRun(id, ttlMs, mutate, allowedStatuses, expectedExecutionId);
+        if (result) notifyCreativeRunEvent(id);
+        return result;
+    }
+    const result = await queueRuntimeFileOperation(() =>
         withGenerationTaskFileMutation(async (tasks) => {
             const index = tasks.findIndex((item) => item.id === id && item.type === "agent" && item.expiresAt > Date.now());
             if (index < 0) return { tasks, result: null };
@@ -341,6 +370,8 @@ export async function mutateCreativeRun<T extends AgentRunBase>(id: string, ttlM
             return { tasks: nextTasks, result: run };
         }),
     );
+    if (result) notifyCreativeRunEvent(id);
+    return result;
 }
 
 export async function listCreativeRunEvents(runId: string, afterId = "") {

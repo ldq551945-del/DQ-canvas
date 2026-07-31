@@ -1,5 +1,6 @@
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { AiTextMessage } from "@/types/ai";
+import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 
 type RequestOptions = { signal?: AbortSignal };
@@ -11,10 +12,11 @@ export type TextGenerationTask = {
 };
 
 type TextTaskPayload = {
-    task?: TextGenerationTask & {
-        result?: { content?: string };
-        error?: string;
-    };
+    task?: TextGenerationTask &
+        GenerationTaskExecutionState & {
+            result?: { content?: string };
+            error?: string;
+        };
     error?: string;
 };
 
@@ -42,6 +44,7 @@ export async function waitForTextGenerationTask(config: AiConfig, task: TextGene
         const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;
         syncUserPointsFromHeaders(response.headers, resolveModelRequestConfig(config, task.model).apiSource);
         if (!response.ok || !payload.task) throw new Error(payload.error || "查询文本任务失败");
+        if (payload.task.needsReview) throw new GenerationTaskNeedsReviewError();
         if (payload.task.status === "success") {
             await refreshUserPointsIfSystem(resolveModelRequestConfig(config, task.model).apiSource);
             return payload.task.result?.content || "";

@@ -1,6 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { imageRequestAspectRatio, imageTaskPollAttempts, imageTaskPollUrls, imageTaskRequestTimeoutMs, openAiImageTaskPath, resolveRequestSize, shouldFallbackToJsonImageEdit, shouldRetryJsonImageEditPayload } from "./image-task-support";
+import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submission-error";
+import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
+import {
+    allowsImageProtocolFallback,
+    imageRequestAspectRatio,
+    imageTaskPollAttempts,
+    imageTaskPollUrls,
+    imageTaskRequestTimeoutMs,
+    openAiImageTaskPath,
+    resolveRequestSize,
+    shouldFallbackToJsonImageEdit,
+    shouldRetryJsonImageEditPayload,
+    taskHeaders,
+} from "./image-task-support";
 
 const config = {
     baseUrl: "/api/ai/system/global-image",
@@ -9,6 +22,40 @@ const config = {
 } as never;
 
 describe("GlobalAiOpc image task paths", () => {
+    afterEach(() => {
+        vi.unstubAllEnvs();
+    });
+
+    it("preserves maintenance authorization for the internal system proxy", () => {
+        const token = "m".repeat(32);
+        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        const headers = taskHeaders(
+            {
+                baseUrl: "/api/ai/system/channel-one",
+                apiKey: "system",
+                apiFormat: "openai",
+                model: "image-model",
+                logicalModel: "image-logical",
+            } as never,
+            maintenanceWorkerContext("user-one"),
+            "image-task:test:attempt:1",
+        );
+
+        expect(headers.get("authorization")).toBe(`Bearer ${token}`);
+        expect(headers.get("x-vozeb-pro-worker-user-id")).toBe("user-one");
+        expect(headers.get("x-vozeb-pro-logical-model")).toBe("image-logical");
+    });
+
+    it("upscales small exact dimensions for the provider instead of rejecting the task", () => {
+        expect(resolveRequestSize(undefined, "400x600")).toBe("672x1008");
+        expect(resolveRequestSize(undefined, "512x512")).toBe("816x816");
+    });
+
+    it("passes exact dimensions through without a platform resolution ceiling", () => {
+        expect(resolveRequestSize(undefined, "5000x5000")).toBe("5000x5000");
+        expect(resolveRequestSize(undefined, "1200x7200")).toBe("1200x7200");
+    });
+
     it("uses the model binding timeout for synchronous requests and asynchronous polling", () => {
         const configured = {
             baseUrl: "/api/ai/system/global-image",
@@ -73,6 +120,29 @@ describe("GlobalAiOpc image task paths", () => {
         } as never;
 
         await expect(openAiImageTaskPath(sub2ApiConfig, "edit")).resolves.toBe("/images/generations");
+    });
+
+    it("treats a model-level protocol as strict even when the parent channel is legacy auto", () => {
+        const modelConfig = {
+            baseUrl: "https://provider.example/v1",
+            model: "gpt-image-1",
+            apiFormat: "openai",
+            advancedConfig: {
+                protocol: "auto",
+                modelConfigs: {
+                    "gpt-image-1": {
+                        capability: "image",
+                        protocol: "sub2api",
+                        createPath: "/images/generations",
+                        editPath: "/images/generations",
+                        requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","image_urls":"{{images}}"}',
+                        resultField: "data[0].url",
+                    },
+                },
+            },
+        } as never;
+
+        expect(allowsImageProtocolFallback(modelConfig)).toBe(false);
     });
 
     it("recognizes Pydantic dictionary errors as an incompatible edit payload", () => {

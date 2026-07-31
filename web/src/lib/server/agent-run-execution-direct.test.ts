@@ -49,8 +49,41 @@ describe("directAgentPlan", () => {
         expect(task).toMatchObject({ targetNodeId: "current-person", referenceUrl: "/api/reference-assets/current.webp", referenceType: "image", ratio: "9:16" });
         expect(task.prompt).toContain("本轮上传人物");
         expect(task.prompt).not.toContain("上一轮泰迪犬");
-        expect(planToOps(plan as never, [task], "run", snapshot)).toContainEqual({ type: "connect_nodes", fromNodeId: "current-person", toNodeId: "task-run-0" });
-        expect(planToOps(plan as never, [task], "run", snapshot)).not.toContainEqual({ type: "connect_nodes", fromNodeId: "old-dog", toNodeId: "task-run-0" });
+        const ops = planToOps(plan as never, [task], "run", snapshot);
+        expect(ops).toContainEqual({ type: "connect_nodes", fromNodeId: "current-person", toNodeId: "task-run-0" });
+        expect(ops).not.toContainEqual({ type: "connect_nodes", fromNodeId: "old-dog", toNodeId: "task-run-0" });
+        expect(ops).toContainEqual(
+            expect.objectContaining({
+                type: "add_node",
+                id: "output-run-0-0",
+                nodeType: "image",
+                metadata: expect.objectContaining({ agentRunId: "run", agentTaskId: "edit", agentTaskType: "image", size: "9:16", status: "loading" }),
+            }),
+        );
+        expect(ops).toContainEqual({ type: "connect_nodes", fromNodeId: "task-run-0", toNodeId: "output-run-0-0" });
+    });
+
+    it("选中图片并要求替换主体时不会被错误规划成视频", () => {
+        const plan = {
+            intent: "generation",
+            objective: "把猪换成狗",
+            reply: "开始生成短视频",
+            skillIds: ["five-second-video"],
+            decisions: [],
+            foundation: { complexity: "simple", brief: { objective: "把猪换成狗" }, direction: { summary: "保持农场构图" } },
+            deliverables: [{ id: "video", title: "母狗与幼犬 5 秒短视频", type: "video", model: "video-pro", prompt: "生成 5 秒短视频", seconds: 5, dependencies: [] }],
+        };
+        const snapshot = {
+            selectedNodeIds: ["pig-image"],
+            nodes: [{ id: "pig-image", type: "image", title: "农场里的猪", metadata: { url: "/api/reference-assets/pig.webp", naturalWidth: 1280, naturalHeight: 720 } }],
+        };
+
+        const normalizedPlan = normalizeCanvasPlanForSelection(plan as never, snapshot, "把猪换成狗");
+        const [task] = normalizeTasks(normalizedPlan, [], generationSettings() as never, snapshot, "把猪换成狗", "canvas", []);
+
+        expect(normalizedPlan).toMatchObject({ skillIds: [], reply: "我会直接编辑当前图片，不会改成视频任务。" });
+        expect(normalizedPlan.deliverables).toEqual([expect.objectContaining({ type: "image", targetNodeId: "pig-image", prompt: "把猪换成狗" })]);
+        expect(task).toMatchObject({ type: "image", model: "image-pro", targetNodeId: "pig-image", referenceUrl: "/api/reference-assets/pig.webp", ratio: "16:9" });
     });
 
     it("统一按文字尺寸、自定义尺寸、参考图、规划和默认值排序", () => {

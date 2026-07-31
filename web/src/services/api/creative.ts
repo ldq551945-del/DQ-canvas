@@ -67,7 +67,7 @@ export function createCreativeAgentRun(input: CreativeRunRequest) {
     return request<{ run: CreativeAgentRun; conversation?: CreativeConversation; created: boolean }>("/api/agent/runs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
 }
 
-export function controlCreativeAgentRun(runId: string, action: "cancel" | "pause" | "resume") {
+export function controlCreativeAgentRun(runId: string, action: "cancel" | "pause" | "resume" | "retry") {
     return request<{ run: CreativeAgentRun }>(`/api/agent/runs/${encodeURIComponent(runId)}/${action}`, { method: "POST" });
 }
 
@@ -97,7 +97,15 @@ type CreativeRunHandlers = {
     onConnectionError: (message: string) => void;
     onProjectHandoff?: (handoff: CreativeProjectHandoff) => void;
     onStatus?: (status: CreativeAgentRun["status"]) => void;
-    onTaskCompleted?: () => void;
+    onTaskCompleted?: (progress?: CreativeTaskProgress) => void;
+};
+
+export type CreativeTaskProgress = {
+    taskId?: string;
+    title: string;
+    completedCount: number;
+    failedCount: number;
+    totalCount: number;
 };
 
 export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandlers) {
@@ -133,6 +141,13 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
         handlers.onProgress(text(data?.reply) || "方案已确定，正在创建任务");
     });
     listen("task.running", ({ data }) => handlers.onProgress(`正在处理「${text(data?.title) || "创作任务"}」`));
+    listen("task.child.completed", ({ data }) => {
+        void refreshUserPointsIfSystem("system");
+        const progress = taskProgress(data);
+        handlers.onProgress(taskProgressText(progress));
+        handlers.onTaskCompleted?.(progress);
+    });
+    listen("task.child.failed", ({ data }) => handlers.onProgress(taskProgressText(taskProgress(data))));
     listen("task.completed", ({ data }) => {
         void refreshUserPointsIfSystem("system");
         handlers.onProgress(text(data?.message) || `「${text(data?.title) || "创作任务"}」已完成`);
@@ -189,4 +204,24 @@ async function request<T>(url: string, init?: RequestInit) {
 
 function text(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function taskProgress(data?: Record<string, unknown>): CreativeTaskProgress {
+    return {
+        taskId: text(data?.taskId) || undefined,
+        title: text(data?.title) || "创作任务",
+        completedCount: count(data?.completedCount),
+        failedCount: count(data?.failedCount),
+        totalCount: Math.max(1, count(data?.totalCount)),
+    };
+}
+
+function taskProgressText(progress: CreativeTaskProgress) {
+    const failed = progress.failedCount ? `，失败 ${progress.failedCount}` : "";
+    return `「${progress.title}」已完成 ${progress.completedCount}/${progress.totalCount}${failed}`;
+}
+
+function count(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
 }

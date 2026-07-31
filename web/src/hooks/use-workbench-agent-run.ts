@@ -23,10 +23,11 @@ export type WorkbenchAgentParameterPatch = Partial<Record<"model" | "size" | "qu
 
 type AgentRunStage = "planning" | "submitting";
 export type WorkbenchCreativeReviewContext = { recordId: string; foundation: CreativeFoundation; deliverables: CreativeDeliverableSummary[] };
-type WorkbenchGenerationSubmitter = (input: { promptOverride: string; signal: AbortSignal; parameterPatch: WorkbenchAgentParameterPatch; conversationId: string }) => Promise<string | null | undefined>;
+type WorkbenchGenerationSubmitter = (input: { promptOverride: string; userPrompt: string; signal: AbortSignal; parameterPatch: WorkbenchAgentParameterPatch; conversationId: string }) => Promise<string | null | undefined>;
 type PendingAgentGenerate = {
     messageId: string;
     hasReferences: boolean;
+    userPrompt: string;
     resolvedPrompt: string;
     parameterPatch: WorkbenchAgentParameterPatch;
     conversationId: string;
@@ -116,10 +117,10 @@ export function useWorkbenchAgentRun({
             agentRequestRef.current = { messageId: progressId, controller, stage: "planning" };
             if (appendRequest) {
                 setPrompt("");
-                setAgentMessages((items) => appendWorkbenchAgentRequest(items, text, submittedAttachments, createWorkbenchAgentProgressMessage(progressId, hasReferences)));
+                setAgentMessages((items) => appendWorkbenchAgentRequest(items, text, submittedAttachments, createWorkbenchAgentProgressMessage(progressId, hasReferences, mediaLabel)));
                 onRequestSent?.();
             } else {
-                setAgentMessages((items) => updateWorkbenchAgentProgress(items, progressId, { phase: "planning", hasReferences }, "正在理解你的需求。"));
+                setAgentMessages((items) => updateWorkbenchAgentProgress(items, progressId, { phase: "planning", hasReferences }, hasReferences ? `收到，我会根据当前参考素材完成这次${mediaLabel}。` : `收到，我会按你的要求完成这次${mediaLabel}。`));
             }
             setAgentRunning(true);
             try {
@@ -164,6 +165,7 @@ export function useWorkbenchAgentRun({
                     setPendingAgentGenerate({
                         messageId: progressId,
                         hasReferences,
+                        userPrompt: text,
                         resolvedPrompt,
                         parameterPatch: patch,
                         conversationId: resolvedConversationId,
@@ -244,13 +246,13 @@ export function useWorkbenchAgentRun({
             setPendingAgentGenerate(pending);
         };
         void pending
-            .submitGeneration({ promptOverride: pending.resolvedPrompt, signal: active.controller.signal, parameterPatch: pending.parameterPatch, conversationId: pending.conversationId })
+            .submitGeneration({ promptOverride: pending.resolvedPrompt, userPrompt: pending.userPrompt, signal: active.controller.signal, parameterPatch: pending.parameterPatch, conversationId: pending.conversationId })
             .then((recordId) => {
                 if (active.controller.signal.aborted || agentRequestRef.current?.messageId !== pending.messageId) return;
                 const acceptedRecordId = acceptWorkbenchGenerationSubmission(recordId, mediaLabel);
                 retryActionsRef.current.delete(pending.messageId);
                 if (pending.foundation) setCreativeReviewContext({ recordId: acceptedRecordId, foundation: pending.foundation, deliverables: pending.deliverables });
-                setAgentMessages((items) => updateWorkbenchAgentResponse(items, pending.messageId, `已提交${mediaLabel}生成任务，结果会显示在工作区。`));
+                setAgentMessages((items) => updateWorkbenchAgentResponse(items, pending.messageId, `${mediaLabel}任务正在生成，工作区会持续显示进度和结果。`));
             })
             .catch((error) => {
                 if (active.controller.signal.aborted) return;

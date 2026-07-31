@@ -13,9 +13,7 @@ describePostgres("work community PostgreSQL integration", () => {
 
         await expect(
             withPostgresTransaction(async (client) => {
-                const creator = await findPublicCreator(client);
-                expect(creator, "integration database needs one public profile work").toBeTruthy();
-                if (!creator) throw rollbackOnly;
+                const creator = await insertPublicCreator(client);
 
                 const actor = await insertTestActor(client);
                 const repository = new WorkCommunityRepository(client);
@@ -40,9 +38,7 @@ describePostgres("work community PostgreSQL integration", () => {
 
         await expect(
             withPostgresTransaction(async (client) => {
-                const creator = await findPublicCreator(client);
-                expect(creator, "integration database needs one public profile work").toBeTruthy();
-                if (!creator) throw rollbackOnly;
+                const creator = await insertPublicCreator(client);
 
                 const actor = await insertTestActor(client);
                 await client.query(
@@ -76,28 +72,48 @@ describePostgres("work community PostgreSQL integration", () => {
     });
 });
 
-async function findPublicCreator(client: QueryExecutor) {
-    const result = await client.query<{ id: string; username: string; slug: string; like_count: number }>(
-        `SELECT owner.id, owner.username, work.slug, work.like_count::int AS like_count
-         FROM users owner
-         JOIN published_works work ON work.owner_user_id = owner.id
-         JOIN published_work_versions version ON version.id = work.published_version_id
-         WHERE owner.status = 'active'
-           AND work.lifecycle_status = 'active'
-           AND version.moderation_status = 'approved'
-           AND version.visibility = 'public'
-           AND version.author_display = 'profile'
-           AND EXISTS (
-               SELECT 1 FROM published_work_assets asset
-               WHERE asset.version_id = version.id
-                 AND asset.role = 'content'
-                 AND asset.media_type IN ('image', 'video')
-           )
-         ORDER BY work.updated_at DESC
-         LIMIT 1`,
+async function insertPublicCreator(client: QueryExecutor) {
+    const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
+    const creator = {
+        id: randomUUID(),
+        username: `community_creator_${suffix}`,
+        workId: randomUUID(),
+        versionId: randomUUID(),
+        slug: `community-work-${suffix}`,
+        storageKey: `generation/community-test-${suffix}.png`,
+        likeCount: 0,
+    };
+
+    await client.query(
+        `INSERT INTO users (id, username, display_name, password_hash, status)
+         VALUES ($1, $2, '社区集成测试作者', 'integration-test-only', 'active')`,
+        [creator.id, creator.username],
     );
-    const row = result.rows[0];
-    return row ? { id: row.id, username: row.username, slug: row.slug, likeCount: row.like_count } : undefined;
+    await client.query(
+        `INSERT INTO published_works (id, owner_user_id, slug, source_type, source_id, lifecycle_status)
+         VALUES ($1, $2, $3, 'media', $4, 'active')`,
+        [creator.workId, creator.id, creator.slug, `integration-${suffix}`],
+    );
+    await client.query(
+        `INSERT INTO published_work_versions (
+            id, work_id, version_number, title, visibility, author_display, moderation_status, reviewed_at
+         ) VALUES ($1, $2, 1, '社区集成测试作品', 'public', 'profile', 'approved', now())`,
+        [creator.versionId, creator.workId],
+    );
+    await client.query(
+        `INSERT INTO local_media_assets (
+            storage_key, scope, storage_class, type, owner_user_id, source, mime_type, bytes
+         ) VALUES ($1, 'generation', 'permanent', 'image', $2, 'community-integration-test', 'image/png', 1)`,
+        [creator.storageKey, creator.id],
+    );
+    await client.query(
+        `INSERT INTO published_work_assets (id, version_id, storage_key, media_type, mime_type, role)
+         VALUES ($1, $2, $3, 'image', 'image/png', 'content')`,
+        [randomUUID(), creator.versionId, creator.storageKey],
+    );
+    await client.query("UPDATE published_works SET current_version_id = $2, published_version_id = $2 WHERE id = $1", [creator.workId, creator.versionId]);
+
+    return creator;
 }
 
 async function insertTestActor(client: QueryExecutor) {

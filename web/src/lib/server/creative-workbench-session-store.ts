@@ -1,6 +1,6 @@
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
 import { dbText, dbTime, mapMessage, readRuntimeFile } from "@/lib/server/creative-runtime-repository";
-import type { CreativeWorkbenchSessionDetail, CreativeWorkbenchSessionSummary, WorkbenchWorkspace } from "@/lib/workbench-session-contract";
+import { WORKBENCH_PUBLIC_MESSAGE_VISIBILITY, type CreativeWorkbenchSessionDetail, type CreativeWorkbenchSessionSummary, type WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 
 const MAX_SEARCH_TEXT = 4000;
 const DETAIL_PAGE_SIZE = 50;
@@ -45,21 +45,21 @@ export async function listCreativeWorkbenchSessionSummaries(userId: string, work
              JOIN LATERAL (
                  SELECT content
                  FROM creative_messages
-                 WHERE conversation_id = conversation.id AND role = 'user' AND metadata ->> 'workspace' = $4
+                 WHERE conversation_id = conversation.id AND role = 'user' AND metadata ->> 'workspace' = $4 AND metadata ->> 'contentVisibility' = $6
                  ORDER BY sequence ASC
                  LIMIT 1
              ) AS first_user ON true
              JOIN LATERAL (
                  SELECT content
                  FROM creative_messages
-                 WHERE conversation_id = conversation.id AND role = 'user' AND metadata ->> 'workspace' = $4
+                 WHERE conversation_id = conversation.id AND role = 'user' AND metadata ->> 'workspace' = $4 AND metadata ->> 'contentVisibility' = $6
                  ORDER BY sequence DESC
                  LIMIT 1
              ) AS last_user ON true
              LEFT JOIN LATERAL (
                  SELECT left(string_agg(content, ' ' ORDER BY sequence ASC), $5) AS search_text
                  FROM creative_messages
-                 WHERE conversation_id = conversation.id AND metadata ->> 'workspace' = $4
+                 WHERE conversation_id = conversation.id AND metadata ->> 'workspace' = $4 AND metadata ->> 'contentVisibility' = $6
              ) AS search_content ON true
              LEFT JOIN LATERAL (
                  SELECT metadata ->> 'generationLogId' AS record_id
@@ -69,7 +69,7 @@ export async function listCreativeWorkbenchSessionSummaries(userId: string, work
                  LIMIT 1
              ) AS linked_asset ON true
              ORDER BY conversation.updated_at DESC, conversation.id ASC`,
-            [userId, source, size, workspace, MAX_SEARCH_TEXT],
+            [userId, source, size, workspace, MAX_SEARCH_TEXT, WORKBENCH_PUBLIC_MESSAGE_VISIBILITY],
         );
         return result.rows.map(mapSummaryRow);
     }
@@ -80,7 +80,7 @@ export async function listCreativeWorkbenchSessionSummaries(userId: string, work
         .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))
         .slice(0, size)
         .flatMap((conversation) => {
-            const messages = db.messages.filter((message) => message.conversationId === conversation.id && message.metadata.workspace === workspace).sort((a, b) => a.sequence - b.sequence);
+            const messages = db.messages.filter((message) => message.conversationId === conversation.id && message.metadata.workspace === workspace && isPublicWorkbenchMessage(message.metadata)).sort((a, b) => a.sequence - b.sequence);
             const userMessages = messages.filter((message) => message.role === "user");
             if (!userMessages.length) return [];
             const recordId = db.assets
@@ -117,7 +117,7 @@ export async function getCreativeWorkbenchSessionDetail(userId: string, conversa
                  SELECT message.*
                  FROM creative_messages AS message
                  JOIN target ON target.id = message.conversation_id
-                 WHERE message.metadata ->> 'workspace' = $4 AND ($5::int = 0 OR message.sequence < $5)
+                 WHERE message.metadata ->> 'workspace' = $4 AND message.metadata ->> 'contentVisibility' = $8 AND ($5::int = 0 OR message.sequence < $5)
                  ORDER BY message.sequence DESC
                  LIMIT $6
              ), selected_messages AS (
@@ -141,7 +141,7 @@ export async function getCreativeWorkbenchSessionDetail(userId: string, conversa
                         LIMIT 1
                     ) AS record_id
              FROM target`,
-            [conversationId, userId, source, workspace, cursor, DETAIL_PAGE_SIZE + 1, DETAIL_PAGE_SIZE],
+            [conversationId, userId, source, workspace, cursor, DETAIL_PAGE_SIZE + 1, DETAIL_PAGE_SIZE, WORKBENCH_PUBLIC_MESSAGE_VISIBILITY],
         );
         const row = result.rows[0];
         if (!row) return null;
@@ -159,7 +159,7 @@ export async function getCreativeWorkbenchSessionDetail(userId: string, conversa
     const conversation = db.conversations.find((item) => item.id === conversationId && item.userId === userId && item.surface === "chat" && item.source === source && item.status === "active");
     if (!conversation) return null;
     const candidates = db.messages
-        .filter((message) => message.conversationId === conversation.id && message.metadata.workspace === workspace)
+        .filter((message) => message.conversationId === conversation.id && message.metadata.workspace === workspace && isPublicWorkbenchMessage(message.metadata))
         .filter((message) => !cursor || message.sequence < cursor)
         .sort((a, b) => b.sequence - a.sequence)
         .slice(0, DETAIL_PAGE_SIZE + 1);
@@ -196,4 +196,8 @@ function optionalRecordId(value: unknown) {
 function optionalSequence(value: unknown) {
     const sequence = Math.max(0, Math.floor(Number(value)));
     return sequence ? { nextBeforeSequence: sequence } : {};
+}
+
+function isPublicWorkbenchMessage(metadata: Record<string, unknown>) {
+    return metadata.contentVisibility === WORKBENCH_PUBLIC_MESSAGE_VISIBILITY;
 }

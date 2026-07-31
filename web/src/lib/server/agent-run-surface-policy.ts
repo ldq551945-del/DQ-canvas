@@ -2,6 +2,7 @@ import type { AuthSettings } from "@/lib/auth/store";
 import type { CreativeAsset, CreativeConversationContext, CreativeSurface } from "@/lib/creative-runtime-contract";
 import type { AgentRun, AgentRunTask } from "@/lib/server/agent-run-store";
 import type { AgentPlan } from "@/lib/server/agent-run-validation";
+import { resolveAgentPlanningProfile } from "@/lib/server/agent-run-planning-profile";
 
 export function availableAgentSkills(settings: AuthSettings, surface: CreativeSurface) {
     const workspaces = surface === "canvas" ? new Set(["canvas"]) : surface === "drama" ? new Set(["drama"]) : new Set(["image", "video", "drama"]);
@@ -14,6 +15,16 @@ export function selectAgentSkills(settings: AuthSettings, surface: CreativeSurfa
     const planned = new Set(plannedSkillIds.map((id) => id.trim()).filter(Boolean));
     const selected = requested.size ? requested : planned;
     return available.filter((skill) => selected.has(skill.id)).slice(0, 6);
+}
+
+export function plannerAgentSkills(settings: AuthSettings, run: Pick<AgentRun, "surface" | "prompt" | "snapshot" | "selectedSkillIds">) {
+    const available = availableAgentSkills(settings, run.surface);
+    const requested = new Set((run.selectedSkillIds || []).map((id) => id.trim()).filter(Boolean));
+    const profile = resolveAgentPlanningProfile(run);
+    const scoped = available.filter((skill) => (skill.workspaces || ["image"]).some((workspace) => profile.skillWorkspaces.has(workspace)));
+    const matched = scoped.filter((skill) => skill.keywords.some((keyword) => keyword.trim() && run.prompt.toLowerCase().includes(keyword.trim().toLowerCase())));
+    const ordered = [...available.filter((skill) => requested.has(skill.id)), ...matched, ...scoped];
+    return Array.from(new Map(ordered.map((skill) => [skill.id, skill])).values()).slice(0, 8);
 }
 
 export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExample: string) {
@@ -33,7 +44,7 @@ export function agentPlannerSystemPrompt(surface: CreativeSurface, fallbackExamp
         surface === "chat"
             ? "只有用户原文明确要求创建、建立或整理成画布/短剧项目时才填写 projectHandoff；生成短视频、短片、图片或系列媒体不等于创建项目，必须省略 projectHandoff。只做明确项目交接且无需新产物时允许 deliverables=[]。projectHandoff.assetIds 只能引用 referencedAssets，当前 Run 新生成的资产会由服务端自动合并。"
             : "当前入口不得填写 projectHandoff。";
-    return `${identity}先结合 conversationContext 的长期摘要和近期消息理解用户的自然语言、指代和连续创作关系，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}requestedSkillIds 非空时必须使用且只使用这些技能；否则根据完整需求语义从 availableSkills 主动选择真正适用的技能，可不选，禁止仅凭单个关键词强行命中，最终选择写入 skillIds。referenceContext.source=current-turn-explicit 表示 referencedAssets 是本轮用户明确附件，必须优先且排他；source=conversation-memory-candidates 表示它们只是同会话最近成功媒体候选，只有自然语义明确延续、修改、变体或保持上一轮主体/场景时，才把确需使用的资产 ID 写入 deliverable.assetIds，新主题、独立创作或无法确认时不得引用。随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。每个 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。reply 用自然中文概括推荐方向；decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。`;
+    return `${identity}先结合 conversationContext 的长期摘要和近期消息理解用户的自然语言、指代和连续创作关系，再判断 intent：问候、闲聊、能力咨询、使用说明和知识问答为 conversation；${surfaceRules}conversation 必须 deliverables=[]、decisions=[]，直接在 reply 回答。generation 必须先形成 foundation：brief 说明目标、受众、使用场景、核心信息、约束和参考素材策略；direction 给出一个明确推荐的风格、构图/镜头、色彩、光线、视觉关键词和避免事项。${projectRule}${handoffRule}requestedSkillIds 非空时必须使用且只使用这些技能；否则根据完整需求语义从 availableSkills 主动选择真正适用的技能，可不选，禁止仅凭单个关键词强行命中，最终选择写入 skillIds。referenceContext.source=current-turn-explicit 表示 referencedAssets 是本轮用户明确附件，必须优先且排他；source=conversation-memory-candidates 表示它们只是同会话最近成功媒体候选，只有自然语义明确延续、修改、变体或保持上一轮主体/场景时，才把确需使用的资产 ID 写入 deliverable.assetIds，新主题、独立创作或无法确认时不得引用。随后规划整套 deliverables 和依赖顺序，并主动从 availableModels 中为每个产物选择能力匹配的逻辑模型，决定画幅、质量、数量、时长、音色或格式。只能引用 referencedAssets 中存在的资产 ID；需要使用一个或多个资产时，将它们写入对应 deliverable.assetIds。每个 deliverable 的 prompt 必须执行同一 foundation，保持主体、信息、色彩和视觉语言一致。不要盲目照抄默认值，默认值只在没有更明确判断时作为兜底。严格遵守 planningBudget.maxOutputTokens，优先保留可执行参数并压缩解释。reply 用自然中文概括推荐方向；decisions 用 2–6 项说明“选择了什么、为什么”；每个 deliverable 必须填写 model。优先调用 create_agent_plan；若渠道不支持工具调用，必须直接返回与函数参数完全一致的单个 JSON 对象，不要 Markdown 或额外文本，严格仿照这个完整结构：${fallbackExample}。不得暴露隐藏思维链，只输出可验证的决策摘要。`;
 }
 
 export function agentPlannerInput(
@@ -45,34 +56,172 @@ export function agentPlannerInput(
     availableModels: Array<{ id: string; name: string; capability: string }>,
     settings: AuthSettings,
 ) {
+    const planningProfile = resolveAgentPlanningProfile(run);
     const selectedNodeIds = run.surface === "canvas" ? selectedCanvasNodeIds(run.snapshot) : [];
-    return {
-        requirement: run.prompt,
+    const recentMessages = conversationContext.recentMessages.slice(-6);
+    const payload = {
+        requirement: run.prompt.slice(0, 12_000),
         conversationContext: {
-            summary: conversationContext.summary,
-            recentMessages: conversationContext.recentMessages.map((item) => ({ role: item.role, content: item.content, sequence: item.sequence })),
+            summary: conversationContext.summary.slice(0, 3000),
+            recentMessages: recentMessages.map((item) => ({ role: item.role, content: item.content.slice(0, 800), sequence: item.sequence })),
         },
         surface: run.surface,
         ...(run.projectId ? { projectId: run.projectId } : {}),
-        ...(run.surface === "canvas" ? { canvasSnapshot: run.snapshot || {} } : run.surface === "drama" ? { projectSnapshot: run.snapshot || {} } : {}),
+        ...(run.surface === "canvas" ? { canvasSnapshot: compactCanvasSnapshot(run.snapshot) } : run.surface === "drama" ? { projectSnapshot: compactProjectSnapshot(run.snapshot) } : {}),
         ...(selectedNodeIds.length ? { currentTurnSelection: { selectedNodeIds, rule: "这些节点是本轮明确附件；编辑任务不得改用历史节点" } } : {}),
         referenceContext: { source: referenceSource },
-        referencedAssets: referencedAssets.map(plannerAssetSummary),
+        referencedAssets: referencedAssets.slice(-6).map(plannerAssetSummary),
         requestedSkillIds: run.selectedSkillIds || [],
-        availableSkills: availableSkills.map(plannerSkillSummary),
-        availableModels,
+        availableSkills: availableSkills.slice(0, 20).map(plannerSkillSummary),
+        availableModels: availableModels.slice(0, 40),
         defaultModels: settings.defaultModels,
         generationDefaults: settings.generationDefaults,
+        planningBudget: { complexity: planningProfile.complexity, maxOutputTokens: planningProfile.maxOutputTokens },
     };
+    return fitPlannerInput(payload, planningProfile.maxInputChars);
 }
 
 function plannerSkillSummary(skill: AuthSettings["agentSkills"][number]) {
     return {
         id: skill.id,
         name: skill.name,
-        instructions: skill.instructions.slice(0, 2400),
+        plannerSummary: (skill.plannerSummary || skill.description || skill.instructions).slice(0, 240),
         workspaces: skill.workspaces || ["image"],
     };
+}
+
+export function compactCanvasSnapshot(snapshot: unknown) {
+    const source = record(snapshot);
+    const selectedNodeIds = selectedCanvasNodeIds(snapshot);
+    const selected = new Set(selectedNodeIds);
+    const connections = records(source.connections).filter((connection) => {
+        const from = text(connection.fromNodeId);
+        const to = text(connection.toNodeId);
+        return selected.has(from) || selected.has(to);
+    });
+    for (const connection of connections) {
+        selected.add(text(connection.fromNodeId));
+        selected.add(text(connection.toNodeId));
+    }
+    const nodes = records(source.nodes)
+        .filter((node) => selected.has(text(node.id)) || node.type === "config")
+        .slice(0, 20)
+        .map(compactCanvasNode);
+    return {
+        projectId: text(source.projectId),
+        title: text(source.title).slice(0, 160),
+        imageSize: text(source.imageSize).slice(0, 40),
+        selectedNodeIds,
+        nodes,
+        connections: connections.slice(0, 30).map((connection) => ({ id: text(connection.id), fromNodeId: text(connection.fromNodeId), toNodeId: text(connection.toNodeId) })),
+    };
+}
+
+function compactCanvasNode(node: Record<string, unknown>) {
+    const metadata = record(node.metadata);
+    return {
+        id: text(node.id),
+        type: text(node.type),
+        title: text(node.title).slice(0, 160),
+        width: number(node.width),
+        height: number(node.height),
+        metadata: {
+            size: text(metadata.size).slice(0, 40),
+            content: text(metadata.content || metadata.prompt).slice(0, 600),
+            url: text(metadata.serverUrl || metadata.remoteUrl || metadata.url).slice(0, 1000),
+            naturalWidth: number(metadata.naturalWidth),
+            naturalHeight: number(metadata.naturalHeight),
+        },
+    };
+}
+
+function compactProjectSnapshot(snapshot: unknown) {
+    const source = record(snapshot);
+    return Object.fromEntries(
+        Object.entries(source)
+            .slice(0, 30)
+            .map(([key, value]) => [key, compactValue(value, 0)]),
+    );
+}
+
+function compactValue(value: unknown, depth: number): unknown {
+    if (typeof value === "string") return value.slice(0, 800);
+    if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+    if (depth >= 3) return undefined;
+    if (Array.isArray(value)) return value.slice(0, 12).map((item) => compactValue(item, depth + 1));
+    if (value && typeof value === "object")
+        return Object.fromEntries(
+            Object.entries(value)
+                .slice(0, 24)
+                .map(([key, item]) => [key, compactValue(item, depth + 1)]),
+        );
+    return undefined;
+}
+
+function fitPlannerInput<T extends Record<string, unknown>>(payload: T, maxChars: number): T {
+    if (JSON.stringify(payload).length <= maxChars) return payload;
+    const conversationContext = record(payload.conversationContext);
+    const canvasSnapshot = record(payload.canvasSnapshot);
+    const compact = {
+        ...payload,
+        conversationContext: {
+            summary: text(conversationContext.summary).slice(0, 1600),
+            recentMessages: records(conversationContext.recentMessages)
+                .slice(-4)
+                .map((message) => ({ ...message, content: text(message.content).slice(0, 400) })),
+        },
+        referencedAssets: records(payload.referencedAssets)
+            .slice(-4)
+            .map((asset) => ({ ...asset, textContent: text(asset.textContent).slice(0, 300) || undefined })),
+        availableSkills: records(payload.availableSkills)
+            .slice(0, 8)
+            .map((skill) => ({ ...skill, plannerSummary: text(skill.plannerSummary).slice(0, 120) })),
+        ...(Object.keys(canvasSnapshot).length ? { canvasSnapshot: { ...canvasSnapshot, nodes: records(canvasSnapshot.nodes).slice(0, 10) } } : {}),
+    };
+    if (JSON.stringify(compact).length <= maxChars) return compact as T;
+    const reduced = {
+        ...compact,
+        conversationContext: { summary: text(record(compact.conversationContext).summary).slice(0, 800), recentMessages: records(record(compact.conversationContext).recentMessages).slice(-2) },
+        projectSnapshot: compactValue(compact.projectSnapshot, 2),
+        canvasSnapshot: Object.keys(canvasSnapshot).length ? { ...record(compact.canvasSnapshot), nodes: records(record(compact.canvasSnapshot).nodes).slice(0, 6) } : undefined,
+        availableSkills: records(compact.availableSkills).slice(0, 4),
+    };
+    if (JSON.stringify(reduced).length <= maxChars) return reduced as T;
+    const minimal = {
+        requirement: "",
+        surface: payload.surface,
+        projectId: payload.projectId,
+        currentTurnSelection: payload.currentTurnSelection,
+        referenceContext: payload.referenceContext,
+        referencedAssets: records(reduced.referencedAssets).slice(-2),
+        conversationContext: { summary: text(record(reduced.conversationContext).summary).slice(0, 300), recentMessages: [] },
+        canvasSnapshot: Object.keys(record(reduced.canvasSnapshot)).length ? { ...record(reduced.canvasSnapshot), nodes: records(record(reduced.canvasSnapshot).nodes).slice(0, 4) } : undefined,
+        projectSnapshot: compactValue(reduced.projectSnapshot, 1),
+        requestedSkillIds: payload.requestedSkillIds,
+        availableSkills: records(reduced.availableSkills).slice(0, 2),
+        availableModels: records(payload.availableModels).slice(0, 12),
+        defaultModels: payload.defaultModels,
+        planningBudget: payload.planningBudget,
+    };
+    const remaining = Math.max(200, maxChars - JSON.stringify(minimal).length - 16);
+    return { ...minimal, requirement: text(payload.requirement).slice(0, remaining) } as unknown as T;
+}
+
+function record(value: unknown): Record<string, unknown> {
+    return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function records(value: unknown): Array<Record<string, unknown>> {
+    return Array.isArray(value) ? value.map(record) : [];
+}
+
+function text(value: unknown) {
+    return typeof value === "string" ? value.trim() : "";
+}
+
+function number(value: unknown) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export function selectedCanvasNodeIds(snapshot: unknown) {
@@ -131,7 +280,7 @@ function plannerAssetSummary(asset: CreativeAsset) {
         id: asset.id,
         type: asset.type,
         title: asset.title,
-        ...(asset.textContent ? { textContent: asset.textContent.slice(0, 2000) } : {}),
+        ...(asset.textContent ? { textContent: asset.textContent.slice(0, 600) } : {}),
         ...(assetAccessUrl(asset) ? { url: assetAccessUrl(asset) } : {}),
         ...(asset.mimeType ? { mimeType: asset.mimeType } : {}),
     };

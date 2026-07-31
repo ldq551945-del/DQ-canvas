@@ -1,15 +1,17 @@
 import { after, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
-import { abortAgentRun, executeAgentRun } from "@/lib/server/agent-run-executor";
+import { abortAgentRun } from "@/lib/server/agent-run-executor";
 import { getAgentRun, setAgentRunStatus, updateAgentRunById, type AgentRun, type AgentRunStatus } from "@/lib/server/agent-run-store";
+import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 
 const actions: Record<string, AgentRunStatus> = { pause: "paused", resume: "running", cancel: "cancelled" };
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; action: string }> }) {
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     const { id, action } = await params;
     const status = actions[action];
@@ -40,7 +42,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const origin = resolveInternalOrigin(new URL(request.url).origin);
     const cookie = request.headers.get("cookie") || "";
     if (action === "cancel") await cancelChildTasks(run.tasks, origin, cookie);
-    if (action === "resume" || action === "retry") after(() => executeAgentRun(updated, origin, cookie));
+    if (action === "resume" || action === "retry") {
+        await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: action });
+        after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
+    } else {
+        await scheduleGenerationTask("agent", updated.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: action });
+    }
     return NextResponse.json({ code: 0, data: { run: updated }, msg: "OK" });
 }
 

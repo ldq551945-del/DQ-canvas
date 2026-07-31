@@ -25,7 +25,7 @@ export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
     return type === CanvasNodeType.Image || type === CanvasNodeType.Panorama;
 }
 
-type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
+type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "cancelled";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
@@ -39,7 +39,9 @@ export type CameraControlOptions = {
 
 export type CanvasNodeMetadata = {
     agentRunId?: string;
-    agentTaskStatus?: "pending" | "running" | "paused" | "waiting_user" | "completed" | "failed" | "cancelled";
+    agentTaskId?: string;
+    agentGenerationTaskIds?: string[];
+    agentTaskStatus?: "ready" | "pending" | "running" | "paused" | "waiting_user" | "completed" | "failed" | "cancelled";
     agentTaskType?: CanvasGenerationMode;
     agentTaskDependencies?: string[];
     agentTaskOutputNodeIds?: string[];
@@ -120,6 +122,10 @@ export type CanvasNodeMetadata = {
         model: string;
     };
     textTask?: {
+        id: string;
+        model: string;
+    };
+    audioTask?: {
         id: string;
         model: string;
     };

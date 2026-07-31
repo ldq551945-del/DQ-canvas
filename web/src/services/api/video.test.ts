@@ -12,7 +12,7 @@ vi.mock("@/stores/use-config-store", () => ({
 
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import { createServerVideoGenerationTask } from "./video";
+import { createServerVideoGenerationTask, pollVideoGenerationTask } from "./video";
 
 const config = {
     model: "video-v1",
@@ -51,6 +51,17 @@ describe("video API service", () => {
         expect(fetchMock.mock.calls[0][0]).toBe("/api/video-generation-tasks");
         expect(body.references).toEqual([{ type: "image", url: "https://cdn.example.com/original-person.png" }]);
         expect(mocks.imageToDataUrl).not.toHaveBeenCalled();
+    });
+
+    it("returns a terminal failure when the upstream submission needs manual review", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-review", status: "running", needsReview: true } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(pollVideoGenerationTask(config, { id: "video-review", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toEqual({
+            status: "failed",
+            error: "上游创建状态待确认，系统已停止重复创建，请联系管理员处理",
+        });
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });
 

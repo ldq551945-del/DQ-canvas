@@ -1,6 +1,6 @@
 import type { ResolvedLogicalModel } from "./logical-model-router";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import { normalizeModelId } from "@/lib/model-capability";
+import { resolveChannelModelAdvancedConfig, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 
 type GenerationApiFormat = "openai" | "gemini";
 export type SystemGenerationChannelConfig = {
@@ -44,7 +44,7 @@ export function resolveSystemGenerationChannel(config: { apiSource?: string; bas
 }
 
 export function toSystemGenerationChannel(resolved: ResolvedLogicalModel): SystemGenerationChannelConfig {
-    const modelConfig = resolved.channel.advancedConfig?.modelConfigs?.[normalizeModelId(resolved.upstreamModel)];
+    const modelConfig = resolveChannelModelConfig(resolved.channel.advancedConfig, resolved.upstreamModel);
     return {
         apiSource: "system",
         baseUrl: `/api/ai/system/${encodeURIComponent(resolved.channelId)}`,
@@ -60,9 +60,7 @@ export function toSystemGenerationChannel(resolved: ResolvedLogicalModel): Syste
 
 export function resolveModelAdvancedConfig(config: import("@/lib/auth/store").SystemChannelAdvancedConfig | undefined, model: string) {
     if (!config) return undefined;
-    const modelConfig = config.modelConfigs?.[normalizeModelId(model)];
-    const { capability: _capability, apiFormat: _apiFormat, ...modelAdvanced } = modelConfig || { capability: undefined, apiFormat: undefined };
-    const resolved = modelConfig ? { ...config, ...modelAdvanced } : config;
+    const resolved = resolveChannelModelAdvancedConfig(config, model)!;
     const preset = resolveGlobalAiOpcPreset(resolved, model);
     if (!preset) return resolved;
     return {

@@ -2,14 +2,15 @@ import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings } from "@/lib/auth/store";
-import { executeAgentRun } from "@/lib/server/agent-run-executor";
 import { getAgentRun, updateAgentRunById } from "@/lib/server/agent-run-store";
 import { failedAgentTaskRetryOps, prepareFailedAgentTaskRetry } from "@/lib/server/agent-run-task-input";
+import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; taskId: string }> }) {
-    const user = await getCurrentUser();
+    const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ code: 401, data: null, msg: "请先登录" }, { status: 401 });
     const { id, taskId } = await params;
     const run = await getAgentRun(id);
@@ -43,6 +44,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     if (result === null) return NextResponse.json({ code: 429, data: null, msg: `当前最多同时运行 ${limit} 个 Agent 任务` }, { status: 429 });
     const { updated } = result;
     if (!updated) return NextResponse.json({ code: 404, data: null, msg: "Agent 任务不存在" }, { status: 404 });
-    after(() => executeAgentRun(updated, resolveInternalOrigin(new URL(request.url).origin), request.headers.get("cookie") || ""));
+    const origin = resolveInternalOrigin(new URL(request.url).origin);
+    const cookie = request.headers.get("cookie") || "";
+    await scheduleGenerationTask("agent", updated.id, { executionPhase: "created", nextPollAt: Date.now(), lastUpstreamStatus: "task_retry" });
+    after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [updated.id] }));
     return NextResponse.json({ code: 0, data: { run: updated }, msg: "OK" });
 }

@@ -1,6 +1,6 @@
 import type { CreativeMessage } from "@/lib/creative-runtime-contract";
-import type { WorkbenchWorkspace } from "@/lib/workbench-session-contract";
-import { normalizeWorkbenchAgentAttachments, workbenchAgentAttachmentSignature } from "@/lib/workbench-agent-attachment";
+import { WORKBENCH_PUBLIC_MESSAGE_VISIBILITY, type WorkbenchWorkspace } from "@/lib/workbench-session-contract";
+import { normalizeWorkbenchAgentAttachments } from "@/lib/workbench-agent-attachment";
 import { getCreativeWorkbenchSession, listCreativeWorkbenchSessions } from "@/services/api/creative";
 
 import type { WorkbenchAgentMessage, WorkbenchAgentSession } from "./workbench-agent-panel";
@@ -31,7 +31,7 @@ export async function loadWorkbenchAgentSession(workspace: WorkbenchWorkspace, s
         {
             ...session,
             recordId: normalizeRecordId(workspace, detail.recordId) || session.recordId,
-            messages: detail.messages.map(toWorkbenchMessage),
+            messages: detail.messages.flatMap(toWorkbenchMessage),
             loaded: true,
             hasOlderMessages: detail.hasMore,
             oldestSequence: detail.nextBeforeSequence,
@@ -43,7 +43,7 @@ export async function loadOlderWorkbenchAgentSession(workspace: WorkbenchWorkspa
     if (!session.loaded || !session.hasOlderMessages || !session.oldestSequence) return session;
     const detail = await getCreativeWorkbenchSession(session.creativeConversationId || session.id, workspace, session.oldestSequence);
     const existingIds = new Set(session.messages.map((message) => message.id));
-    const olderMessages = detail.messages.map(toWorkbenchMessage).filter((message) => !existingIds.has(message.id));
+    const olderMessages = detail.messages.flatMap(toWorkbenchMessage).filter((message) => !existingIds.has(message.id));
     return normalizeWorkbenchAgentSessions([
         {
             ...session,
@@ -56,14 +56,8 @@ export async function loadOlderWorkbenchAgentSession(workspace: WorkbenchWorkspa
 
 export function normalizeWorkbenchAgentSessions(sessions: WorkbenchAgentSession[]) {
     return sessions.map((session) => {
-        let lastUserKey = "";
         const messages = session.messages.filter((message) => {
             if (message.role === "assistant" && !message.progress && message.text.trim() === "正在按当前参数创建生成任务。") return false;
-            if (message.role !== "user") return true;
-            const text = message.text.trim();
-            const key = `${text}\n${workbenchAgentAttachmentSignature(message.attachments)}`;
-            if (text && key === lastUserKey) return false;
-            lastUserKey = key;
             return true;
         });
         const latestUserText = messages.findLast((message) => message.role === "user")?.text.trim() || "";
@@ -71,6 +65,29 @@ export function normalizeWorkbenchAgentSessions(sessions: WorkbenchAgentSession[
         const nextPrompt = prompt && (prompt === latestUserText || prompt === session.lastPrompt.trim()) ? "" : session.prompt;
         return messages === session.messages && nextPrompt === session.prompt ? session : { ...session, messages, prompt: nextPrompt };
     });
+}
+
+export function mergeWorkbenchAgentSessions(serverSessions: WorkbenchAgentSession[], localSessions: WorkbenchAgentSession[]) {
+    const merged = [...serverSessions];
+    for (const local of localSessions) {
+        const index = merged.findIndex((item) => item.id === local.id || Boolean(local.creativeConversationId && item.creativeConversationId === local.creativeConversationId) || Boolean(local.recordId && item.recordId === local.recordId));
+        if (index < 0) {
+            merged.unshift(local);
+            continue;
+        }
+        const server = merged[index];
+        merged[index] = {
+            ...server,
+            ...local,
+            recordId: local.recordId || server.recordId,
+            creativeConversationId: local.creativeConversationId || server.creativeConversationId,
+            messages: local.messages.length ? local.messages : server.messages,
+            loaded: local.loaded ?? server.loaded,
+            hasOlderMessages: local.hasOlderMessages ?? server.hasOlderMessages,
+            oldestSequence: local.oldestSequence ?? server.oldestSequence,
+        };
+    }
+    return normalizeWorkbenchAgentSessions(merged).slice(0, 100);
 }
 
 export function saveWorkbenchAgentSessions(_workspace: WorkbenchWorkspace, _userId: string, sessions: WorkbenchAgentSession[]) {
@@ -86,21 +103,24 @@ export function matchesWorkbenchHistoryQuery(query: string, ...values: string[])
     return !normalized || values.some((value) => value.toLowerCase().includes(normalized));
 }
 
-export function findWorkbenchAgentSessionForRecord(sessions: WorkbenchAgentSession[], recordId: string, prompt: string) {
-    return sessions.find((session) => session.recordId === recordId) || sessions.find((session) => !session.recordId && (session.prompt === prompt || session.lastPrompt === prompt));
+export function findWorkbenchAgentSessionForRecord(sessions: WorkbenchAgentSession[], recordId: string, conversationId?: string) {
+    return sessions.find((session) => session.recordId === recordId) || sessions.find((session) => Boolean(conversationId && session.creativeConversationId === conversationId));
 }
 
 export function removeWorkbenchAgentSessionsForRecords(sessions: WorkbenchAgentSession[], recordIds: ReadonlySet<string>) {
     return sessions.filter((session) => !session.recordId || !recordIds.has(session.recordId));
 }
 
-function toWorkbenchMessage(message: CreativeMessage): WorkbenchAgentMessage {
+function toWorkbenchMessage(message: CreativeMessage): WorkbenchAgentMessage[] {
+    if (message.metadata.contentVisibility !== WORKBENCH_PUBLIC_MESSAGE_VISIBILITY) return [];
     const attachments = normalizeWorkbenchAgentAttachments(message.metadata.attachments);
-    return {
-        id: message.id,
-        sequence: message.sequence,
-        role: message.role === "user" ? "user" : message.status === "failed" ? "error" : "assistant",
-        text: message.content,
-        ...(attachments.length ? { attachments } : {}),
-    };
+    return [
+        {
+            id: message.id,
+            sequence: message.sequence,
+            role: message.role === "user" ? "user" : message.status === "failed" ? "error" : "assistant",
+            text: message.content,
+            ...(attachments.length ? { attachments } : {}),
+        },
+    ];
 }

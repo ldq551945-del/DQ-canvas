@@ -71,9 +71,9 @@ export const adminHelpArticles: AdminHelpArticle[] = [
     {
         id: "operations",
         category: "经营分析",
-        title: "经营看板、用户与生成运营",
+        title: "经营看板、用户与生成运维",
         summary: "查看平台运行趋势，管理用户权益，并定位生成任务和上游调用问题。",
-        keywords: ["经营看板", "用户运营", "调用记录", "生成运营", "任务", "日志", "用户", "失败原因"],
+        keywords: ["经营看板", "用户运营", "调用记录", "生成运维", "任务", "日志", "用户", "失败原因"],
         purpose: "用摘要判断平台是否健康，再从用户、任务和调用记录逐层定位问题；不要依赖单一成功率或请求量判断经营状态。",
         steps: [
             {
@@ -92,7 +92,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
                 checks: ["确认逻辑模型与真实上游模型", "区分创建失败和查询失败", "核对失败是否已退款"],
             },
             {
-                title: "在生成运营处理任务",
+                title: "在生成运维处理任务",
                 description: "统一查看任务、会话、项目、渠道健康和积分成本，只有用户显式重试时才重新创建上游任务。",
                 checks: ["没有重复创建同类上游任务", "失败记录仍可审计", "取消、超时和退款状态一致"],
             },
@@ -103,7 +103,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
             { label: "经营看板", description: "查看平台运营摘要", section: "overview" },
             { label: "用户运营", description: "管理用户状态与权益", section: "users" },
             { label: "调用记录", description: "查看单次生成详情", section: "logs" },
-            { label: "生成运营", description: "排查任务与渠道状态", section: "generationOperations" },
+            { label: "生成运维", description: "排查任务与渠道状态", section: "generationOperations" },
         ],
     },
     {
@@ -193,13 +193,13 @@ export const adminHelpArticles: AdminHelpArticle[] = [
         category: "上游配置",
         title: "模型渠道、逻辑模型与 Agent Skills",
         summary: "把真实上游模型封装成稳定逻辑能力，并为 Agent 配置可执行的专业 Skill。",
-        keywords: ["模型渠道", "上游", "API Key", "Base URL", "逻辑模型", "默认模型", "能力检测", "Agent Skills", "Skill"],
+        keywords: ["模型渠道", "上游", "API Key", "Base URL", "协议中心", "自定义协议", "逻辑模型", "默认模型", "能力检测", "Agent Skills", "Skill"],
         purpose: "让普通用户只选择稳定的产品能力，服务端负责上游渠道、模型别名、优先级和失败切换，避免密钥与供应商细节暴露到浏览器。",
         steps: [
             {
                 title: "添加并检测上游渠道",
-                description: "填写协议、Base URL、API Key 和模型目录，分别检测文本、图片、视频和音频能力。",
-                checks: ["Base URL 不包含错误重复路径", "能力检测使用真实可调用模型", "密钥不会返回普通用户端"],
+                description: "按六步向导选择协议、配置连接、获取模型、验证能力、绑定逻辑模型并复核启用；未知上游使用自定义协议助手生成可复核草稿。",
+                checks: ["SD2 与 Stable Diffusion 协议没有混用", "Base URL 不包含错误重复路径", "无鉴权协议不会强制要求 API Key", "能力检测使用真实可调用模型", "密钥不会返回普通用户端"],
             },
             {
                 title: "创建逻辑模型和绑定",
@@ -218,7 +218,11 @@ export const adminHelpArticles: AdminHelpArticle[] = [
             },
         ],
         checks: ["文本、图片、视频和音频按启用范围逐项检测", "默认逻辑模型、绑定渠道和计费规则一致", "Agent 与 Canvas 的内部文本任务显式携带逻辑模型 ID"],
-        warnings: ["不要把上游真实模型名当作长期价格配置键；渠道更换后会造成前端预计和服务端扣费不一致。", "测试密钥时不要把完整请求、响应或密钥复制到公告、文档和浏览器日志。"],
+        warnings: [
+            "自定义协议分析结果只是渠道级草稿，必须复核并检测后再启用；当前没有全局协议版本发布和回滚。",
+            "不要把上游真实模型名当作长期价格配置键；渠道更换后会造成前端预计和服务端扣费不一致。",
+            "测试密钥时不要把完整请求、响应或密钥复制到公告、文档和浏览器日志。",
+        ],
         links: [
             { label: "模型渠道", description: "配置渠道、模型和默认能力", section: "channels" },
             { label: "Agent Skills", description: "管理专业能力与触发规则", section: "skills" },
@@ -347,7 +351,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
             },
             {
                 title: "检查任务和渠道",
-                description: "从生成运营进入调用记录，核对逻辑模型、上游模型、请求状态、错误、耗时和渠道检测。",
+                description: "从生成运维进入调用记录，核对逻辑模型、上游模型、请求状态、错误、耗时和渠道检测。",
                 checks: ["上游只创建了一次任务", "轮询查询的是同一个任务 ID", "失败退款和套餐次数撤销正确"],
             },
             {
@@ -365,7 +369,7 @@ export const adminHelpArticles: AdminHelpArticle[] = [
         warnings: ["不要通过删除失败记录来制造成功率正常；失败记录是退款、审计和复盘依据。", "没有数据库、媒体和配置备份时，不执行批量修复、迁移或升级。"],
         links: [
             { label: "经营看板", description: "确认整体异常趋势", section: "overview" },
-            { label: "生成运营", description: "查看任务和渠道健康", section: "generationOperations" },
+            { label: "生成运维", description: "查看任务和渠道健康", section: "generationOperations" },
             { label: "调用记录", description: "定位单次请求错误", section: "logs" },
             { label: "财务流水", description: "核对扣费、退款与余额", section: "wallet" },
             { label: "数据备份", description: "批量操作前保存恢复点", section: "backup" },

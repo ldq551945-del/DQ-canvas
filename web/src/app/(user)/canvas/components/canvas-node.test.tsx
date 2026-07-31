@@ -88,3 +88,25 @@ describe("CanvasNode task content", () => {
         expect(markup).toContain("mt-3 flex shrink-0");
     });
 });
+
+describe("CanvasNode error content", () => {
+    it("centers the error and retry action inside the node", () => {
+        const failedNode: CanvasNodeData = { ...imageNode, metadata: { status: "error", errorDetails: "生成失败，请稍后重试" } };
+
+        const markup = renderImageNode({ data: failedNode, onRetry: noop });
+
+        expect(markup).toContain("h-full w-full flex-col items-center justify-center");
+        expect(markup).toContain(`color:${canvasThemes.light.node.danger}`);
+        expect(markup).toContain("生成失败，请稍后重试");
+        expect(markup).toContain("重试");
+    });
+
+    it("renders a cancelled terminal state without a retry action", () => {
+        const cancelledNode: CanvasNodeData = { ...imageNode, metadata: { status: "cancelled", agentTaskStatus: "cancelled" } };
+
+        const markup = renderImageNode({ data: cancelledNode, onRetry: noop });
+
+        expect(markup).toContain("任务已取消");
+        expect(markup).not.toContain("重试");
+    });
+});

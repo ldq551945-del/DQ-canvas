@@ -1,5 +1,5 @@
-const TECHNICAL_ERROR_PATTERN = /\{\s*"error"|request id|new_api_error|convert_request_failed|not available|backend-anon\/conversation failed|<!doctype\s+html|<html\b|\bnginx\b/i;
-const ACTIONABLE_ERROR_PATTERN = /积分不足|余额不足|请先登录|登录(?:状态)?(?:已)?失效|没有权限|无权访问|请求过于频繁|内容(?:不符合|未通过).*审核/;
+const TECHNICAL_ERROR_PATTERN = /\{\s*"error"|request id|new_api_error|convert_request_failed|not available|backend-(?:anon|api)\/conversation failed|<!doctype\s+html|<html\b|\bnginx\b/i;
+const ACTIONABLE_ERROR_PATTERN = /积分不足|余额不足|请先登录|登录(?:状态)?(?:已)?失效|没有权限|无权访问|请求过于频繁|内容(?:不符合|未通过).*审核|当前渠道无法读取站内参考素材|参考素材暂时无法提交/;
 
 export function friendlyAgentError(value: unknown, fallback = "Agent 暂时无法完成这次任务，请切换模型或稍后重试。") {
     const message = value instanceof Error ? value.message : typeof value === "string" ? value : "";
@@ -21,12 +21,16 @@ export function formatAgentMessageText(text: string) {
     if (text.trim() === "创作计划与后台生成任务已全部完成。") return "创作任务已完成。";
     const planningBoundary = ["\n\n我的选择：", "\n\n已安排 "].map((value) => text.indexOf(value)).filter((index) => index >= 0);
     const visibleText = planningBoundary.length ? text.slice(0, Math.min(...planningBoundary)) : text;
-    return visibleText
+    return stripUpstreamDisplayDirectives(visibleText)
         .split("\n")
         .filter((line) => !/^「[^」]+」已生成(?:并返回画布)?。$/.test(line.trim()))
         .join("\n")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
+}
+
+function stripUpstreamDisplayDirectives(value: string) {
+    return value.replace(/:::writing\{[^}\r\n]*\}([\s\S]*?):::/g, "$1");
 }
 
 function actionableErrorMessage(value: string) {

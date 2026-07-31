@@ -14,6 +14,16 @@ describe("generated image normalization", () => {
         await expect(sharp(result.bytes).metadata()).resolves.toMatchObject({ format: "png", width: 1824, height: 1024 });
     });
 
+    it("restores a provider-safe image to a small exact requested size", async () => {
+        const source = await sharp({ create: { width: 672, height: 1008, channels: 3, background: "#9a6b4f" } })
+            .png()
+            .toBuffer();
+        const result = await normalizeGeneratedImageBytes(source, "image/png", "400x600");
+
+        expect(result).toMatchObject({ mimeType: "image/png", width: 400, height: 600 });
+        await expect(sharp(result.bytes).metadata()).resolves.toMatchObject({ format: "png", width: 400, height: 600 });
+    });
+
     it("keeps the upstream file unchanged when no exact target is configured", async () => {
         const source = await sharp({ create: { width: 1280, height: 720, channels: 3, background: "#506070" } })
             .jpeg({ quality: 92 })
@@ -24,10 +34,13 @@ describe("generated image normalization", () => {
         expect(result.bytes).toEqual(source);
     });
 
-    it("rejects oversized exact dimensions before allocating an output", async () => {
-        const source = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#203040" } })
+    it("keeps a large exact upstream image instead of applying a platform edge ceiling", async () => {
+        const source = await sharp({ create: { width: 1600, height: 900, channels: 3, background: "#203040" } })
             .webp()
             .toBuffer();
-        await expect(normalizeGeneratedImageBytes(source, "image/webp", "5000x5000")).rejects.toThrow("目标图片尺寸无效");
+        const result = await normalizeGeneratedImageBytes(source, "image/webp", "4096x2304");
+
+        expect(result).toMatchObject({ width: 4096, height: 2304 });
+        await expect(sharp(result.bytes).metadata()).resolves.toMatchObject({ format: "webp", width: 4096, height: 2304 });
     });
 });

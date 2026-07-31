@@ -170,11 +170,13 @@ describe("GlobalAiOpc native text proxy", () => {
             ],
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["vendor-shared"] }],
         });
-        vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ choices: [{ message: { content: "OK" } }] }));
         const request = new Request("http://localhost/api/ai/system/channel-one/chat/completions", {
             method: "POST",
             headers: {
                 "content-type": "application/json",
+                "idempotency-key": "upstream-request-one",
+                "x-client-request-id": "client-request-one",
                 "x-vozeb-pro-logical-model": "writer-pro",
                 "x-vozeb-pro-points-idempotency-key": "text-task:one:attempt:1",
             },
@@ -185,6 +187,9 @@ describe("GlobalAiOpc native text proxy", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "writer-pro", 1, "text", "system-ai:text-task:one:attempt:1:chat/completions");
+        const upstreamHeaders = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+        expect(upstreamHeaders.get("idempotency-key")).toBe("upstream-request-one");
+        expect(upstreamHeaders.get("x-client-request-id")).toBe("client-request-one");
     });
 
     it("routes GlobalAiOpc media models from one catalog channel to the matching service endpoint", async () => {
@@ -290,6 +295,113 @@ describe("Agnes video polling proxy", () => {
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://apihub.agnes-ai.com/agnesapi?video_id=video-one");
+    });
+});
+
+describe("Stable Diffusion proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "image-local",
+                    name: "本地图片",
+                    capability: "image",
+                    enabled: true,
+                    bindings: [{ id: "sd-binding", channelId: "channel-one", upstreamModel: "sdxl", enabled: true, priority: 1 }],
+                },
+            ],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://sd.example.com",
+                    apiKey: "",
+                    apiFormat: "openai",
+                    models: ["sdxl"],
+                    advancedConfig: { protocol: "stable-diffusion", authMode: "none", createPath: "/sdapi/v1/txt2img" },
+                },
+            ],
+        });
+    });
+
+    it("keeps the sdapi path literal and omits authentication", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ images: ["image-base64"] }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/sdapi/v1/txt2img", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-vozeb-pro-logical-model": "image-local",
+                    "x-vozeb-pro-upstream-model": "sdxl",
+                },
+                body: JSON.stringify({ prompt: "test", width: 1024, height: 1024 }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["sdapi", "v1", "txt2img"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://sd.example.com/sdapi/v1/txt2img");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
+    });
+});
+
+describe("custom protocol model routing", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [
+                {
+                    id: "image-tool",
+                    name: "图片工具",
+                    capability: "image",
+                    enabled: true,
+                    bindings: [{ id: "image-binding", channelId: "channel-one", upstreamModel: "engine-one", enabled: true, priority: 1 }],
+                },
+            ],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://api.example.com/v1",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["engine-one"],
+                    advancedConfig: {
+                        protocol: "custom",
+                        modelConfigs: { "engine-one": { capability: "image", protocol: "custom", createPath: "/jobs/image" } },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("uses the trusted upstream model header when a custom body has no model field", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ url: "https://cdn.example.com/result.png" }));
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/jobs/image", {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    "x-vozeb-pro-logical-model": "image-tool",
+                    "x-vozeb-pro-upstream-model": "engine-one",
+                },
+                body: JSON.stringify({ engine: "engine-one", prompt: "test" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["jobs", "image"] }) },
+        );
+
+        expect(response.status).toBe(200);
+        expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v1/jobs/image");
+        expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "image-tool", 1, "image", undefined);
     });
 });
 

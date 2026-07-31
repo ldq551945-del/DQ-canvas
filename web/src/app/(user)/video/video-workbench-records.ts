@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 
 import { normalizeVideoResolutionValue, normalizeVideoSizeValue } from "@/components/video-settings-panel";
 import { browserReadableMediaUrl, isRemoteMediaUrl } from "@/lib/browser-media-url";
-import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, GenerationLogSlotSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
+import { generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio } from "@/lib/seedance-video";
 import { resolveMediaUrl } from "@/services/file-storage";
 import { resolveImageUrl } from "@/services/image-storage";
@@ -70,7 +70,7 @@ export type GenerationLog = {
 };
 
 export type GenerationLogConfig = Pick<AiConfig, "model" | "videoModel" | "size" | "vquality" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark">;
-export type GenerationSnapshot = { text: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[] };
+export type GenerationSnapshot = { text: string; userText?: string; config: AiConfig; references: ReferenceImage[]; videoReferences: ReferenceVideo[]; audioReferences: ReferenceAudio[] };
 export type ReferenceDropTarget = "image" | "video" | "audio";
 
 export async function readStoredLogs(userId: string) {
@@ -358,6 +358,7 @@ export function snapshotFromLog(log: GenerationLog, config: AiConfig, resultId?:
     const model = parameters.model || log.config.videoModel || log.model || config.videoModel || config.model;
     return {
         text: slot?.prompt || log.prompt,
+        userText: generationLogPublicPrompt(log),
         config: buildVideoConfig(
             {
                 ...config,
@@ -429,7 +430,7 @@ export function buildLog({
         id: baseLog?.id || nanoid(),
         creativeConversationId: baseLog?.creativeConversationId,
         createdAt: baseLog?.createdAt || Date.now(),
-        title: baseLog?.title || prompt.slice(0, 12) || "未命名",
+        title: baseLog?.title || requestSnapshot.userPrompt?.slice(0, 12) || prompt.slice(0, 12) || "未命名",
         prompt,
         time: new Date().toLocaleString("zh-CN", { hour12: false }),
         model,
@@ -535,7 +536,8 @@ function mergeVideoRequestSnapshot(
         if (result.status === "success") assetIndex += 1;
         return slot;
     });
-    return { version: 1, parameters, references, slots };
+    const userPrompt = base?.userPrompt || snapshot.userText || snapshot.text;
+    return { version: 1, userPrompt, parameters, references, slots };
 }
 
 function videoSnapshotParameters(config: AiConfig | GenerationLogConfig): GenerationLogSnapshotParameters {

@@ -4,6 +4,7 @@ import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from 
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import type { GenerationLogSource } from "@/lib/server/generation-log-store";
 import { countActiveStoredGenerationTasks, createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
+import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
 type ImageTaskKind = "generation" | "edit";
 type ImageTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
@@ -49,6 +50,8 @@ export type ImageTask = GenerationTaskContext & {
     references: ImageTaskReference[];
     mask?: ImageTaskReference;
     result?: { dataUrl: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
+    upstream?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
+    billing?: { pointsCost: number; pointsRecordId?: string; refunded: boolean };
     error?: string;
     pointsRemaining?: number;
     candidateConfigs?: ImageTaskConfig[];
@@ -56,7 +59,6 @@ export type ImageTask = GenerationTaskContext & {
     attemptNo?: number;
 };
 
-const TASK_TTL_MS = 60 * 60 * 1000;
 const TASK_STALE_MS = 3 * 60 * 1000;
 export async function createImageTask(input: Omit<ImageTask, "id" | "status" | "createdAt" | "updatedAt">) {
     const now = Date.now();
@@ -67,13 +69,11 @@ export async function createImageTask(input: Omit<ImageTask, "id" | "status" | "
         createdAt: now,
         updatedAt: now,
     };
-    return createStoredGenerationTask("image", task, TASK_TTL_MS);
+    return createStoredGenerationTask("image", task, GENERATION_TASK_RETENTION_MS);
 }
 
 export async function getImageTask(id: string) {
-    const task = await getStoredGenerationTask<ImageTask>("image", id);
-    if (!task || !isStale(task)) return task;
-    return (await transitionImageTask(task, ["pending", "running"], { status: "error", error: "生成任务已中断，请重新生成。" })) || getStoredGenerationTask<ImageTask>("image", id);
+    return getStoredGenerationTask<ImageTask>("image", id);
 }
 
 export function countActiveImageTasksForUser(userId: string) {
@@ -81,17 +81,13 @@ export function countActiveImageTasksForUser(userId: string) {
 }
 
 export function transitionImageTask(task: ImageTask, allowedStatuses: ImageTaskStatus[], patch: Partial<Pick<ImageTask, "result" | "error" | "pointsRemaining">> & { status: ImageTaskStatus }) {
-    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, TASK_TTL_MS);
+    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS);
 }
 
 export function touchImageTask(id: string) {
-    return touchStoredGenerationTask("image", id, Date.now(), TASK_TTL_MS);
+    return touchStoredGenerationTask("image", id, Date.now(), GENERATION_TASK_RETENTION_MS);
 }
 
-export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo">>) {
-    return mutateStoredGenerationTask<ImageTask>("image", id, TASK_TTL_MS, (task) => ({ ...task, ...patch }));
-}
-
-function isStale(task: ImageTask) {
-    return (task.status === "pending" || task.status === "running") && task.updatedAt < Date.now() - TASK_STALE_MS;
+export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing">>) {
+    return mutateStoredGenerationTask<ImageTask>("image", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }

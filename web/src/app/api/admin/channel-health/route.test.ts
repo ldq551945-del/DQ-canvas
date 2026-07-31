@@ -8,11 +8,23 @@ vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: vi.fn(async () => t
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
 import { POST } from "./route";
+import { protocolModelConfig } from "@/lib/channel-protocol-registry";
 
 describe("admin channel health route", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         (globalThis as typeof globalThis & { __vozebProChannelHealthCooldowns?: Map<string, number> }).__vozebProChannelHealthCooldowns?.clear();
+    });
+
+    it("rejects health checks without configured credentials", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "", apiKey: "", model: "gpt-test", kind: "text" }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: "请填写 Base URL、API Key，并选择要测试的模型" });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("tests text with the saved server-side API key", async () => {
@@ -24,6 +36,48 @@ describe("admin channel health route", () => {
         expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/chat/completions", expect.objectContaining({ headers: expect.objectContaining({ authorization: "Bearer test-secret-value" }) }));
     });
 
+    it("tests a newly discovered model with its capability-level custom operation", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ result: { text: "OK" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(
+            request({
+                channelId: "saved",
+                model: "opaque-text",
+                kind: "text",
+                protocol: "custom",
+                modelConfig: {
+                    capability: "text",
+                    protocol: "custom",
+                    createPath: "/generate-text",
+                    requestTemplate: '{"model":"{{model}}","input":"{{prompt}}"}',
+                    resultField: "result.text",
+                },
+            }),
+        );
+
+        expect((await response.json()).result).toMatchObject({ ok: true, kind: "text", model: "opaque-text", createPath: "/generate-text" });
+        expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/generate-text", expect.objectContaining({ method: "POST" }));
+    });
+
+    it("tests a keyless Stable Diffusion channel with the strict request shape", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ images: ["image-base64"] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "https://sd.example.com", apiKey: "", model: "sdxl", kind: "image", protocol: "stable-diffusion", authMode: "none" }));
+
+        expect((await response.json()).result).toMatchObject({ ok: true, protocolKey: "stable-diffusion", createPath: "/sdapi/v1/txt2img" });
+        expect(fetchMock.mock.calls[0][0]).toBe("https://sd.example.com/sdapi/v1/txt2img");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+            prompt: expect.any(String),
+            width: 512,
+            height: 512,
+            batch_size: 1,
+            override_settings: { sd_model_checkpoint: "sdxl" },
+        });
+    });
+
     it("recognizes a binary audio response", async () => {
         vi.stubGlobal(
             "fetch",
@@ -31,6 +85,41 @@ describe("admin channel health route", () => {
         );
         const response = await POST(request({ channelId: "saved", model: "tts-test", kind: "audio" }));
         expect((await response.json()).result).toMatchObject({ ok: true, kind: "audio", model: "tts-test", createPath: "/audio/speech" });
+    });
+
+    it("tests image editing after text-to-image succeeds", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ url: "https://cdn.example.com/generated.png" }] }), { status: 200, headers: { "content-type": "application/json" } }))
+            .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ url: "https://cdn.example.com/edited.png" }] }), { status: 200, headers: { "content-type": "application/json" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved", model: "gpt-image-2", kind: "image", protocol: "openai" }));
+        const result = (await response.json()).result;
+        const preset = protocolModelConfig("openai", "image")!;
+        expect(result).toMatchObject({
+            ok: true,
+            kind: "image",
+            requestTemplate: preset.requestTemplate,
+            resultField: preset.resultField,
+            referenceImageTest: { ok: true, status: 200, remoteUrl: "https://cdn.example.com/edited.png" },
+        });
+        expect(result.requestTemplate).not.toContain("response_format");
+        expect(fetchMock).toHaveBeenNthCalledWith(1, "https://api.example.com/v1/images/generations", expect.objectContaining({ method: "POST" }));
+        expect(fetchMock).toHaveBeenNthCalledWith(2, "https://api.example.com/v1/images/edits", expect.objectContaining({ method: "POST", body: expect.any(FormData) }));
+    });
+
+    it("reports image editing failure without hiding successful text-to-image health", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi
+                .fn()
+                .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ url: "https://cdn.example.com/generated.png" }] }), { status: 200, headers: { "content-type": "application/json" } }))
+                .mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: "edit endpoint unavailable" } }), { status: 404, headers: { "content-type": "application/json" } })),
+        );
+
+        const response = await POST(request({ channelId: "saved", model: "gpt-image-2", kind: "image", protocol: "openai" }));
+        expect((await response.json()).result).toMatchObject({ ok: true, kind: "image", referenceImageTest: { ok: false, status: 404, error: "edit endpoint unavailable" } });
     });
 
     it("routes a model from the GlobalAiOpc v1 catalog to its documented endpoint", async () => {

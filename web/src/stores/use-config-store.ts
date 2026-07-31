@@ -6,14 +6,19 @@ import { nanoid } from "nanoid";
 
 import { flattenPublicCapabilityModels, resolvePublicCapabilityModels } from "@/lib/public-model-catalog";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
-import { inferModelCapability } from "@/lib/model-capability";
+import { resolveChannelModelAdvancedConfig } from "@/lib/channel-protocol-registry";
+import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { materializeLogicalModelPointCosts } from "@/lib/model-point-cost";
 
 type ApiCallFormat = "openai" | "gemini";
-type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "qingyan" | "globalaiopc" | "seedance" | "compatible";
+type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 
 type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
+    authMode?: "none" | "bearer" | "x-api-key" | "custom-header";
+    authHeader?: string;
+    authPrefix?: string;
+    documentationUrl?: string;
     globalAiOpcPreset?: GlobalAiOpcPresetId;
     globalAiOpcPresets?: GlobalAiOpcPresetId[];
     textModel: string;
@@ -460,13 +465,15 @@ export function resolveModelChannel(config: AiConfig, value: string) {
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
     const channel = resolveModelChannel(config, value);
+    const model = modelOptionName(value || config.model);
+    const advancedConfig = channel.advancedConfig ? resolveChannelModelAdvancedConfig(channel.advancedConfig, model) : undefined;
     return {
         ...config,
-        model: modelOptionName(value || config.model),
+        model,
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
-        apiFormat: channel.apiFormat,
-        ...(channel.advancedConfig ? { advancedConfig: channel.advancedConfig } : {}),
+        apiFormat: channel.advancedConfig?.modelConfigs?.[normalizeModelId(model)]?.apiFormat || channel.apiFormat,
+        ...(advancedConfig ? { advancedConfig } : {}),
         systemPrompt: "",
     };
 }

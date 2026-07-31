@@ -10,9 +10,10 @@ import { resolveLogicalBillingModel } from "@/lib/server/logical-model-router";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOpcChannel } from "@/lib/server/globalaiopc-proxy";
-import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER } from "@/lib/server/system-ai-billing";
+import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
-import { normalizeModelId } from "@/lib/model-capability";
+import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
+import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,15 +56,16 @@ export async function DELETE(request: Request, context: RouteContext) {
 
 async function proxySystemRequest(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    if (!currentUser) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const userId = currentUser?.id || authorizedMaintenanceUserId(request);
+    if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
     const settings = await getAuthSettings();
     const channel = settings.systemChannels.find((item) => item.id === channelId && item.enabled);
-    if (!channel || !channel.baseUrl.trim() || !channel.apiKey.trim()) return NextResponse.json({ error: "默认接口未配置或已停用" }, { status: 404 });
+    if (!channel || !channelConnectionReady(channel)) return NextResponse.json({ error: "默认接口未配置或已停用" }, { status: 404 });
 
     if (isMediaProxyPath(path)) {
-        const rate = await checkMediaProxyRateLimit(currentUser.id, request);
+        const rate = await checkMediaProxyRateLimit(userId, request);
         if (!rate.allowed) return NextResponse.json({ error: "媒体访问过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
         return proxySystemMediaRequest(request, channel);
     }
@@ -79,19 +81,22 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
-    const upstreamModel = requestModel(requestBody.pointsPayload);
-    const modelConfig = upstreamModel ? channel.advancedConfig?.modelConfigs?.[normalizeModelId(upstreamModel)] : undefined;
+    const upstreamModel = requestModel(requestBody.pointsPayload) || request.headers.get(SYSTEM_AI_UPSTREAM_MODEL_HEADER)?.trim() || "";
+    const modelConfig = upstreamModel ? resolveChannelModelConfig(channel.advancedConfig, upstreamModel) : undefined;
     const apiFormat = modelConfig?.apiFormat || channel.apiFormat;
+    const globalChannel = isGlobalAiOpcChannel(channel.advancedConfig);
     const headers = new Headers();
     if (contentType && !isMultipart) headers.set("content-type", contentType);
     if (accept) headers.set("accept", accept);
-    if (apiFormat === "gemini" && !isGlobalAiOpcChannel(channel.advancedConfig)) headers.set("x-goog-api-key", channel.apiKey);
-    else headers.set("authorization", `Bearer ${channel.apiKey}`);
-    const globalChannel = isGlobalAiOpcChannel(channel.advancedConfig);
+    const idempotencyKey = request.headers.get("idempotency-key")?.trim().slice(0, 200);
+    const clientRequestId = request.headers.get("x-client-request-id")?.trim().slice(0, 200);
+    if (idempotencyKey) headers.set("idempotency-key", idempotencyKey);
+    if (clientRequestId) headers.set("x-client-request-id", clientRequestId);
+    Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, globalChannel ? "openai" : apiFormat)).forEach(([key, value]) => headers.set(key, value));
     const globalPreset = resolveGlobalAiOpcPreset(channel.advancedConfig, upstreamModel) || resolveGlobalAiOpcPathPreset(channel.advancedConfig, path);
     const globalAdaptation = adaptGlobalAiOpcTextRequest(channel.advancedConfig, path, requestBody.body);
     if (globalAdaptation === "responses-unsupported") return NextResponse.json({ error: "该 GlobalAiOpc 原生文本接口不支持 Responses，已切换 Chat 兼容回退。" }, { status: 404 });
-    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel);
+    const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
     if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
     const pointsRequest =
         classifyPointsRequest(request.method, apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
@@ -101,7 +106,8 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             contentType,
             requestBody.pointsPayload,
             channel.id,
-            globalPreset?.createPath || modelConfig?.createPath || channel.advancedConfig?.createPath,
+            [globalPreset?.createPath, modelConfig?.createPath, modelConfig?.editPath, modelConfig?.imageToVideoPath, channel.advancedConfig?.createPath, channel.advancedConfig?.editPath, channel.advancedConfig?.imageToVideoPath],
+            upstreamModel,
             settings.logicalModels,
             settings.generationPointMultipliers,
         );
@@ -116,12 +122,12 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const refundConsumedPoints = async () => {
         if (!pointsResult || pointsSettled) return;
         pointsSettled = true;
-        const refundedUser = await refundUserPoints(currentUser.id, pointsResult.model, pointsResult.cost, pointsResult.usageKind, pointsResult.units, undefined, pointsResult.recordId);
+        const refundedUser = await refundUserPoints(userId, pointsResult.model, pointsResult.cost, pointsResult.usageKind, pointsResult.units, undefined, pointsResult.recordId);
         refundedPointsRemaining = typeof refundedUser?.pointsBalance === "number" ? refundedUser.pointsBalance : null;
     };
     if (pointsRequest) {
         try {
-            pointsResult = await consumeUserPoints(currentUser.id, billingModel || pointsRequest.model, pointsRequest.amount, pointsRequest.usageKind, pointsIdempotencyKey);
+            pointsResult = await consumeUserPoints(userId, billingModel || pointsRequest.model, pointsRequest.amount, pointsRequest.usageKind, pointsIdempotencyKey);
         } catch (error) {
             if (isQuotaExceededError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
             throw error;
@@ -181,7 +187,7 @@ function channelHasModel(models: string[], requested: string) {
 }
 
 function requestModel(payload: ArrayBuffer | Record<string, unknown> | undefined) {
-    return payload && !(payload instanceof ArrayBuffer) && typeof payload.model === "string" ? payload.model : "";
+    return payload && !(payload instanceof ArrayBuffer) ? readRequestModel(payload) : "";
 }
 
 function normalizePointsIdempotencyKey(value: string | null) {
@@ -201,8 +207,7 @@ async function proxySystemMediaRequest(request: Request, channel: SystemMediaCha
     const range = request.headers.get("range");
     if (range) headers.set("range", range);
     if (target.includeAuth) {
-        if (channel.apiFormat === "gemini" && !isGlobalAiOpcChannel(channel.advancedConfig)) headers.set("x-goog-api-key", channel.apiKey);
-        else headers.set("authorization", `Bearer ${channel.apiKey}`);
+        Object.entries(protocolAuthHeaders(channel.apiKey, channel.advancedConfig, isGlobalAiOpcChannel(channel.advancedConfig) ? "openai" : channel.apiFormat)).forEach(([key, value]) => headers.set(key, value));
     }
 
     try {
@@ -350,15 +355,16 @@ function classifyConfiguredPointsRequest(
     contentType: string | null,
     body: ArrayBuffer | Record<string, unknown> | undefined,
     channelId: string,
-    createPath: string | undefined,
+    createPaths: Array<string | undefined>,
+    modelHint: string,
     logicalModels: Awaited<ReturnType<typeof getAuthSettings>>["logicalModels"],
     multipliers?: GenerationPointMultipliers,
 ): PointsRequest | null {
-    if (method.toUpperCase() !== "POST" || !createPath) return null;
+    if (method.toUpperCase() !== "POST") return null;
     const cleanPath = `/${(path[0] === "v1" || path[0] === "v1beta" ? path.slice(1) : path).join("/")}`.replace(/\/+$/, "").toLowerCase();
-    if (cleanPath !== createPath.replace(/\/+$/, "").toLowerCase()) return null;
+    if (!createPaths.some((createPath) => createPath && cleanPath === createPath.replace(/\/+$/, "").toLowerCase())) return null;
     const payload = readRequestBody(contentType, body);
-    const model = readRequestModel(payload);
+    const model = readRequestModel(payload) || modelHint;
     if (!model) return null;
     const capability = logicalModels.find((logical) => logical.enabled && logical.bindings.some((binding) => binding.enabled && binding.channelId === channelId && sameModel(binding.upstreamModel, model)))?.capability;
     if (capability === "image") return { model, amount: readRequestCount(payload) * imageQualityMultiplier(payload, multipliers), usageKind: "image" };
@@ -381,7 +387,11 @@ function sameModel(left: string, right: string) {
 }
 
 function readRequestModel(payload: Record<string, unknown>) {
-    return typeof payload.model === "string" ? payload.model.trim() : "";
+    if (typeof payload.model === "string") return payload.model.trim();
+    const overrideSettings = payload.override_settings;
+    return overrideSettings && typeof overrideSettings === "object" && !Array.isArray(overrideSettings) && typeof (overrideSettings as Record<string, unknown>).sd_model_checkpoint === "string"
+        ? String((overrideSettings as Record<string, unknown>).sd_model_checkpoint).trim()
+        : "";
 }
 
 function readPathModel(path: string[]) {
@@ -470,13 +480,14 @@ function readMultipartFields(text: string): Record<string, string> {
     return fields;
 }
 
-function targetUrl(baseUrl: string, apiFormat: "openai" | "gemini", path: string[], search: string, globalAiOpc = false) {
-    const cleanPath = path[0] === "v1" || path[0] === "v1beta" ? path.slice(1) : path;
+function targetUrl(baseUrl: string, apiFormat: "openai" | "gemini", path: string[], search: string, globalAiOpc = false, protocol?: import("@/lib/auth/store").SystemChannelProtocol) {
+    const usesLiteralPath = protocol === "seedance-special" || protocol === "stable-diffusion" || protocol === "custom";
+    const cleanPath = !usesLiteralPath && (path[0] === "v1" || path[0] === "v1beta") ? path.slice(1) : path;
     if (isAgnesApiBaseUrl(baseUrl) && cleanPath[0]?.toLowerCase() === "agnesapi") {
         const origin = new URL(baseUrl).origin;
         return `${origin}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
     }
-    const apiBase = normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc);
+    const apiBase = usesLiteralPath ? baseUrl.trim().replace(/\/+$/, "") : normalizeApiBaseUrl(baseUrl, apiFormat, globalAiOpc);
     return `${apiBase}/${cleanPath.map((segment) => encodeTargetPathSegment(segment, apiFormat)).join("/")}${search}`;
 }
 

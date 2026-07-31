@@ -6,7 +6,7 @@ vi.mock("@/stores/use-config-store", () => ({
     resolveModelRequestConfig: vi.fn((config: Record<string, unknown>, model: string) => ({ ...config, model, apiSource: "system" })),
 }));
 
-import { requestAudioGeneration } from "./audio";
+import { createAudioGenerationTask, requestAudioGeneration, waitForAudioGenerationTask } from "./audio";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const config = {
@@ -57,6 +57,31 @@ describe("audio API service", () => {
 
         await expect(requestAudioGeneration(config, "测试取消", { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
         expect(fetchMock).toHaveBeenCalledWith("/api/audio-tasks/task-2", expect.objectContaining({ method: "PATCH", body: JSON.stringify({ status: "cancelled" }) }));
+    });
+
+    it("can persist the created task and resume polling after the page reloads", async () => {
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(json({ task: { id: "task-resume", status: "running", model: "voice" } }))
+            .mockResolvedValueOnce(json({ task: { id: "task-resume", status: "success", model: "voice", result: { url: "/api/reference-assets/resumed-audio", mimeType: "audio/mpeg" } } }))
+            .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const task = await createAudioGenerationTask(config, "刷新后继续", { source: "canvas", surface: "canvas", projectId: "canvas-one", clientRequestId: "canvas-audio:one" });
+        const createBody = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+        const result = await waitForAudioGenerationTask(config, task);
+
+        expect(task).toMatchObject({ id: "task-resume", model: "voice" });
+        expect(createBody).toMatchObject({ source: "canvas", context: { surface: "canvas", projectId: "canvas-one", clientRequestId: "canvas-audio:one" } });
+        expect(result.url).toBe("/api/reference-assets/resumed-audio");
+    });
+
+    it("stops polling when the upstream submission needs manual review", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "audio-review", status: "running", model: "voice", needsReview: true } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(waitForAudioGenerationTask(config, { id: "audio-review", status: "running", model: "voice" })).rejects.toThrow("上游创建状态待确认");
+        expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 });
 

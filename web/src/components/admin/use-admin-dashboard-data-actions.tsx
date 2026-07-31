@@ -225,10 +225,10 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
         try {
             const response = await fetch("/api/admin/generation-overview", { cache: "no-store" });
             const payload = (await response.json().catch(() => null)) as { data?: AdminGenerationOverviewSummary; msg?: string } | null;
-            if (!response.ok || !payload?.data) throw new Error(payload?.msg || "加载生成运营摘要失败");
+            if (!response.ok || !payload?.data) throw new Error(payload?.msg || "加载生成运维摘要失败");
             if (requestId === operationsSummaryRequestIdRef.current) setOperationsSummary(payload.data);
         } catch (error) {
-            if (requestId === operationsSummaryRequestIdRef.current) message.error(error instanceof Error ? error.message : "加载生成运营摘要失败");
+            if (requestId === operationsSummaryRequestIdRef.current) message.error(error instanceof Error ? error.message : "加载生成运维摘要失败");
         } finally {
             if (requestId === operationsSummaryRequestIdRef.current) setOperationsSummaryLoading(false);
         }

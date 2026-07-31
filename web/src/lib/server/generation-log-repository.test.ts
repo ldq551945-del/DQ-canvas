@@ -33,4 +33,15 @@ describe("generation log asset normalization", () => {
     it("retains a bounded per-record asset limit", () => {
         expect(storedLogWithAssets(MAX_GENERATION_LOG_ASSETS + 5).assets).toHaveLength(MAX_GENERATION_LOG_ASSETS);
     });
+
+    it("persists the bounded public user prompt separately from task prompts", () => {
+        const log = normalizeStoredLog({
+            ...storedLogWithAssets(1),
+            prompt: "内部执行提示词",
+            requestSnapshot: { version: 1, userPrompt: "用户原始需求", parameters: {}, references: [], slots: [{ id: "slot-1", index: 0, status: "pending", prompt: "内部执行提示词" }] },
+        });
+
+        expect(log.prompt).toBe("内部执行提示词");
+        expect(log.requestSnapshot).toMatchObject({ userPrompt: "用户原始需求", slots: [{ prompt: "内部执行提示词" }] });
+    });
 });

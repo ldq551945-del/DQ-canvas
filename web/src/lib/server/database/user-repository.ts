@@ -429,6 +429,7 @@ function mapAuthenticatedUser(row: Record<string, unknown>): AuthenticatedUserRe
         user,
         planId,
         planName: stringValue(row.resolved_plan_name),
+        hasActivePlan: Boolean(assignmentId),
         permanentPoints: numberValue(user.pointsBalance),
         dailyPoints: configuredDailyPoints > 0 ? Math.max(0, configuredDailyPoints - consumedDailyPoints) : 0,
     };

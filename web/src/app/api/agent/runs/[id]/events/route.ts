@@ -1,6 +1,9 @@
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAgentRun } from "@/lib/server/agent-run-store";
 import { getLatestCreativeRunEventId, listCreativeRunEvents } from "@/lib/server/creative-runtime-store";
+import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
+import { resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { waitForCreativeRunEvent } from "@/lib/server/creative-run-event-signal";
 
 export const dynamic = "force-dynamic";
 
@@ -12,14 +15,34 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const requestedEventId = request.headers.get("last-event-id") || new URL(request.url).searchParams.get("lastEventId") || "";
     const retryEventIds = requestedEventId ? [] : await Promise.all([getLatestCreativeRunEventId(run.id, "task.retry.requested"), getLatestCreativeRunEventId(run.id, "run.retry.requested")]);
     const lastEventId = requestedEventId || retryEventIds.reduce((latest, id) => (Number(id || 0) > Number(latest || 0) ? id : latest), "");
+    const origin = resolveInternalOrigin(new URL(request.url).origin);
+    const cookie = request.headers.get("cookie") || "";
     const body = new ReadableStream({
         start(controller) {
             let closed = false;
             let cursor = lastEventId;
+            let nextRecoveryAt = 0;
+            let recovery: Promise<unknown> | undefined;
+            let lastSnapshotVersion = "";
+            let lastHeartbeatAt = Date.now();
+            const wakeRecovery = () => {
+                const now = Date.now();
+                if (recovery || now < nextRecoveryAt) return;
+                nextRecoveryAt = now + 2_000;
+                recovery = runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [run.id] })
+                    .catch((error) => console.warn("Agent task recovery wakeup failed", { runId: run.id, error: error instanceof Error ? error.message : String(error) }))
+                    .finally(() => {
+                        recovery = undefined;
+                    });
+            };
             const close = () => {
                 if (closed) return;
                 closed = true;
-                controller.close();
+                try {
+                    controller.close();
+                } catch {
+                    // The client may have cancelled the stream before the server loop observes it.
+                }
             };
             request.signal.addEventListener("abort", close, { once: true });
             void (async () => {
@@ -37,12 +60,21 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
                         controller.enqueue(encoder.encode(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`));
                         cursor = event.id;
                     }
-                    controller.enqueue(encoder.encode(`event: run.snapshot\ndata: ${JSON.stringify({ id: current.id, status: current.status, tasks: current.tasks, updatedAt: current.updatedAt })}\n\n`));
+                    const snapshotVersion = `${current.status}:${current.updatedAt}`;
+                    if (snapshotVersion !== lastSnapshotVersion) {
+                        controller.enqueue(encoder.encode(`event: run.snapshot\ndata: ${JSON.stringify({ id: current.id, status: current.status, tasks: current.tasks, timings: current.timings, updatedAt: current.updatedAt })}\n\n`));
+                        lastSnapshotVersion = snapshotVersion;
+                    }
                     if (["completed", "failed", "cancelled"].includes(current.status)) {
                         close();
                         return;
                     }
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                    if (current.status === "planning" || current.status === "running") wakeRecovery();
+                    await waitForCreativeRunEvent(run.id, 2_500, request.signal);
+                    if (!closed && Date.now() - lastHeartbeatAt >= 15_000) {
+                        controller.enqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
+                        lastHeartbeatAt = Date.now();
+                    }
                 }
                 close();
             })().catch(() => close());

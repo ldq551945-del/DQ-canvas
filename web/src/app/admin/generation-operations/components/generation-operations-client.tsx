@@ -1,13 +1,14 @@
 "use client";
 
-import { App, Button, Input, Pagination, Select, Table, Tag, Tooltip } from "antd";
+import { App, Button, Input, Modal, Pagination, Select, Table, Tag, Tooltip } from "antd";
 import type { TableColumnsType } from "antd";
-import { Activity, CircleStop, Clock3, Coins, RefreshCw, RotateCcw, Route, ServerCog } from "lucide-react";
+import { Activity, CircleCheckBig, CircleStop, Clock3, Coins, RefreshCw, RotateCcw, Route, ShieldAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Panel } from "@/components/admin/admin-panel";
+import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { AdminUserIdentity } from "@/components/admin/admin-user-identity";
 import type { AdminGenerationChannel, AdminGenerationOperationsPayload, AdminGenerationTask } from "@/lib/admin-generation-operations";
+import { generationOperationStatusTagClass, generationOperationThemeClasses } from "./generation-operations-theme";
 
 const PAGE_SIZE = 20;
 
@@ -22,6 +23,10 @@ export function GenerationOperationsClient() {
     const [search, setSearch] = useState("");
     const [submittedSearch, setSubmittedSearch] = useState("");
     const [actingId, setActingId] = useState("");
+    const [reviewingTask, setReviewingTask] = useState<AdminGenerationTask>();
+    const [reviewAction, setReviewAction] = useState<"resume_upstream" | "provide_result" | "confirm_failed">("resume_upstream");
+    const [reviewValue, setReviewValue] = useState("");
+    const [reviewing, setReviewing] = useState(false);
     const [health, setHealth] = useState<Record<string, { loading?: boolean; ok?: boolean; error?: string; status?: number }>>({});
 
     const load = useCallback(async () => {
@@ -87,6 +92,39 @@ export function GenerationOperationsClient() {
         }
     };
 
+    const openReview = (task: AdminGenerationTask) => {
+        setReviewingTask(task);
+        setReviewAction("resume_upstream");
+        setReviewValue(task.upstreamTaskId || "");
+    };
+
+    const submitReview = async () => {
+        if (!reviewingTask) return;
+        setReviewing(true);
+        try {
+            const body =
+                reviewAction === "resume_upstream"
+                    ? { action: reviewAction, upstreamTaskId: reviewValue.trim() }
+                    : reviewAction === "provide_result"
+                      ? { action: reviewAction, result: reviewValue.trim() }
+                      : { action: reviewAction, reason: reviewValue.trim() };
+            const response = await fetch(`/api/admin/generation-operations/${reviewingTask.type}/${encodeURIComponent(reviewingTask.id)}/review`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            const payload = (await response.json().catch(() => ({}))) as { msg?: string };
+            if (!response.ok) throw new Error(payload.msg || "任务接管失败");
+            message.success(reviewAction === "confirm_failed" ? "任务已确认失败并结束" : "任务已交给后台 Worker 继续处理");
+            setReviewingTask(undefined);
+            await load();
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "任务接管失败");
+        } finally {
+            setReviewing(false);
+        }
+    };
+
     const columns = useMemo<TableColumnsType<AdminGenerationTask>>(
         () => [
             {
@@ -96,8 +134,9 @@ export function GenerationOperationsClient() {
                 render: (_, task) => (
                     <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                            <Tag className="m-0">{taskTypeLabel(task.type)}</Tag>
+                            <TaskTypeTag type={task.type} />
                             <StatusTag status={task.status} />
+                            {task.canReview ? <ReviewTag /> : null}
                         </div>
                         <Tooltip title={task.id}>
                             <div className="mt-2 truncate font-mono text-xs text-zinc-500 dark:text-zinc-400">{task.id}</div>
@@ -151,6 +190,11 @@ export function GenerationOperationsClient() {
                                 <Button type="text" shape="circle" icon={<RotateCcw className="size-4" />} loading={actingId === `${task.id}:retry`} onClick={() => void runAction(task, "retry")} />
                             </Tooltip>
                         ) : null}
+                        {task.canReview ? (
+                            <Tooltip title="接管待确认任务">
+                                <Button aria-label="接管待确认任务" type="text" shape="circle" icon={<ShieldAlert className="size-4 text-amber-600 dark:text-amber-300" />} onClick={() => openReview(task)} />
+                            </Tooltip>
+                        ) : null}
                     </div>
                 ),
             },
@@ -160,160 +204,321 @@ export function GenerationOperationsClient() {
 
     const summary = data?.summary;
     return (
-        <Panel>
-            <section className="grid grid-cols-2 gap-px border-b border-zinc-200 bg-zinc-200 dark:border-zinc-800 dark:bg-zinc-800 sm:grid-cols-3 xl:grid-cols-5">
-                <Metric icon={<Activity />} label="任务总数" value={summary?.total || 0} />
-                <Metric icon={<Route />} label="执行中" value={summary?.active || 0} />
-                <Metric icon={<CircleStop />} label="失败" value={summary?.failed || 0} />
-                <Metric icon={<Clock3 />} label="平均耗时" value={formatDuration(summary?.averageDurationMs || 0)} />
-                <Metric className="col-span-2 sm:col-span-1" icon={<Coins />} label="积分消耗" value={summary?.totalPointsCost || 0} />
-            </section>
+        <>
+            <div className="space-y-3 sm:space-y-4">
+                <Panel>
+                    <PanelHeader
+                        title="运行概览"
+                        description="快速查看任务吞吐、成功率、耗时与积分消耗。"
+                        actions={
+                            <Button aria-label="刷新生成运维数据" icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
+                                刷新
+                            </Button>
+                        }
+                    />
+                    <section className="grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-3 xl:grid-cols-6">
+                        <SummaryMetric icon={<Activity />} label="任务总数" value={summary?.total || 0} detail="全部生成记录" />
+                        <SummaryMetric icon={<Route />} label="执行中" value={summary?.active || 0} detail="排队与运行任务" />
+                        <SummaryMetric icon={<CircleCheckBig />} label="成功" value={summary?.success || 0} detail="已完成任务" />
+                        <SummaryMetric icon={<CircleStop />} label="失败" value={summary?.failed || 0} detail="需要关注" tone="danger" />
+                        <SummaryMetric icon={<Clock3 />} label="平均耗时" value={formatDuration(summary?.averageDurationMs || 0)} detail="全部任务平均" />
+                        <SummaryMetric icon={<Coins />} label="积分消耗" value={summary?.totalPointsCost || 0} detail="累计扣减" />
+                    </section>
+                </Panel>
 
-            <section className="p-3 sm:p-5">
-                <div className="grid grid-cols-2 gap-2 xl:grid-cols-[minmax(220px,1fr)_repeat(3,minmax(130px,180px))_auto] xl:gap-3">
-                    <Input.Search
-                        className="col-span-2 xl:col-span-1"
-                        value={search}
-                        allowClear
-                        placeholder="任务、用户或用户 ID、模型、会话或项目"
-                        enterButton="筛选"
-                        onChange={(event) => setSearch(event.target.value)}
-                        onSearch={(value) => {
-                            setPage(1);
-                            setSubmittedSearch(value.trim());
-                        }}
-                    />
-                    <Select
-                        value={type || undefined}
-                        allowClear
-                        placeholder="任务类型"
-                        options={["agent", "text", "image", "video", "audio", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
-                        onChange={(value) => {
-                            setPage(1);
-                            setType(value || "");
-                        }}
-                    />
-                    <Select
-                        value={status || undefined}
-                        allowClear
-                        placeholder="任务状态"
-                        options={["pending", "running", "paused", "success", "error", "cancelled"].map((value) => ({ value, label: statusLabel(value) }))}
-                        onChange={(value) => {
-                            setPage(1);
-                            setStatus(value || "");
-                        }}
-                    />
-                    <div className="col-span-2 min-w-0 xl:col-span-1">
-                        <Select
-                            className="w-full"
-                            value={surface || undefined}
-                            allowClear
-                            placeholder="创作入口"
-                            options={[
-                                { value: "chat", label: "创作对话" },
-                                { value: "canvas", label: "Canvas" },
-                                { value: "drama", label: "短剧" },
-                            ]}
-                            onChange={(value) => {
-                                setPage(1);
-                                setSurface(value || "");
-                            }}
+                {data?.agentPerformance.sampleSize ? (
+                    <Panel>
+                        <PanelHeader
+                            title="Agent 分阶段性能"
+                            description="拆分规划、首个结果、排队、上游保存与复盘耗时，定位实际瓶颈。"
+                            actions={<Tag className={generationOperationThemeClasses.neutralTag}>{data.agentPerformance.sampleSize} 次样本</Tag>}
                         />
-                    </div>
-                    <Button icon={<RefreshCw className="size-4" />} loading={loading} onClick={() => void load()}>
-                        刷新
-                    </Button>
-                </div>
+                        <section className="grid grid-cols-2 gap-px bg-zinc-200 dark:bg-zinc-800 sm:grid-cols-4 xl:grid-cols-7">
+                            <PerformanceValue label="规划 P50" value={data.agentPerformance.planningP50Ms} detail="典型规划耗时" />
+                            <PerformanceValue label="规划 P95" value={data.agentPerformance.planningP95Ms} detail="慢请求边界" />
+                            <PerformanceValue label="首结果 P50" value={data.agentPerformance.firstResultP50Ms} detail="典型首屏等待" />
+                            <PerformanceValue label="首结果 P95" value={data.agentPerformance.firstResultP95Ms} detail="长尾首屏等待" />
+                            <PerformanceValue label="排队平均" value={data.agentPerformance.queueAverageMs} detail="调度等待" />
+                            <PerformanceValue label="上游及保存" value={data.agentPerformance.upstreamAverageMs} detail="生成与落盘" />
+                            <PerformanceValue className="col-span-2 sm:col-span-1" label="复盘平均" value={data.agentPerformance.reviewAverageMs} detail="后台质量复盘" />
+                        </section>
+                    </Panel>
+                ) : null}
 
-                <div className="mt-4 hidden overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-800 md:block">
-                    <Table rowKey="id" size="middle" loading={loading} columns={columns} dataSource={data?.items || []} pagination={false} scroll={{ x: 980 }} />
-                </div>
-                <div className="mt-4 space-y-3 md:hidden">
-                    {(data?.items || []).map((task) => (
-                        <TaskCard key={task.id} task={task} actingId={actingId} onAction={runAction} />
-                    ))}
-                    {!loading && !data?.items.length ? <div className="py-6 text-center text-sm text-zinc-500 sm:py-16">没有匹配任务</div> : null}
-                </div>
-                <Pagination className="mt-5 justify-end" current={page} pageSize={PAGE_SIZE} total={data?.total || 0} showSizeChanger={false} onChange={setPage} />
-            </section>
-
-            <section className="border-t border-zinc-200 p-4 dark:border-zinc-800 sm:p-5">
-                <div className="mb-3 flex flex-wrap items-center gap-2 sm:mb-4">
-                    <ServerCog className="size-4" />
-                    <h2 className="font-semibold">渠道健康</h2>
-                    <span className="basis-full text-xs text-zinc-500 sm:basis-auto">显式探测会发起真实最小请求并可能产生积分消耗</span>
-                </div>
-                <div className="grid gap-3 lg:grid-cols-2">
-                    {(data?.channels || []).map((channel) => {
-                        const state = health[channelKey(channel)];
-                        return (
-                            <div key={channelKey(channel)} className="flex min-w-0 items-center gap-3 rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
-                                <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className="truncate text-sm font-medium">{channel.name}</span>
-                                        <Tag className="m-0">{taskTypeLabel(channel.capability)}</Tag>
-                                        {!channel.enabled ? <Tag color="default">已停用</Tag> : null}
-                                        {channel.runtimeHealth.status === "cooling" ? <Tag color="warning">冷却中</Tag> : null}
-                                    </div>
-                                    <div className="mt-1 truncate text-xs text-zinc-500">
-                                        {channel.logicalModelName} → {channel.upstreamModel}
-                                    </div>
-                                    {channel.runtimeHealth.status === "cooling" ? <div className="mt-1 truncate text-xs text-amber-600 dark:text-amber-300">{channel.runtimeHealth.lastError || "连续失败，等待自动恢复"}</div> : null}
-                                </div>
-                                {state && !state.loading ? <Tag color={state.ok ? "success" : "error"}>{state.ok ? `正常 ${state.status || ""}` : state.error || "异常"}</Tag> : null}
-                                <Button size="small" disabled={!channel.enabled} loading={state?.loading} onClick={() => void testChannel(channel)}>
-                                    探测
-                                </Button>
+                <Panel>
+                    <PanelHeader title="任务队列" description={`共 ${data?.total || 0} 条记录，可按任务、用户、模型、状态和创作入口定位问题。`} />
+                    <section className="border-b border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/40 sm:p-4">
+                        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-[minmax(280px,1fr)_repeat(3,minmax(140px,180px))] xl:gap-3">
+                            <Input.Search
+                                className="col-span-2 sm:col-span-3 xl:col-span-1"
+                                value={search}
+                                allowClear
+                                aria-label="搜索生成任务"
+                                placeholder="任务、用户 ID、模型、会话或项目"
+                                enterButton="查询"
+                                onChange={(event) => setSearch(event.target.value)}
+                                onSearch={(value) => {
+                                    setPage(1);
+                                    setSubmittedSearch(value.trim());
+                                }}
+                            />
+                            <div className="min-w-0">
+                                <Select
+                                    className="w-full"
+                                    aria-label="按任务类型筛选"
+                                    value={type || undefined}
+                                    allowClear
+                                    placeholder="任务类型"
+                                    options={["agent", "text", "image", "video", "audio", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
+                                    onChange={(value) => {
+                                        setPage(1);
+                                        setType(value || "");
+                                    }}
+                                />
                             </div>
-                        );
-                    })}
+                            <div className="min-w-0">
+                                <Select
+                                    className="w-full"
+                                    aria-label="按任务状态筛选"
+                                    value={status || undefined}
+                                    allowClear
+                                    placeholder="任务状态"
+                                    options={["pending", "running", "paused", "success", "error", "cancelled"].map((value) => ({ value, label: statusLabel(value) }))}
+                                    onChange={(value) => {
+                                        setPage(1);
+                                        setStatus(value || "");
+                                    }}
+                                />
+                            </div>
+                            <div className="col-span-2 min-w-0 sm:col-span-1">
+                                <Select
+                                    className="w-full"
+                                    aria-label="按创作入口筛选"
+                                    value={surface || undefined}
+                                    allowClear
+                                    placeholder="创作入口"
+                                    options={[
+                                        { value: "chat", label: "创作对话" },
+                                        { value: "canvas", label: "Canvas" },
+                                        { value: "drama", label: "短剧" },
+                                    ]}
+                                    onChange={(value) => {
+                                        setPage(1);
+                                        setSurface(value || "");
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    </section>
+
+                    <section className="min-w-0 p-3 sm:p-4">
+                        <div className="hidden overflow-hidden rounded-lg border border-zinc-200 dark:border-zinc-800 md:block">
+                            <Table rowKey="id" size="middle" loading={loading} columns={columns} dataSource={data?.items || []} pagination={false} scroll={{ x: 980 }} />
+                        </div>
+                        <div className="space-y-3 md:hidden">
+                            {(data?.items || []).map((task) => (
+                                <TaskCard key={task.id} task={task} actingId={actingId} onAction={runAction} onReview={openReview} />
+                            ))}
+                            {loading ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">正在加载任务…</div> : null}
+                            {!loading && !data?.items.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400">没有匹配任务</div> : null}
+                        </div>
+                        <div className="mt-4 flex justify-end border-t border-zinc-100 pt-4 dark:border-zinc-900">
+                            <Pagination current={page} pageSize={PAGE_SIZE} total={data?.total || 0} showSizeChanger={false} responsive onChange={setPage} />
+                        </div>
+                    </section>
+                </Panel>
+
+                <Panel>
+                    <PanelHeader title="渠道健康" description="展示当前绑定、运行时冷却与规划协议；手动探测会发起真实最小请求并可能消耗积分。" />
+                    <section className="grid gap-3 p-3 sm:p-4 lg:grid-cols-2">
+                        {(data?.channels || []).map((channel) => {
+                            const state = health[channelKey(channel)];
+                            return (
+                                <article key={channelKey(channel)} className="min-w-0 rounded-lg border border-zinc-200 p-3.5 dark:border-zinc-800">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                                <span className="truncate text-sm font-semibold text-zinc-950 dark:text-zinc-100">{channel.name}</span>
+                                                <Tag className={generationOperationThemeClasses.neutralTag}>{taskTypeLabel(channel.capability)}</Tag>
+                                                {!channel.enabled ? <Tag className={generationOperationThemeClasses.neutralTag}>已停用</Tag> : null}
+                                                {channel.runtimeHealth.status === "cooling" ? <Tag className={generationOperationThemeClasses.reviewTag}>冷却中</Tag> : null}
+                                            </div>
+                                            <div className="mt-2 truncate text-xs text-zinc-500 dark:text-zinc-400">
+                                                {channel.logicalModelName} → {channel.upstreamModel}
+                                            </div>
+                                        </div>
+                                        <Button className={generationOperationThemeClasses.secondaryButton} size="small" disabled={!channel.enabled} loading={state?.loading} onClick={() => void testChannel(channel)}>
+                                            探测
+                                        </Button>
+                                    </div>
+                                    {channel.runtimeHealth.status === "cooling" ? <div className="mt-3 line-clamp-2 text-xs leading-5 text-amber-700 dark:text-amber-300">{channel.runtimeHealth.lastError || "连续失败，等待自动恢复"}</div> : null}
+                                    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-900 dark:text-zinc-400">
+                                        {channel.planningRuntime ? (
+                                            <span>
+                                                规划 {planningProtocolLabel(channel.planningRuntime.protocol)} · 平均 {formatDuration(channel.planningRuntime.averageLatencyMs || 0)} · {channel.planningRuntime.successCount} 成功 /{" "}
+                                                {channel.planningRuntime.failureCount} 失败
+                                            </span>
+                                        ) : (
+                                            <span>暂无规划调用样本</span>
+                                        )}
+                                        {state && !state.loading ? <Tag className={generationOperationStatusTagClass(state.ok ? "success" : "error")}>{state.ok ? `探测正常 ${state.status || ""}` : state.error || "探测异常"}</Tag> : null}
+                                    </div>
+                                </article>
+                            );
+                        })}
+                        {!loading && !data?.channels.length ? <div className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400 lg:col-span-2">暂无可用渠道</div> : null}
+                    </section>
+                </Panel>
+            </div>
+
+            <Modal
+                open={Boolean(reviewingTask)}
+                title="接管待确认任务"
+                centered
+                width="min(520px, calc(100vw - 24px))"
+                okText={reviewAction === "confirm_failed" ? "确认结束任务" : "确认并继续"}
+                okButtonProps={{ danger: reviewAction === "confirm_failed", disabled: reviewAction !== "confirm_failed" && !reviewValue.trim(), className: reviewAction === "confirm_failed" ? undefined : generationOperationThemeClasses.primaryButton }}
+                cancelButtonProps={{ className: generationOperationThemeClasses.secondaryButton }}
+                confirmLoading={reviewing}
+                destroyOnHidden
+                onOk={() => void submitReview()}
+                onCancel={() => !reviewing && setReviewingTask(undefined)}
+            >
+                <div className="space-y-4 pt-2">
+                    <div className={generationOperationThemeClasses.reviewPanel}>创建请求结果无法自动确认。系统已停止重复创建，接管操作只会继续查询、保存已有结果或明确结束任务。</div>
+                    <div className="grid grid-cols-3 gap-2">
+                        {[
+                            { value: "resume_upstream", label: "录入任务 ID" },
+                            { value: "provide_result", label: reviewingTask?.type === "text" ? "录入文本结果" : "录入结果地址" },
+                            { value: "confirm_failed", label: "确认未创建" },
+                        ].map((item) => (
+                            <button
+                                key={item.value}
+                                type="button"
+                                className={`min-h-10 rounded-lg border px-2 text-xs font-medium transition-colors sm:text-sm ${reviewAction === item.value ? generationOperationThemeClasses.selectedAction : generationOperationThemeClasses.idleAction}`}
+                                onClick={() => {
+                                    setReviewAction(item.value as typeof reviewAction);
+                                    setReviewValue(item.value === "resume_upstream" ? reviewingTask?.upstreamTaskId || "" : "");
+                                }}
+                            >
+                                {item.label}
+                            </button>
+                        ))}
+                    </div>
+                    <Input.TextArea
+                        className={generationOperationThemeClasses.textarea}
+                        value={reviewValue}
+                        autoSize={{ minRows: reviewAction === "provide_result" && reviewingTask?.type === "text" ? 4 : 2, maxRows: 8 }}
+                        placeholder={reviewAction === "resume_upstream" ? "粘贴上游任务 ID" : reviewAction === "provide_result" ? (reviewingTask?.type === "text" ? "粘贴上游返回的最终文本" : "粘贴上游成品 URL 或站内媒体地址") : "可选：填写确认失败原因"}
+                        onChange={(event) => setReviewValue(event.target.value)}
+                    />
+                    <div className="text-xs leading-5 text-zinc-500 dark:text-zinc-400">
+                        任务 {reviewingTask?.id} · {taskTypeLabel(reviewingTask?.type || "")} · 当前阶段 {executionPhaseLabel(reviewingTask?.executionPhase)}
+                    </div>
                 </div>
-            </section>
-        </Panel>
+            </Modal>
+        </>
     );
 }
 
-function Metric({ icon, label, value, className = "" }: { icon: React.ReactNode; label: string; value: string | number; className?: string }) {
+function planningProtocolLabel(protocol?: "responses" | "chat" | "gemini" | "custom") {
+    if (protocol === "responses") return "Responses";
+    if (protocol === "gemini") return "Gemini";
+    if (protocol === "custom") return "自定义";
+    return "Chat";
+}
+
+function SummaryMetric({ icon, label, value, detail, tone = "default" }: { icon: React.ReactNode; label: string; value: string | number; detail: string; tone?: "default" | "danger" }) {
     return (
-        <div className={`flex min-h-16 items-center gap-2 bg-white px-3 py-2 dark:bg-zinc-950 ${className}`}>
-            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-zinc-100 text-zinc-600 [&>svg]:size-4 dark:bg-zinc-900 dark:text-zinc-300">{icon}</span>
-            <div className="min-w-0">
-                <div className="text-xs text-zinc-500">{label}</div>
-                <div className="mt-0.5 truncate text-base font-semibold sm:text-lg">{value}</div>
+        <div className="flex min-h-[94px] min-w-0 flex-col justify-between bg-white p-3 dark:bg-zinc-950 sm:min-h-28 sm:p-4">
+            <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 sm:text-xs">{label}</span>
+                <span className={`[&>svg]:size-4 ${tone === "danger" ? "text-red-600 dark:text-red-300" : "text-zinc-400 dark:text-zinc-500"}`}>{icon}</span>
+            </div>
+            <div>
+                <div className="truncate text-xl font-semibold leading-none tabular-nums text-zinc-950 dark:text-zinc-100 sm:text-2xl">{value}</div>
+                <div className="mt-1.5 truncate text-[10px] text-zinc-400 dark:text-zinc-500 sm:text-[11px]">{detail}</div>
             </div>
         </div>
     );
 }
 
-function TaskCard({ task, actingId, onAction }: { task: AdminGenerationTask; actingId: string; onAction: (task: AdminGenerationTask, action: "cancel" | "retry") => Promise<void> }) {
+function PerformanceValue({ label, value, detail, className = "" }: { label: string; value: number; detail: string; className?: string }) {
     return (
-        <article className="rounded-md border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className={`min-h-[82px] min-w-0 bg-white p-3 dark:bg-zinc-950 sm:min-h-24 sm:p-4 ${className}`}>
+            <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{label}</div>
+            <div className="mt-2 truncate text-base font-semibold tabular-nums text-zinc-950 dark:text-zinc-100 sm:text-lg">{formatDuration(value)}</div>
+            <div className="mt-1 truncate text-[10px] text-zinc-400 dark:text-zinc-500">{detail}</div>
+        </div>
+    );
+}
+
+function TaskCard({ task, actingId, onAction, onReview }: { task: AdminGenerationTask; actingId: string; onAction: (task: AdminGenerationTask, action: "cancel" | "retry") => Promise<void>; onReview: (task: AdminGenerationTask) => void }) {
+    return (
+        <article className="min-w-0 rounded-lg border border-zinc-200 bg-white p-3.5 dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-start justify-between gap-3">
-                <div>
-                    <Tag>{taskTypeLabel(task.type)}</Tag>
+                <div className="flex min-w-0 flex-wrap gap-1.5">
+                    <TaskTypeTag type={task.type} />
                     <StatusTag status={task.status} />
+                    {task.canReview ? <ReviewTag /> : null}
                 </div>
-                <div className="flex gap-1">
-                    {task.canCancel ? <Button danger type="text" shape="circle" icon={<CircleStop className="size-4" />} loading={actingId === `${task.id}:cancel`} onClick={() => void onAction(task, "cancel")} /> : null}
-                    {task.retryTaskId ? <Button type="text" shape="circle" icon={<RotateCcw className="size-4" />} loading={actingId === `${task.id}:retry`} onClick={() => void onAction(task, "retry")} /> : null}
+                <div className="flex shrink-0 gap-0.5">
+                    {task.canCancel ? (
+                        <Tooltip title="取消任务">
+                            <Button aria-label="取消任务" danger type="text" shape="circle" icon={<CircleStop className="size-4" />} loading={actingId === `${task.id}:cancel`} onClick={() => void onAction(task, "cancel")} />
+                        </Tooltip>
+                    ) : null}
+                    {task.retryTaskId ? (
+                        <Tooltip title="重试失败子任务">
+                            <Button aria-label="重试失败子任务" type="text" shape="circle" icon={<RotateCcw className="size-4" />} loading={actingId === `${task.id}:retry`} onClick={() => void onAction(task, "retry")} />
+                        </Tooltip>
+                    ) : null}
+                    {task.canReview ? (
+                        <Tooltip title="接管待确认任务">
+                            <Button aria-label="接管待确认任务" type="text" shape="circle" icon={<ShieldAlert className="size-4 text-amber-600 dark:text-amber-300" />} onClick={() => onReview(task)} />
+                        </Tooltip>
+                    ) : null}
                 </div>
             </div>
-            <div className="mt-3 font-mono text-xs text-zinc-500">{task.id}</div>
-            <div className="mt-3">
+            <Tooltip title={task.id}>
+                <div className="mt-2 truncate font-mono text-[11px] text-zinc-400 dark:text-zinc-500">{task.id}</div>
+            </Tooltip>
+            <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-900">
                 <AdminUserIdentity displayName={task.displayName} username={task.username} accountId={task.accountId} fallback="用户信息不可用" />
             </div>
-            <div className="mt-2 text-sm">{task.model || "未记录模型"}</div>
-            <p className="mt-2 line-clamp-3 text-sm leading-5 text-zinc-600 dark:text-zinc-300">{task.prompt || task.error || "无请求摘要"}</p>
-            <div className="mt-3 text-xs text-zinc-500">
-                {surfaceLabel(task.surface)} · {formatDuration(task.durationMs)} · {task.pointsCost} 积分
+            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-y border-zinc-100 py-3 text-xs dark:border-zinc-900">
+                <TaskCardFact label="模型" value={task.model || "未记录"} />
+                <TaskCardFact label="入口" value={surfaceLabel(task.surface)} />
+                <TaskCardFact label="耗时" value={formatDuration(task.durationMs)} />
+                <TaskCardFact label="积分" value={`${task.pointsCost} 积分`} />
+            </div>
+            <div className="mt-3">
+                <div className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">请求摘要</div>
+                <p className="mt-1 line-clamp-3 text-sm leading-5 text-zinc-700 dark:text-zinc-300">{task.prompt || task.error || "无请求摘要"}</p>
             </div>
         </article>
     );
 }
 
+function TaskCardFact({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="min-w-0">
+            <div className="text-[10px] text-zinc-400 dark:text-zinc-500">{label}</div>
+            <div className="mt-0.5 truncate text-zinc-700 dark:text-zinc-300">{value}</div>
+        </div>
+    );
+}
+
 function StatusTag({ status }: { status: string }) {
-    const color = status === "success" ? "success" : status === "error" ? "error" : status === "running" ? "processing" : status === "paused" ? "warning" : "default";
-    return <Tag color={color}>{statusLabel(status)}</Tag>;
+    return <Tag className={generationOperationStatusTagClass(status)}>{statusLabel(status)}</Tag>;
+}
+
+function TaskTypeTag({ type }: { type: string }) {
+    return <Tag className={generationOperationThemeClasses.neutralTag}>{taskTypeLabel(type)}</Tag>;
+}
+
+function ReviewTag() {
+    return <Tag className={generationOperationThemeClasses.reviewTag}>待人工确认</Tag>;
 }
 
 function taskTypeLabel(value: string) {
@@ -331,4 +536,7 @@ function formatDuration(ms: number) {
 }
 function channelKey(channel: AdminGenerationChannel) {
     return `${channel.id}:${channel.capability}:${channel.logicalModelId}:${channel.upstreamModel}`;
+}
+function executionPhaseLabel(value?: AdminGenerationTask["executionPhase"]) {
+    return ({ created: "已创建", submitting: "提交中", submitted: "已提交", polling: "查询结果", result_ready: "结果待保存", persisting: "保存结果", needs_review: "待人工确认", completed: "已结束" } as Record<string, string>)[value || ""] || "未记录";
 }

@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { createBillingOrder, createPaymentCheckout, listBillingCoupons, listBillingProducts, quoteBillingOrder, type BillingProduct, type BillingQuote, type PaymentCheckout, type UserCoupon } from "@/services/api/billing";
+import { openPaymentCheckoutWindow } from "./payment-checkout-window";
 
 const providers = [
     { label: "Stripe", value: "stripe", icon: CreditCard, description: "国际银行卡与数字钱包" },
@@ -126,16 +127,14 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
 
     const openCheckout = () => {
         if (!checkout) return;
-        if (checkout.kind === "form" && checkout.formHtml) {
-            const popup = window.open("", "_blank");
-            if (!popup) return message.warning("浏览器阻止了支付窗口，请允许弹窗后重试");
-            popup.document.open();
-            popup.document.write(checkout.formHtml);
-            popup.document.close();
+        const result = openPaymentCheckoutWindow(checkout);
+        if (result.status === "opened") return;
+        if (result.status === "manual") {
+            message.info("该订单需要管理员人工确认");
             return;
         }
-        if (checkout.url) return void window.open(checkout.url, "_blank", "noopener,noreferrer");
-        message.info("该订单需要管理员人工确认");
+        if (result.fallbackValue) copyText(result.fallbackValue, result.status === "blocked" ? "支付信息已复制，请粘贴到浏览器打开" : "支付信息已复制");
+        message.warning(result.status === "blocked" ? "浏览器阻止了支付窗口，已复制支付信息。" : "支付地址无效或无法打开，请复制支付信息后手动打开。");
     };
 
     if (loading) {

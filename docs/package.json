@@ -16,7 +16,7 @@
     "fumadocs-mdx": "15.0.10",
     "fumadocs-ui": "16.9.3",
     "lucide-react": "^1.17.0",
-    "next": "16.2.6",
+    "next": "16.2.12",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.6.0"
@@ -27,8 +27,7 @@
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
-    "postcss": "^8.5.15",
-    "serve": "^14.2.6",
+    "postcss": "8.5.25",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3"
   }

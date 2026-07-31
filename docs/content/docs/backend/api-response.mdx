@@ -125,9 +125,11 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 }
 ```
 
-`chat` 不接受项目或快照，`canvas/drama` 必须提供项目，项目快照最大 512KB。相同用户与 `clientRequestId` 的重复提交返回原 Run。`GET /api/agent/runs/{id}/events` 使用递增数字事件 ID，支持 `Last-Event-ID` 或 `lastEventId` 断线续传。
+`chat` 不接受项目或快照，`canvas/drama` 必须提供项目，项目快照最大 512KB。相同用户与 `clientRequestId` 的重复提交返回原 Run。`GET /api/agent/runs/{id}/events` 使用递增数字事件 ID，支持 `Last-Event-ID` 或 `lastEventId` 断线续传；多份结果会逐份发送 `task.child.completed` 或 `task.child.failed`，事件数据包含父任务、子任务、完成/失败/总数和当前资产，客户端不得等待父任务终态才刷新素材。
 
-创建后续 Run 时，服务端会将同一会话的持久摘要和最近 12 条已完成消息加入规划输入；前端只需继续提交稳定 `conversationId`。同一 deliverable 可选择多个 `assetIds`，依赖 deliverable 完成后登记的资产会自动成为下游图片/视频任务的真实参考素材。
+创建后续 Run 时，服务端读取同一会话的持久摘要和近期已完成消息，规划输入最多保留最近 6 条并在超出预算时继续裁剪；前端只需继续提交稳定 `conversationId`。同一 deliverable 可选择多个 `assetIds`，依赖 deliverable 完成后登记的资产会自动成为下游图片/视频任务的真实参考素材。显式选择逻辑媒体模型时跳过文本规划；否则普通、多结果和短剧/复杂 Canvas 分别使用有界的规划输入与输出提示预算。
+
+文本规划根据模型级或渠道级预设直接选择 Chat、Responses、Gemini 或自定义协议，同一候选不会因协议猜测产生第二次上游请求。所有文本候选统一允许 1 分钟，文本模型能力档案不覆盖该上限；失败、超时、429 或 5xx 后调用方自动尝试下一个逻辑模型绑定，当前进程根据近期成功率、延迟和短期冷却状态排序候选。
 
 用户明确要求“建立画布项目”或“建立短剧项目”时，Chat 规划可返回 `projectHandoff`。运行完成前 SSE 发送一次 `project.handoff`，数据包含稳定 `id/sourceRunId/conversationId`、目标 `surface`、标题、摘要、风格、比例、稳定 `assetIds` 和完整资产信息；`run.completed.data.projectHandoff` 与助手消息 metadata 保存同一份交接。客户端必须使用交接 ID 幂等落地 Canvas 本地项目或服务端短剧项目，SSE 重放不得重复创建。
 
@@ -138,6 +140,19 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 - `GET /api/admin/generation-operations`：管理员按任务类型、状态、Surface、用户和关键词分页查询统一生成运营数据，并返回任务摘要与可探测渠道。
 
 短剧接口使用 `{ code, data, msg }`，服务端校验项目归属并保存完整项目聚合快照。生成运营接口只允许管理员访问；取消、重试和渠道探测继续调用现有任务控制与健康检查接口，不建立独立任务状态机。
+
+## 生成任务恢复、Worker 与回调
+
+文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 最多尝试三次复盘，复盘失败不改变用户已经收到的生成结果。`needs_review` 和普通终态不会被页面或 Worker 自动推进。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。
+
+- `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_MAINTENANCE_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
+- `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。
+- `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；`x-vozeb-pro-signature` 或 `x-signature` 传递原始请求体的 HMAC-SHA256 十六进制签名，`x-vozeb-pro-event-id` 可提供稳定事件 ID。
+- `POST /api/admin/generation-operations/{type}/{id}/review`：管理员处理 `needs_review` 的 `text/image/video/audio` 任务，动作仅允许 `resume_upstream`、`provide_result` 或 `confirm_failed`。
+
+维护接口未配置令牌时返回 503，认证失败返回 401。生成回调未配置密钥返回 503，签名失败返回 401；它只匹配当前启用渠道下已有的图片、视频或音频任务，并使用 PostgreSQL 中的 `(channelId, eventId)` 保证幂等。回调已登记但尚未匹配任务时返回成功并保留对账状态，不会创建新任务或重复扣费。以上接口均返回 `{ code, data, msg }`，日志与响应不得包含维护令牌、Webhook 密钥、渠道 API Key 或完整鉴权头。
+
+PostgreSQL Provider 在 Run、事件和助手消息的同一事务中写入 `pg_notify('vozeb_pro_run_events', runId)`；SSE 进程使用独立连接 `LISTEN` 后立即读取持久事件。通知只用于唤醒，跨实例恢复仍以事件表为准，并保留 2.5 秒轮询和 15 秒心跳作为断线或通知丢失兜底。文件 Provider 继续使用进程内通知。
 
 ## 模型路由设置快照
 

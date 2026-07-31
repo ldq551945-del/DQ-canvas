@@ -67,6 +67,7 @@ import {
 } from "lucide-react";
 import dayjs from "dayjs";
 import { nanoid } from "nanoid";
+import { applyChannelProtocol, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
 
 import { formatCreditAmount } from "@/constant/credits";
 import { AdminAccountId } from "@/components/admin/admin-user-identity";
@@ -157,7 +158,7 @@ export function FinanceMiniRow({ label, value }: { label: string; value: string 
 }
 
 export function createSystemChannel(): SystemModelChannel {
-    return { id: nanoid(), name: "自定义接口", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false, advancedConfig: createDefaultChannelAdvancedConfig() };
+    return applyChannelProtocol({ id: nanoid(), name: "新接口", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false, advancedConfig: createDefaultChannelAdvancedConfig() }, "openai");
 }
 
 export function suggestedChannelModels(channel: Pick<SystemModelChannel, "baseUrl" | "name">) {
@@ -179,7 +180,7 @@ export function buildAdvancedConfigFromHealth(channel: SystemModelChannel, resul
         if (!result.ok || !result.model) return;
         const key = normalizeModelId(result.model);
         modelCapabilities[key] = result.kind;
-        modelConfigs[key] = healthModelConfig(result, modelConfigs[key]);
+        modelConfigs[key] = normalizeStrictProtocolModelConfig(healthModelConfig(result, modelConfigs[key]), protocol);
     });
     return {
         ...current,
@@ -188,7 +189,11 @@ export function buildAdvancedConfigFromHealth(channel: SystemModelChannel, resul
         imageModel: image?.model || current.imageModel,
         videoModel: video?.model || current.videoModel,
         createPath: video?.createPath || image?.createPath || text?.createPath || current.createPath,
+        editPath: image?.editPath || current.editPath,
+        imageToVideoPath: video?.imageToVideoPath || current.imageToVideoPath,
         queryPath: video?.queryPath || current.queryPath,
+        cancelPath: video?.cancelPath || current.cancelPath,
+        cancelMethod: video?.cancelMethod || current.cancelMethod,
         requestTemplate: video?.requestTemplate || image?.requestTemplate || text?.requestTemplate || current.requestTemplate,
         resultField: video?.resultField || image?.resultField || text?.resultField || current.resultField,
         statusField: video?.statusField || current.statusField,
@@ -209,7 +214,11 @@ function healthModelConfig(result: ChannelHealthResult, current?: SystemChannelM
         source: "health",
         ...(result.protocolKey ? { protocol: result.protocolKey } : {}),
         ...(result.createPath ? { createPath: result.createPath } : {}),
+        ...(result.editPath ? { editPath: result.editPath } : {}),
+        ...(result.imageToVideoPath ? { imageToVideoPath: result.imageToVideoPath } : {}),
         ...(result.queryPath ? { queryPath: result.queryPath } : {}),
+        ...(result.cancelPath ? { cancelPath: result.cancelPath } : {}),
+        ...(result.cancelMethod ? { cancelMethod: result.cancelMethod } : {}),
         ...(result.requestTemplate ? { requestTemplate: result.requestTemplate } : {}),
         ...(result.resultField ? { resultField: result.resultField } : {}),
         ...(result.statusField ? { statusField: result.statusField } : {}),
@@ -247,6 +256,9 @@ export async function requestAdminModels(channel: SystemModelChannel): Promise<A
             apiKey: channel.apiKey,
             apiFormat: channel.apiFormat,
             protocol: advanced?.protocol,
+            authMode: advanced?.authMode,
+            authHeader: advanced?.authHeader,
+            authPrefix: advanced?.authPrefix,
             globalAiOpcPreset: advanced?.globalAiOpcPreset,
             globalAiOpcPresets: advanced?.globalAiOpcPresets,
             createPath: advanced?.createPath,
@@ -254,6 +266,7 @@ export async function requestAdminModels(channel: SystemModelChannel): Promise<A
             configuredModels: channel.models,
             modelCapabilities: advanced?.modelCapabilities,
             modelConfigs: advanced?.modelConfigs,
+            operationConfigs: advanced?.operationConfigs,
         }),
     });
     const payload = (await response.json()) as AdminModelsResult & { error?: string };
@@ -262,15 +275,17 @@ export async function requestAdminModels(channel: SystemModelChannel): Promise<A
 }
 
 export function selectChannelHealthModel(channel: SystemModelChannel, defaults: AuthSettings["defaultModels"], kind: ChannelHealthKind) {
+    if (!channelProtocolDefinition(channel.advancedConfig?.protocol || "auto").capabilities.includes(kind)) return undefined;
+    const models = channel.models;
     const configured = kind === "image" ? channel.advancedConfig?.imageModel : kind === "video" ? channel.advancedConfig?.videoModel : kind === "text" ? channel.advancedConfig?.textModel : "";
-    const configuredModel = channel.models.find((model) => normalizeModelId(model) === normalizeModelId(configured || ""));
+    const configuredModel = models.find((model) => normalizeModelId(model) === normalizeModelId(configured || ""));
     if (configuredModel && channelModelCapability(channel, configuredModel) === kind) return configuredModel;
-    const catalogModel = channel.models.find((model) => channelModelCapability(channel, model) === kind);
+    const catalogModel = models.find((model) => channelModelCapability(channel, model) === kind);
     if (catalogModel) return catalogModel;
     const defaultValue = kind === "image" ? defaults.imageModel : kind === "video" ? defaults.videoModel : kind === "audio" ? defaults.audioModel : defaults.textModel;
     const normalizedDefault = modelNameFromOption(defaultValue || "");
-    if (normalizedDefault && (!channel.models.length || channel.models.includes(normalizedDefault))) return normalizedDefault;
-    if (channel.advancedConfig?.protocol === "globalaiopc") return channel.models.find((model) => resolveGlobalAiOpcPreset(channel.advancedConfig, model)?.capability === kind);
+    if (normalizedDefault && models.includes(normalizedDefault) && channelModelCapability(channel, normalizedDefault) === kind) return normalizedDefault;
+    if (channel.advancedConfig?.protocol === "globalaiopc") return models.find((model) => resolveGlobalAiOpcPreset(channel.advancedConfig, model)?.capability === kind);
     const matcher =
         kind === "image"
             ? /image|img|gpt-image|dall|flux|sd|midjourney/i
@@ -279,7 +294,7 @@ export function selectChannelHealthModel(channel: SystemModelChannel, defaults: 
               : kind === "audio"
                 ? /audio|speech|voice|tts|music|whisper|sensevoice/i
                 : /gpt|chat|claude|deepseek|qwen|grok|text|gemini|glm/i;
-    return channel.models.find((model) => matcher.test(model)) || normalizedDefault;
+    return models.find((model) => matcher.test(model) && channelModelCapability(channel, model) === kind);
 }
 
 export function modelNameFromOption(value: string) {

@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { assertReferenceCapabilities, assertReferenceUrls, buildProviderRequest, buildVideoProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderError, readProviderString, videoPollingPolicy } from "./provider-task-config";
+import {
+    assertReferenceCapabilities,
+    assertReferenceUrls,
+    buildProviderRequest,
+    buildVideoProviderRequest,
+    isProviderBusinessError,
+    providerQueryPaths,
+    providerTaskPath,
+    readProviderError,
+    readProviderString,
+    videoPollingPolicy,
+} from "./provider-task-config";
 
 describe("provider task config", () => {
     it("uses the documented slower polling window for GlobalAiOpc video tasks only", () => {
@@ -36,6 +47,11 @@ describe("provider task config", () => {
         expect(providerQueryPaths({ queryPath: "/agnesapi?video_id=:task_id" } as never, "video 123", [])).toEqual(["/agnesapi?video_id=video%20123"]);
         expect(readProviderString({ data: { output: { url: "https://cdn.example.com/result.mp3" } } }, "data.output.url", ["url"])).toBe("https://cdn.example.com/result.mp3");
         expect(readProviderString({ result: { data: [{ url: "/api/v1/gen/cached/generated/result.mp4" }] } }, "result.data[0].url / video_url / url", ["video_url", "url"])).toBe("/api/v1/gen/cached/generated/result.mp4");
+    });
+
+    it("renders documented cancellation paths with encoded task ids", () => {
+        expect(providerTaskPath("/jobs/:task_id/cancel", "task 1")).toBe("/jobs/task%201/cancel");
+        expect(providerTaskPath("/jobs?task_id={{taskId}}", "task 1")).toBe("/jobs?task_id=task%201");
     });
 
     it("recognizes business errors returned with an HTTP 200 response", () => {

@@ -80,21 +80,18 @@ export function workbenchAgentProgressHeading(progress: WorkbenchAgentProgress) 
     return progress.shouldGenerate === false ? "已完成需求分析" : "创作任务已就绪";
 }
 
-export function createWorkbenchAgentProgressMessage(id: string, hasReferences: boolean): WorkbenchAgentMessage {
+export function createWorkbenchAgentProgressMessage(id: string, hasReferences: boolean, mediaLabel = "创作需求"): WorkbenchAgentMessage {
     return {
         id,
         role: "assistant",
-        text: "正在理解你的需求。",
+        text: hasReferences ? `收到，我会根据当前参考素材完成这次${mediaLabel}。` : `收到，我会按你的要求完成这次${mediaLabel}。`,
         progress: { phase: "planning", hasReferences },
     };
 }
 
 export function appendWorkbenchAgentRequest(messages: WorkbenchAgentMessage[], text: string, attachments: WorkbenchAgentAttachment[], progress: WorkbenchAgentMessage): WorkbenchAgentMessage[] {
     const normalized = text.trim();
-    const lastUserMessage = messages.findLast((message) => message.role === "user");
-    const duplicate = lastUserMessage?.text.trim() === normalized && workbenchAgentAttachmentSignature(lastUserMessage.attachments) === workbenchAgentAttachmentSignature(attachments);
-    const next = duplicate ? messages : [...messages, { id: `${progress.id}-user`, role: "user" as const, text: normalized, ...(attachments.length ? { attachments } : {}) }];
-    return [...next, progress];
+    return [...messages, { id: `${progress.id}-user`, role: "user" as const, text: normalized, ...(attachments.length ? { attachments } : {}) }, progress];
 }
 
 export function updateWorkbenchAgentProgress(messages: WorkbenchAgentMessage[], id: string, progress: WorkbenchAgentProgress, text?: string, choices?: WorkbenchAgentChoice[]): WorkbenchAgentMessage[] {
@@ -119,4 +116,4 @@ export function applyWorkbenchAgentPlan(messages: WorkbenchAgentMessage[], id: s
 export function updateWorkbenchAgentResponse(messages: WorkbenchAgentMessage[], id: string, text: string, role: "assistant" | "warning" | "error" = "assistant"): WorkbenchAgentMessage[] {
     return messages.map((message) => (message.id === id ? { ...message, role, text, progress: undefined, choices: undefined } : message));
 }
-import { workbenchAgentAttachmentSignature, type WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";
+import type { WorkbenchAgentAttachment } from "@/lib/workbench-agent-attachment";

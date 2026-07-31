@@ -1,5 +1,8 @@
 allowBuilds:
   esbuild: true
   sharp: true
+minimumReleaseAgeExclude:
+  - postcss@8.5.25
 overrides:
-  postcss: ^8.5.16
+  postcss: 8.5.25
+  sharp: 0.35.3

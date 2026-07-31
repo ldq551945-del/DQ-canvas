@@ -16,7 +16,7 @@ vi.mock("@/lib/server/data-adapter", () => ({
 }));
 
 import { getDatabaseProvider, postgresQuery } from "@/lib/server/database";
-import { createStoredGenerationTask, listStoredGenerationTaskRecords, mutateStoredGenerationTask, summarizeStoredGenerationTaskCosts, withGenerationConcurrencyLimit } from "./generation-task-store";
+import { createStoredGenerationTask, getStoredGenerationTask, listStoredGenerationTaskRecords, mutateStoredGenerationTask, summarizeStoredGenerationTaskCosts, withGenerationConcurrencyLimit } from "./generation-task-store";
 
 type TestTask = {
     id: string;
@@ -58,12 +58,31 @@ describe("mutateStoredGenerationTask", () => {
         const create = (id: string) =>
             withGenerationConcurrencyLimit("user", "video", 60_000, 1, async () => {
                 const now = Date.now();
-                mocks.records.unshift({ id, userId: "user", type: "video", status: "pending", payload: {}, createdAt: now, updatedAt: now, expiresAt: now + 60_000 });
+                mocks.records.unshift({ id, userId: "user", type: "video", status: "pending", payload: {}, executionPhase: "created", createdAt: now, updatedAt: now, expiresAt: now + 60_000 });
                 return id;
             });
 
         await expect(Promise.all([create("video-one"), create("video-two")])).resolves.toEqual(["video-one", null]);
         expect(mocks.records).toHaveLength(1);
+    });
+
+    it("does not let tasks awaiting manual review consume generation capacity", async () => {
+        const now = Date.now();
+        mocks.records = [
+            {
+                id: "image-review",
+                userId: "user",
+                type: "image",
+                status: "running",
+                executionPhase: "needs_review",
+                payload: {},
+                createdAt: now,
+                updatedAt: now,
+                expiresAt: now + 60_000,
+            },
+        ];
+
+        await expect(withGenerationConcurrencyLimit("user", "image", 60_000, 1, async () => "image-retry")).resolves.toBe("image-retry");
     });
 
     it("deduplicates the same request attempt but allows a later retry attempt", async () => {
@@ -77,6 +96,7 @@ describe("mutateStoredGenerationTask", () => {
         expect(duplicate.id).toBe("video-one");
         expect(retry.id).toBe("video-retry");
         expect(mocks.records).toHaveLength(2);
+        expect(mocks.records.every((record) => record.executionPhase === "created")).toBe(true);
     });
 });
 

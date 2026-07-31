@@ -3,13 +3,16 @@ import { nanoid } from "nanoid";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { systemAiIdempotencyKey } from "@/lib/server/system-ai-billing";
 import { getAgentRun, updateAgentRunById, type AgentRun } from "@/lib/server/agent-run-store";
-import { agentPlannerInput, agentPlannerSystemPrompt, agentPlanReply, availableAgentSkills, conversationFallbackReply, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
+import { agentPlannerInput, agentPlannerSystemPrompt, agentPlanReply, conversationFallbackReply, plannerAgentSkills, selectAgentSkills, taskPlanSummary } from "@/lib/server/agent-run-surface-policy";
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
 import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, executeTasks, normalizeTasks, planToOps, refundFunctionCall, requestFunctionCall } from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
+import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
+import { rankTextPlanningCandidates } from "@/lib/server/text-planning-runtime";
+import { filterAgentPlannerModels } from "@/lib/server/agent-run-planning-profile";
 
 const globalAgentExecutors = globalThis as typeof globalThis & { __vozebProAgentRunControllers?: Map<string, AbortController> };
 const controllers = (globalAgentExecutors.__vozebProAgentRunControllers ??= new Map<string, AbortController>());
@@ -31,36 +34,47 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     };
     controllers.set(run.id, controller);
     try {
-        const claimed = await updateAgentRunById(run.id, { status: "running", executionId }, { type: run.tasks.length ? "run.resumed" : "run.planning" }, ["planning", "running"]);
+        const claimed = await updateAgentRunById(
+            run.id,
+            { status: "running", executionId, timings: { ...(run.timings || { requestAcceptedAt: run.createdAt }), ...(run.tasks.length ? {} : { planningStartedAt: Date.now() }) } },
+            { type: run.tasks.length ? "run.resumed" : "run.planning" },
+            ["planning", "running"],
+        );
         if (!claimed) return;
         if (claimed.tasks.length) {
-            await getAuthSettings();
-            await executeTasks(run.id, origin, cookie, executionId);
+            const settings = await getAuthSettings();
+            await executeTasks(run.id, origin, cookie, executionId, settings);
             return;
         }
-        const settings = await getAuthSettings();
-        const explicitAssets = await getCreativeAssetsByIds(claimed.referencedAssetIds);
-        const skillOptions = availableAgentSkills(settings, claimed.surface);
-        const availableModels = agentModelOptions(settings);
+        const directModelSelection = Boolean(claimed.requestedModelIds?.length);
+        const usesMemoryCandidates = !directModelSelection && claimed.surface === "chat" && claimed.referencedAssetIds.length === 0;
+        const [settings, explicitAssets, conversationContext, memoryAssets] = await Promise.all([
+            getAuthSettings(),
+            getCreativeAssetsByIds(claimed.referencedAssetIds),
+            directModelSelection ? Promise.resolve(undefined) : getCreativeConversationContext(claimed.conversationId, claimed.userId, claimed.id),
+            usesMemoryCandidates ? listRecentCreativeMediaAssets(claimed.conversationId, claimed.userId, 6) : Promise.resolve([]),
+        ]);
+        const allModels = agentModelOptions(settings);
+        const availableModels = filterAgentPlannerModels(allModels, claimed);
+        const skillOptions = plannerAgentSkills(settings, claimed);
         if (!(await canContinue(run.id, executionId))) return;
         if (claimed.requestedModelIds?.length) {
             const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
-            const selectedModels = claimed.requestedModelIds.map((id) => availableModels.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
+            const selectedModels = claimed.requestedModelIds.map((id) => allModels.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
             if (selectedModels.length !== claimed.requestedModelIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
             const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds);
             const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize);
             await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
-            await updateAgentRunById(run.id, { tasks, foundation: plan.foundation, reviewed: false }, { type: "run.planned", data: { reply: plan.reply, tasks: tasks.map(taskPlanSummary) } }, ["running"], executionId);
-            await executeTasks(run.id, origin, cookie, executionId);
+            const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply: plan.reply } } : { type: "run.planned", data: { reply: plan.reply, tasks: tasks.map(taskPlanSummary) } };
+            await updateAgentRunById(run.id, { tasks, foundation: plan.foundation, reviewed: false, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() } }, event, ["running"], executionId);
+            await executeTasks(run.id, origin, cookie, executionId, settings);
             return;
         }
-        const usesMemoryCandidates = claimed.surface === "chat" && claimed.referencedAssetIds.length === 0;
-        const referencedAssets = usesMemoryCandidates ? await listRecentCreativeMediaAssets(claimed.conversationId, claimed.userId, 20) : explicitAssets;
+        const referencedAssets = usesMemoryCandidates ? memoryAssets : explicitAssets;
         const referenceSource = claimed.referencedAssetIds.length ? "current-turn-explicit" : usesMemoryCandidates && referencedAssets.length ? "conversation-memory-candidates" : "none";
         const model = settings.defaultModels.textModel;
         const candidates = resolveLogicalModelCandidates(settings, "text", model);
         if (!model || !candidates.length) throw new Error("后台尚未配置可用的默认文本模型");
-        const conversationContext = await getCreativeConversationContext(claimed.conversationId, claimed.userId, claimed.id);
         const fallbackExample = agentPlanFallbackExample(availableModels);
         const planningInput = [
             {
@@ -69,18 +83,17 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             },
             {
                 role: "user",
-                content: JSON.stringify(agentPlannerInput(claimed, conversationContext, referencedAssets, referenceSource, skillOptions, availableModels, settings)),
+                content: JSON.stringify(agentPlannerInput(claimed, conversationContext!, referencedAssets, referenceSource, skillOptions, availableModels, settings)),
             },
         ];
         let plan: Awaited<ReturnType<typeof parseAgentPlanCall>> | undefined;
         let latestPlanningError: unknown;
-        for (const candidate of candidates) {
+        for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
             try {
                 const planCall = await requestFunctionCall(
                     origin,
                     cookie,
-                    candidate.channel.id,
-                    candidate.upstreamModel,
+                    candidate,
                     planningInput,
                     agentPlanTool,
                     "create_agent_plan",
@@ -97,6 +110,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
                 break;
             } catch (error) {
                 if (controller.signal.aborted) throw error;
+                if (error instanceof GenerationSubmissionUncertainError) throw error;
                 latestPlanningError = error;
             }
         }
@@ -111,7 +125,13 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         if (plan.intent === "conversation") {
             const completed = await updateAgentRunById(
                 run.id,
-                { status: "completed", tasks: [], reviewed: true, executionId: undefined },
+                {
+                    status: "completed",
+                    tasks: [],
+                    reviewed: true,
+                    executionId: undefined,
+                    timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now(), allResultsReadyAt: Date.now(), runCompletedAt: Date.now() },
+                },
                 { type: "run.completed", data: { completed: 0, reply: plan.reply?.trim() || conversationFallbackReply(claimed.surface) } },
                 ["running"],
                 executionId,
@@ -127,13 +147,19 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         const projectHandoff = normalizeAgentProjectHandoff(plan, claimed.surface, referencedAssets, claimed.prompt);
         const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface);
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };
-        const planned = await updateAgentRunById(run.id, { tasks, foundation: plan.foundation, projectHandoff, reviewed: tasks.length ? claimed.reviewed : true }, event, ["running"], executionId);
+        const planned = await updateAgentRunById(
+            run.id,
+            { tasks, foundation: plan.foundation, projectHandoff, reviewed: tasks.length ? claimed.reviewed : true, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() } },
+            event,
+            ["running"],
+            executionId,
+        );
         if (!planned) {
             await refundAcceptedPlan();
             return;
         }
         planningPersisted = true;
-        await executeTasks(run.id, origin, cookie, executionId);
+        await executeTasks(run.id, origin, cookie, executionId, settings);
     } catch (error) {
         let failure = error;
         try {
@@ -144,7 +170,13 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
         }
         const latest = await getAgentRun(run.id);
         if (latest && !["paused", "cancelled"].includes(latest.status))
-            await updateAgentRunById(run.id, { status: "failed", executionId: undefined }, { type: "run.failed", data: { message: toSafeGenerationErrorMessage(failure, "Agent 执行失败") } }, ["planning", "running"], executionId);
+            await updateAgentRunById(
+                run.id,
+                { status: "failed", executionId: undefined, timings: { ...(latest.timings || { requestAcceptedAt: latest.createdAt }), runCompletedAt: Date.now() } },
+                { type: "run.failed", data: { message: toSafeGenerationErrorMessage(failure, "Agent 执行失败") } },
+                ["planning", "running"],
+                executionId,
+            );
     } finally {
         if (controllers.get(run.id) === controller) controllers.delete(run.id);
     }

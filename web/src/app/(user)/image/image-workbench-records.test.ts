@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { GenerationLog, PendingImageTask } from "./image-workbench-records";
 import { authoritativeGeneratedImageMeta, buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, resultsFromLog, snapshotFromLog, stableResultImageUrl } from "./image-workbench-records";
@@ -36,6 +37,21 @@ describe("image workbench records", () => {
             imageCount: 1,
             failures: [{ resultId: "result-1", index: 0, error: "生成失败" }],
         });
+    });
+
+    it("keeps the user request separate from the internal execution prompt", () => {
+        const log = buildLogFromResults(null, { text: "内部改写后的执行提示词", userText: "生成一张发布会主视觉", config: baseConfig(), references: [] }, [{ id: "result-1", status: "pending" }], 0, "1");
+
+        expect(log.prompt).toBe("内部改写后的执行提示词");
+        expect(log.title).toBe("生成一张发布会主视觉".slice(0, 12));
+        expect(log.requestSnapshot?.userPrompt).toBe("生成一张发布会主视觉");
+        expect(generationLogPublicPrompt(log)).toBe("生成一张发布会主视觉");
+        expect(snapshotFromLog(log, baseConfig())).toMatchObject({ text: "内部改写后的执行提示词", userText: "生成一张发布会主视觉" });
+    });
+
+    it("does not expose a legacy execution prompt while its conversation is loading", () => {
+        expect(generationLogPublicPrompt({ prompt: "内部执行提示词", creativeConversationId: "conversation-1" })).toBe("");
+        expect(generationLogPublicPrompt({ prompt: "用户直接输入" })).toBe("用户直接输入");
     });
 
     it("restores the original prompt and parameters for retry", () => {

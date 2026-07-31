@@ -1,6 +1,7 @@
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
+import { channelConnectionReady, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 
 const CAPABILITY_DEFAULT_KEYS = {
     text: "textModel",
@@ -65,11 +66,34 @@ export function deriveLogicalModelsConfig(channels: SystemModelChannel[]): Logic
     return Array.from(catalog.values());
 }
 
+export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
+    const merged = logicalModels.map((model) => ({ ...model, bindings: [...model.bindings] }));
+    const modelIndex = new Map(merged.map((model, index) => [normalizeModelName(model.id), index]));
+
+    for (const derived of deriveLogicalModelsConfig(channels)) {
+        const index = modelIndex.get(normalizeModelName(derived.id));
+        if (index === undefined) {
+            modelIndex.set(normalizeModelName(derived.id), merged.length);
+            merged.push(derived);
+            continue;
+        }
+
+        const current = merged[index];
+        const bindingKeys = new Set(current.bindings.map((binding) => `${binding.channelId}:${normalizeModelName(binding.upstreamModel)}`));
+        const additions = derived.bindings.filter((binding) => !bindingKeys.has(`${binding.channelId}:${normalizeModelName(binding.upstreamModel)}`));
+        if (additions.length) merged[index] = { ...current, bindings: [...current.bindings, ...additions] };
+    }
+
+    return merged;
+}
+
 export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultModels> | undefined, logicalModels: LogicalModel[], channels: SystemModelChannel[]): SystemDefaultModels {
     return Object.fromEntries(
         (Object.entries(CAPABILITY_DEFAULT_KEYS) as Array<[LogicalModelCapability, keyof SystemDefaultModels]>).map(([capability, key]) => {
             const modelId = text(defaults?.[key], 120);
-            return [key, modelId && isLogicalModelResolvable(logicalModels, channels, capability, modelId) ? modelId : ""];
+            if (!modelId || isLogicalModelResolvable(logicalModels, channels, capability, modelId)) return [key, modelId];
+            const fallback = logicalModels.find((model) => model.capability === capability && isLogicalModelResolvable(logicalModels, channels, capability, model.id));
+            return [key, fallback?.id || ""];
         }),
     ) as SystemDefaultModels;
 }
@@ -83,7 +107,7 @@ export function resolveLogicalModelConfig(logicalModels: LogicalModel[], channel
     if (!logical) return null;
     const bindings = [...logical.bindings].filter((binding) => binding.enabled).sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
     for (const binding of bindings) {
-        const channel = channels.find((item) => item.id === binding.channelId && item.enabled && Boolean(item.apiKey.trim() || item.hasApiKey) && item.baseUrl.trim() && channelSupportsModel(item, binding.upstreamModel));
+        const channel = channels.find((item) => item.id === binding.channelId && item.enabled && channelConnectionReady(item) && channelSupportsModel(item, binding.upstreamModel));
         if (channel) return { logicalModel: logical, binding, channel };
     }
     return null;
@@ -121,7 +145,12 @@ export function capabilityLabel(capability: LogicalModelCapability) {
 
 export function channelModelCapability(channel: Pick<SystemModelChannel, "advancedConfig">, model: string): LogicalModelCapability {
     const key = normalizeModelId(model);
+    if (key === "auto") return "text";
     return channel.advancedConfig?.modelConfigs?.[key]?.capability || channel.advancedConfig?.modelCapabilities?.[key] || inferModelCapability(model);
+}
+
+export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "advancedConfig" | "models">) {
+    return new Set(channel.models.map((model) => channelModelCapability(channel, model)));
 }
 
 export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelBinding, "capabilityProfile">, capability: LogicalModelCapability, channel?: Pick<SystemModelChannel, "advancedConfig">, upstreamModel = "") {
@@ -129,7 +158,7 @@ export function resolveLogicalModelCapabilityProfile(binding: Pick<LogicalModelB
     const stored = binding.capabilityProfile || {};
     const advanced = channel?.advancedConfig;
     const globalPreset = resolveGlobalAiOpcPreset(advanced, upstreamModel);
-    const modelConfig = advanced?.modelConfigs?.[normalizeModelId(upstreamModel)];
+    const modelConfig = resolveChannelModelConfig(advanced, upstreamModel) || advanced?.operationConfigs?.[capability];
     return {
         supportsReferenceImage: booleanValue(stored.supportsReferenceImage, globalPreset?.supportsReferenceImage ?? modelConfig?.supportsReferenceImage ?? advanced?.supportsReferenceImage),
         supportsReferenceVideo: booleanValue(stored.supportsReferenceVideo, globalPreset?.supportsReferenceVideo ?? modelConfig?.supportsReferenceVideo ?? advanced?.supportsReferenceVideo),

@@ -14,6 +14,7 @@ import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { generationModelId, toSystemGenerationChannel } from "@/lib/server/generation-channel";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
+import { resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
 import { countActiveImageTasksForUser, createImageTask, getImageTask, touchImageTask, transitionImageTask, type ImageTask, type ImageTaskConfig, type ImageTaskReference, updateImageTask } from "@/lib/server/image-task-store";
 import { isGenerationSource, recordGenerationLog } from "@/lib/server/generation-log-store";
@@ -24,6 +25,9 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
+import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 
 import {
     type CreateImageTaskBody,
@@ -37,9 +41,6 @@ import {
     DEFAULT_IMAGE_SHORT_SIDE,
     IMAGE_SIZE_STEP,
     IMAGE_MIN_PIXELS,
-    IMAGE_MAX_PIXELS,
-    IMAGE_MAX_EDGE,
-    IMAGE_MAX_RATIO,
     IMAGE_OUTPUT_FORMAT,
     TASK_HEARTBEAT_MS,
     IMAGE_TASK_POLL_INTERVAL_MS,
@@ -89,6 +90,7 @@ export function sanitizeAdvancedConfig(config?: ImageTaskConfig["advancedConfig"
         imageModel: textOrEmpty(config.imageModel),
         videoModel: textOrEmpty(config.videoModel),
         createPath: textOrEmpty(config.createPath),
+        editPath: textOrEmpty(config.editPath),
         queryPath: textOrEmpty(config.queryPath),
         requestTemplate: textOrEmpty(config.requestTemplate),
         resultField: textOrEmpty(config.resultField),
@@ -114,6 +116,8 @@ export async function openAiImageTaskPath(config: ImageTaskConfig, kind: ImageTa
     const configured = (config.advancedConfig?.createPath || "").trim();
     const configuredPath = configured ? normalizeImageTaskPath(configured) : "";
     if (kind !== "edit") return configuredPath || "/images/generations";
+    const configuredEditPath = (config.advancedConfig?.editPath || "").trim();
+    if (configuredEditPath) return normalizeImageTaskPath(configuredEditPath);
     const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
     if (shouldUseSub2ApiImageEdit(config, apiBase)) return configuredPath || "/images/generations";
 
@@ -207,18 +211,22 @@ export function matchesApiHost(baseUrl: string, hostname: string) {
 }
 
 export function taskUrl(config: ImageTaskConfig, path: string, origin: string) {
-    const apiBase = normalizeApiBaseUrl(config.baseUrl, config.apiFormat, origin);
+    const protocol = resolveChannelModelConfig(config.advancedConfig, config.model)?.protocol || config.advancedConfig?.protocol;
+    const apiBase = protocol === "custom" || protocol === "stable-diffusion" ? absoluteApiBaseUrl(config.baseUrl, origin) : normalizeApiBaseUrl(config.baseUrl, config.apiFormat, origin);
     return `${apiBase}${path}`;
 }
 
 export function normalizeApiBaseUrl(baseUrl: string, apiFormat: "openai" | "gemini", origin: string) {
-    const absoluteBase = baseUrl.startsWith("/") ? `${origin}${baseUrl}` : baseUrl;
-    const normalized = absoluteBase.trim().replace(/\/+$/, "");
+    const normalized = absoluteApiBaseUrl(baseUrl, origin);
     const lower = normalized.toLowerCase();
     if (isInternalSystemProxyBase(normalized)) return normalized;
     if (lower.endsWith("/v1") || lower.endsWith("/v1beta") || lower.endsWith("/api/v3") || lower.endsWith("/api/plan/v3")) return normalized;
     if (apiFormat === "gemini") return `${normalized}/v1beta`;
     return `${normalized}/v1`;
+}
+
+function absoluteApiBaseUrl(baseUrl: string, origin: string) {
+    return (baseUrl.startsWith("/") ? `${origin}${baseUrl}` : baseUrl).trim().replace(/\/+$/, "");
 }
 
 export function isInternalSystemProxyBase(value: string) {
@@ -231,10 +239,17 @@ export function isInternalSystemProxyBase(value: string) {
 
 export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
     const headers = new Headers();
-    if (config.baseUrl.startsWith("/") && cookie) headers.set("cookie", cookie);
-    if (config.baseUrl.startsWith("/") && pointsIdempotencyKey) headers.set("x-vozeb-pro-points-idempotency-key", pointsIdempotencyKey);
-    if (config.apiFormat === "gemini") headers.set("x-goog-api-key", config.apiKey);
-    else headers.set("authorization", `Bearer ${config.apiKey}`);
+    const internal = config.baseUrl.startsWith("/");
+    const workerHeaders = maintenanceWorkerContextHeaders(cookie);
+    if (internal && workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
+    else if (internal && cookie) headers.set("cookie", cookie);
+    if (internal) Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey, config.model)).forEach(([key, value]) => headers.set(key, value));
+    if (pointsIdempotencyKey?.trim()) {
+        headers.set("Idempotency-Key", pointsIdempotencyKey.trim());
+        headers.set("X-Client-Request-Id", pointsIdempotencyKey.trim());
+    }
+    if (!internal && config.apiFormat === "gemini") headers.set("x-goog-api-key", config.apiKey);
+    else if (!internal) headers.set("authorization", `Bearer ${config.apiKey}`);
     return headers;
 }
 
@@ -248,6 +263,26 @@ export function taskFetch(config: ImageTaskConfig, url: string, init: RequestIni
     return fetchInternalApi(url, nextInit);
 }
 
+export async function imageSubmissionFetch(config: ImageTaskConfig, url: string, init: RequestInit) {
+    try {
+        return await taskFetch(config, url, init);
+    } catch (error) {
+        throw generationSubmissionUncertainError(error, "图片任务创建结果未知");
+    }
+}
+
+export function imageSubmissionResponseError(status: number, message: string) {
+    return generationSubmissionResponseError(status, message);
+}
+
+export async function parseImageSubmissionJson<T>(response: Response): Promise<T> {
+    try {
+        return (await response.json()) as T;
+    } catch {
+        throw new GenerationSubmissionUncertainError("图片接口返回了无效 JSON，创建结果待确认");
+    }
+}
+
 export function imageTaskRequestTimeoutMs(config: ImageTaskConfig) {
     return resolveModelRequestTimeoutMs(config, "image");
 }
@@ -255,6 +290,8 @@ export function imageTaskRequestTimeoutMs(config: ImageTaskConfig) {
 export function imageTaskPollAttempts(config: ImageTaskConfig) {
     return resolveModelPollingAttempts(config, "image", IMAGE_TASK_POLL_INTERVAL_MS, IMAGE_TASK_POLL_ATTEMPTS);
 }
+
+export class ImageUpstreamTerminalError extends Error {}
 
 export function geminiHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
     const headers = taskHeaders(config, cookie, pointsIdempotencyKey);
@@ -276,19 +313,23 @@ export function withSystemPrompt(config: ImageTaskConfig, prompt: string) {
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 }
 
-export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: ImageApiResponse, mediaBaseUrl: string, cookie: string, pollBaseUrl = mediaBaseUrl): Promise<ImageTaskResult> {
-    const image = parseImagePayloadCompat(payload, mediaBaseUrl, config);
+export async function parseImagePayloadOrPoll(config: ImageTaskConfig, payload: ImageApiResponse, mediaBaseUrl: string, cookie: string, pollBaseUrl = mediaBaseUrl, singleStep = false): Promise<ImageTaskResult> {
+    const payloadError = readImagePayloadError(payload);
+    if (payloadError) throw new GenerationSubmissionSafeFailure(payloadError);
+    const image = findImageResult(payload, mediaBaseUrl, config);
     if (image) return image;
 
     const taskId = readImageTaskId(payload);
-    if (!taskId) throw new Error(readImagePayloadError(payload) || "接口没有返回图片");
-    return pollOpenAiImageTask(config, taskId, mediaBaseUrl, pollBaseUrl, cookie, readImagePollUrl(config, payload, mediaBaseUrl, pollBaseUrl));
+    if (!taskId) throw new GenerationSubmissionUncertainError("图片接口没有返回图片或任务 ID，创建结果待确认");
+    const explicitPollUrl = readImagePollUrl(config, payload, mediaBaseUrl, pollBaseUrl);
+    if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl, pollBaseUrl, explicitPollUrl: explicitPollUrl || undefined } };
+    return pollOpenAiImageTask(config, taskId, mediaBaseUrl, pollBaseUrl, cookie, explicitPollUrl);
 }
 
-export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: string, mediaBaseUrl: string, pollBaseUrl: string, cookie: string, explicitPollUrl = ""): Promise<ImageTaskResult> {
+export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: string, mediaBaseUrl: string, pollBaseUrl: string, cookie: string, explicitPollUrl = "", singleStep = false): Promise<ImageTaskResult> {
     const pollUrls = imageTaskPollUrls(config, pollBaseUrl, taskId, explicitPollUrl);
     let lastError = "";
-    for (let attempt = 0; attempt < imageTaskPollAttempts(config); attempt += 1) {
+    for (let attempt = 0; attempt < (singleStep ? 1 : imageTaskPollAttempts(config)); attempt += 1) {
         for (const pollUrl of pollUrls) {
             const response = await taskFetch(config, pollUrl, { method: "GET", headers: taskHeaders(config, cookie), cache: "no-store", signal: AbortSignal.timeout(Math.min(imageTaskRequestTimeoutMs(config), 60_000)) });
             if (!response.ok) {
@@ -302,12 +343,13 @@ export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: strin
             const image = parseImagePayloadCompat(payload, baseUrl, config);
             if (image) return image;
             const error = readImagePayloadError(payload);
-            if (error) throw new Error(error);
+            if (error) throw new ImageUpstreamTerminalError(error);
             payload.status = readImageTaskStatus(payload) || payload.status;
-            if (!isPendingImageStatus(payload.status)) throw new Error("图片任务完成但没有返回图片");
+            if (!isPendingImageStatus(payload.status)) throw new ImageUpstreamTerminalError("图片任务完成但没有返回图片");
         }
-        await delay(IMAGE_TASK_POLL_INTERVAL_MS);
+        if (!singleStep) await delay(IMAGE_TASK_POLL_INTERVAL_MS);
     }
+    if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl, pollBaseUrl, explicitPollUrl: explicitPollUrl || undefined } };
     throw new Error(lastError || "图片生成超时，请稍后重试");
 }
 
@@ -479,8 +521,9 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), INLINE_IMAGE_TIMEOUT_MS);
     try {
+        const workerHeaders = maintenanceWorkerContextHeaders(cookie);
         const response = await fetch(fetchUrl, {
-            headers: cookie && url.startsWith("/") ? { cookie } : undefined,
+            headers: url.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
             cache: "no-store",
             signal: controller.signal,
         });
@@ -541,6 +584,13 @@ export function shouldTryNextImageResponseFormat(responseFormat: (typeof IMAGE_R
     return false;
 }
 
+/** Explicit admin presets own one request shape; only legacy auto/compatible channels may probe alternatives. */
+export function allowsImageProtocolFallback(config: ImageTaskConfig) {
+    // A model-level protocol is authoritative even when the parent channel is legacy auto/compatible.
+    const protocol = resolveChannelModelConfig(config.advancedConfig, config.model)?.protocol || config.advancedConfig?.protocol;
+    return !protocol || protocol === "auto" || protocol === "compatible";
+}
+
 export function shouldRetryJsonImageEditPayload(status: number, message: string) {
     if (status !== 400 && status !== 422) return false;
     return (
@@ -590,13 +640,15 @@ export function toGeminiImagePart(dataUrl: string, fallbackType?: string): Gemin
     return { fileData: { fileUri: dataUrl, mimeType: fallbackType || "image/png" } };
 }
 
-export async function buildImageEditFormData(task: ImageTask, quality: string | undefined, requestSize: string | undefined, origin: string, cookie: string, responseFormat: (typeof IMAGE_RESPONSE_FORMATS)[number]) {
+export async function buildImageEditFormData(task: ImageTask, quality: string | undefined, requestSize: string | undefined, origin: string, cookie: string, responseFormat: (typeof IMAGE_RESPONSE_FORMATS)[number], includeCompatibilityFields = true) {
     const formData = new FormData();
     formData.set("model", task.config.model);
     formData.set("prompt", withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references)));
     formData.set("n", "1");
-    formData.set("response_format", responseFormat);
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    if (includeCompatibilityFields) {
+        formData.set("response_format", responseFormat);
+        formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    }
     if (quality) formData.set("quality", quality);
     if (requestSize) formData.set("size", requestSize);
     const referenceFiles = await Promise.all(task.references.map((reference, index) => imageReferenceToFile(reference, reference.name || `reference-${index + 1}.png`, origin, cookie)));
@@ -613,8 +665,9 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
             if (/^blob:/i.test(value)) throw new Error("参考图已失效，请重新上传");
             const fetchUrl = value.startsWith("/") ? `${origin}${value}` : value;
             if (!isRemoteMediaUrl(fetchUrl)) throw new Error("参考图地址无效，请重新上传参考图");
+            const workerHeaders = maintenanceWorkerContextHeaders(cookie);
             const response = await fetch(fetchUrl, {
-                headers: cookie && value.startsWith("/") ? { cookie } : undefined,
+                headers: value.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
                 cache: "no-store",
                 signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),
             });
@@ -667,10 +720,11 @@ export function readPointsRemaining(headers: Headers) {
 }
 
 export function readBilling(headers: Headers) {
-    const pointsCost = Number(headers.get("x-vozeb-pro-points-cost"));
+    const rawCost = headers.get("x-vozeb-pro-points-cost");
+    const pointsCost = rawCost === null ? undefined : Number(rawCost);
     return {
         pointsRemaining: readPointsRemaining(headers),
-        pointsCost: Number.isFinite(pointsCost) && pointsCost > 0 ? pointsCost : undefined,
+        pointsCost: pointsCost !== undefined && Number.isFinite(pointsCost) && pointsCost >= 0 ? pointsCost : undefined,
         pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
     };
 }
@@ -686,7 +740,7 @@ export async function parseChargedImageResponse(task: ImageTask, response: Respo
 
 export async function refundChargedImageResponse(task: ImageTask, headers: Headers) {
     const { pointsCost, pointsRecordId } = readBilling(headers);
-    if (!pointsCost || !pointsRecordId) return;
+    if (pointsCost === undefined || !pointsRecordId) return;
     const settings = await getAuthSettings();
     await refundUserPoints(task.userId, generationModelId(task.config), pointsCost, "image", imageUnits(task.config.quality, settings.generationPointMultipliers.imageQuality), undefined, pointsRecordId);
 }
@@ -707,15 +761,20 @@ export function normalizeQuality(quality: string) {
 }
 
 export function resolveRequestSize(quality: string | undefined, size: string) {
-    const value = size.trim();
-    if (!value || value.toLowerCase() === "auto") return undefined;
-    const dimensions = parseImageDimensions(value);
-    if (dimensions) {
-        validateImageSize(dimensions.width, dimensions.height);
-        return `${dimensions.width}x${dimensions.height}`;
+    try {
+        const value = size.trim();
+        if (!value || value.toLowerCase() === "auto") return undefined;
+        const dimensions = parseImageDimensions(value);
+        if (dimensions) {
+            validateImageTargetSize(dimensions.width, dimensions.height);
+            return upstreamImageSize(dimensions.width, dimensions.height);
+        }
+        if (value.includes(":")) return resolveSize(quality, value);
+        throw new Error("图片尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
+    } catch (error) {
+        if (error instanceof GenerationSubmissionSafeFailure) throw error;
+        throw new GenerationSubmissionSafeFailure(error instanceof Error ? error.message : "图片尺寸参数无效");
     }
-    if (value.includes(":")) return resolveSize(quality, value);
-    throw new Error("图片尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
 export function imageRequestAspectRatio(size: string) {
@@ -753,16 +812,30 @@ export function parseImageRatio(value: string) {
     const width = Number(parts[0]);
     const height = Number(parts[1]);
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) throw new Error("图片比例必须是正数，例如 9:16");
-    if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图片宽高比不能超过 3:1，请调整尺寸");
     return { width, height };
 }
 
 export { parseImageDimensions };
 
 export function validateImageSize(width: number, height: number) {
+    validateImageDimensions(width, height);
+}
+
+function validateImageTargetSize(width: number, height: number) {
+    validateImageDimensions(width, height);
+}
+
+function validateImageDimensions(width: number, height: number) {
     if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new Error("图片尺寸必须是正整数，例如 1024x1024");
-    if (Math.max(width, height) > IMAGE_MAX_EDGE) throw new Error("图片尺寸最长边不能超过 3840px，请调整尺寸");
-    if (Math.max(width, height) / Math.min(width, height) > IMAGE_MAX_RATIO) throw new Error("图片宽高比不能超过 3:1，请调整尺寸");
-    const pixels = width * height;
-    if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图片总像素需在 655360 到 8294400 之间，请调整尺寸");
+}
+
+function upstreamImageSize(width: number, height: number) {
+    if (width * height >= IMAGE_MIN_PIXELS) return `${width}x${height}`;
+    const scale = Math.sqrt(IMAGE_MIN_PIXELS / (width * height));
+    const align = (value: number) => Math.ceil(value / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
+    const shortSide = align(Math.min(width, height) * scale);
+    const upstreamWidth = width <= height ? shortSide : align(shortSide * (width / height));
+    const upstreamHeight = height <= width ? shortSide : align(shortSide * (height / width));
+    validateImageSize(upstreamWidth, upstreamHeight);
+    return `${upstreamWidth}x${upstreamHeight}`;
 }

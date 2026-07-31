@@ -2,6 +2,8 @@ import type { CreativeMessage } from "@/lib/creative-runtime-contract";
 
 export type WorkbenchWorkspace = "image" | "video";
 
+export const WORKBENCH_PUBLIC_MESSAGE_VISIBILITY = "public";
+
 export type CreativeWorkbenchSessionSummary = {
     id: string;
     recordId?: string;

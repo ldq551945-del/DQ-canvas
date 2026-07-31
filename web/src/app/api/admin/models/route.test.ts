@@ -24,6 +24,17 @@ describe("admin models route", () => {
         expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", expect.objectContaining({ headers: { authorization: "Bearer test-secret-value" } }));
     });
 
+    it("loads a keyless Stable Diffusion model catalog without authentication", async () => {
+        const fetchMock = vi.fn(async () => Response.json([{ model_name: "sdxl", title: "SDXL" }]));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "https://sd.example.com", apiKey: "", protocol: "stable-diffusion", authMode: "none" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ models: ["SDXL"] });
+        expect(fetchMock).toHaveBeenCalledWith("https://sd.example.com/sdapi/v1/sd-models", expect.objectContaining({ headers: {} }));
+    });
+
     it("loads every paginated provider model page and returns capability metadata", async () => {
         const fetchMock = vi
             .fn()
@@ -82,6 +93,32 @@ describe("admin models route", () => {
             models: ["openai-text", "sd2.0"],
             modelCapabilities: { "openai-text": "text", "sd2.0": "video" },
             modelConfigs: { "sd2.0": { capability: "video", createPath: "/videos", queryPath: "/videos/:task_id" } },
+        });
+    });
+
+    it("applies capability-level custom protocol operations to newly discovered models", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => Response.json({ data: { image: ["opaque-image"], video: ["opaque-video"] } })),
+        );
+
+        const response = await POST(
+            request({
+                channelId: "saved",
+                protocol: "custom",
+                modelCatalogPaths: ["/v1/models"],
+                operationConfigs: {
+                    image: { capability: "image", protocol: "custom", createPath: "/render", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}"}', resultField: "image.url", source: "manual" },
+                    video: { capability: "video", protocol: "custom", createPath: "/jobs", queryPath: "/jobs/:task_id", requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}"}', resultField: "video.url", source: "manual" },
+                },
+            }),
+        );
+
+        expect(await response.json()).toMatchObject({
+            modelConfigs: {
+                "opaque-image": { capability: "image", protocol: "custom", createPath: "/render", resultField: "image.url" },
+                "opaque-video": { capability: "video", protocol: "custom", createPath: "/jobs", queryPath: "/jobs/:task_id", resultField: "video.url" },
+            },
         });
     });
 

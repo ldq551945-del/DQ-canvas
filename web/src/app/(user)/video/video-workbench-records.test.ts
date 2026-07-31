@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { AiConfig } from "@/stores/use-config-store";
-import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, normalizeVideoSeconds, resultsFromLog } from "./video-workbench-records";
+import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
+import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, normalizeVideoSeconds, resultsFromLog, snapshotFromLog } from "./video-workbench-records";
 
 describe("video workbench records", () => {
     it("restores success, failure, and pending results from a log", () => {
@@ -31,6 +32,16 @@ describe("video workbench records", () => {
             failures: [{ resultId: "result-1", error: "生成失败" }],
             resultDeleted: false,
         });
+    });
+
+    it("keeps the user request separate from the internal video prompt", () => {
+        const log = buildLogFromVideoResults(null, { text: "内部视频执行提示词", userText: "让产品自然旋转五秒", config: baseConfig(), references: [], videoReferences: [], audioReferences: [] }, [{ id: "result-1", status: "pending" }], 0);
+
+        expect(log.prompt).toBe("内部视频执行提示词");
+        expect(log.title).toBe("让产品自然旋转五秒".slice(0, 12));
+        expect(log.requestSnapshot?.userPrompt).toBe("让产品自然旋转五秒");
+        expect(generationLogPublicPrompt(log)).toBe("让产品自然旋转五秒");
+        expect(snapshotFromLog(log, baseConfig())).toMatchObject({ text: "内部视频执行提示词", userText: "让产品自然旋转五秒" });
     });
 
     it("keeps audio references within duration limits and warns once", () => {

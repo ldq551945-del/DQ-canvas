@@ -2,10 +2,15 @@ services:
   - type: web
     name: vozeb-pro
     runtime: docker
-    plan: free
+    plan: starter
     autoDeployTrigger: off
-    healthCheckPath: /
+    healthCheckPath: /api/health/live
+    disk:
+      name: vozeb-pro-data
+      mountPath: /app/web/.data
+      sizeGB: 10
     envVars:
+      - fromGroup: vozeb-pro-runtime
       - key: PORT
         value: 3000
       - key: NODE_OPTIONS
@@ -31,8 +36,30 @@ services:
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
 
+  - type: worker
+    name: vozeb-pro-generation-worker
+    runtime: docker
+    plan: starter
+    autoDeployTrigger: off
+    dockerCommand: node /app/web/scripts/generation-worker.mjs
+    envVars:
+      - fromGroup: vozeb-pro-runtime
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=128
+      - key: VOZEB_PRO_WORKER_API_ORIGIN
+        fromService:
+          name: vozeb-pro
+          type: web
+          property: hostport
+
 databases:
   - name: vozeb-pro-postgres
-    plan: free
+    plan: basic-256mb
     databaseName: vozeb_pro
     user: vozeb_pro
+
+envVarGroups:
+  - name: vozeb-pro-runtime
+    envVars:
+      - key: VOZEB_PRO_MAINTENANCE_TOKEN
+        generateValue: true

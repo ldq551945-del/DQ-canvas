@@ -44,7 +44,8 @@ describe("creative workbench session summaries", () => {
 
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
         expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("WITH scoped_conversations");
-        expect(mocks.postgresQuery.mock.calls[0][1]).toEqual(["user-one", "image-workbench", 101, "image", 4000]);
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("contentVisibility");
+        expect(mocks.postgresQuery.mock.calls[0][1]).toEqual(["user-one", "image-workbench", 101, "image", 4000, "public"]);
         expect(result).toEqual([expect.objectContaining({ id: "conversation-one", title: "生成咖啡商品图", lastPrompt: "改成暖色", recordId: "image-workbench:record-one" })]);
     });
 
@@ -53,8 +54,8 @@ describe("creative workbench session summaries", () => {
         mocks.readRuntimeFile.mockResolvedValue({
             conversations: [{ id: "conversation-one", userId: "user-one", surface: "chat", source: "video-workbench", status: "active", title: "视频工作台对话", updatedAt: 9 }],
             messages: [
-                { id: "message-one", conversationId: "conversation-one", sequence: 1, role: "user", content: "生成商品视频", metadata: { workspace: "video" } },
-                { id: "message-two", conversationId: "conversation-one", sequence: 2, role: "assistant", content: "已创建任务", metadata: { workspace: "video" } },
+                { id: "message-one", conversationId: "conversation-one", sequence: 1, role: "user", content: "生成商品视频", metadata: { workspace: "video", contentVisibility: "public" } },
+                { id: "message-two", conversationId: "conversation-one", sequence: 2, role: "assistant", content: "已创建任务", metadata: { workspace: "video", contentVisibility: "public" } },
             ],
             assets: [{ conversationId: "conversation-one", userId: "user-one", status: "ready", createdAt: 5, ordinal: 0, metadata: { generationLogId: "record-one" } }],
         });
@@ -94,7 +95,23 @@ describe("creative workbench session summaries", () => {
         const result = await getCreativeWorkbenchSessionDetail("user-one", "conversation-one", "image");
 
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
-        expect(mocks.postgresQuery.mock.calls[0][1]).toEqual(["conversation-one", "user-one", "image-workbench", "image", 0, 51, 50]);
+        expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("contentVisibility");
+        expect(mocks.postgresQuery.mock.calls[0][1]).toEqual(["conversation-one", "user-one", "image-workbench", "image", 0, 51, 50, "public"]);
         expect(result).toEqual(expect.objectContaining({ id: "conversation-one", recordId: "record-one", hasMore: true, nextBeforeSequence: 1, messages: [expect.objectContaining({ content: "生成商品图" })] }));
+    });
+
+    it("does not expose legacy workbench messages without an explicit public marker", async () => {
+        mocks.provider = "file";
+        mocks.readRuntimeFile.mockResolvedValue({
+            conversations: [{ id: "legacy", userId: "user-one", surface: "chat", source: "image-workbench", status: "active", title: "旧会话", updatedAt: 9 }],
+            messages: [
+                { id: "internal", conversationId: "legacy", sequence: 1, role: "user", content: "内部改写提示词", metadata: { workspace: "image" } },
+                { id: "public", conversationId: "legacy", sequence: 2, role: "assistant", content: "公开结果", metadata: { workspace: "image", contentVisibility: "public" } },
+            ],
+            assets: [],
+        });
+
+        await expect(listCreativeWorkbenchSessionSummaries("user-one", "image", 100)).resolves.toEqual([]);
+        await expect(getCreativeWorkbenchSessionDetail("user-one", "legacy", "image")).resolves.toEqual(expect.objectContaining({ messages: [expect.objectContaining({ content: "公开结果" })] }));
     });
 });

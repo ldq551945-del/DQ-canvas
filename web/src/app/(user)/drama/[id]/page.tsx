@@ -11,7 +11,7 @@ import { syncUserPointsFromHeaders } from "@/services/api/points";
 import { exportDramaJianyingDraft, getDramaProjectCosts, reviewDramaEpisode } from "@/services/api/drama-projects";
 import { compileDramaShotPrompts } from "@/lib/drama-prompt-compiler";
 import { mediaDownloadFileName } from "@/lib/media-file";
-import { imagePreviewUrl, originalMediaDownloadUrl } from "@/lib/media-image-url";
+import { originalMediaDownloadUrl } from "@/lib/media-image-url";
 import { splitDramaSource } from "@/lib/drama-source-splitter";
 import { useEffectiveConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -24,7 +24,9 @@ import { DramaAssetsPanel } from "./drama-assets-panel";
 import { DramaReviewPanel } from "./drama-review-panel";
 import { DramaStoryboardShotCard } from "./drama-storyboard-shot-card";
 import { DramaJianyingModal, DramaSubtitleModal, DramaVersionModal } from "./drama-project-modals";
+import { DramaMediaPreviewModal, DramaMediaThumbnail, type DramaPreviewMedia } from "./drama-media-preview";
 import { dramaGenerationSize, estimateEpisodePoints, estimateTaskPoints, referenceImage, shotReferenceImages, storyboardReferenceImages } from "./drama-shot-generation-utils";
+import { useGenerationCapacityRetry } from "./use-generation-capacity-retry";
 
 type Stage = "script" | "review" | "assets" | "storyboard" | "generate";
 
@@ -108,6 +110,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
     const [renderReady, setRenderReady] = useState<boolean | null>(null);
     const [reviewingVisuals, setReviewingVisuals] = useState(false);
     const [expandedStoryboardShotId, setExpandedStoryboardShotId] = useState("");
+    const [previewMedia, setPreviewMedia] = useState<DramaPreviewMedia>();
+    const { isWaiting: isCapacityWaiting, schedule: scheduleCapacityRetry } = useGenerationCapacityRetry();
     const audioReady = Boolean(config.audioModel.trim());
 
     const episode = project.episodes.find((item) => item.id === project.activeEpisodeId) || project.episodes[0];
@@ -288,6 +292,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         }
         const nextEnd = episode.shots.find((shot) => shot.storyboardEndStatus === "queued" && shot.storyboardImageUrl);
         if (nextEnd && !storyboardTaskRef.current) {
+            const retryKey = `storyboard-end:${nextEnd.id}`;
+            if (isCapacityWaiting(retryKey)) return;
             storyboardTaskRef.current = `${episode.id}:${nextEnd.id}:creating-end`;
             const prompt = compileDramaShotPrompts(project, episode, nextEnd).endFramePrompt;
             const references = [referenceImage(`storyboard-start-${nextEnd.id}`, `${nextEnd.title}-起始帧.png`, nextEnd.storyboardImageUrl!, "image/png", nextEnd.storyboardImageWidth, nextEnd.storyboardImageHeight)];
@@ -305,7 +311,11 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 clientRequestId: `drama-storyboard-end:${project.id}:${episode.id}:${nextEnd.id}:attempt-${nextEnd.storyboardEndAttempt || 1}`,
             })
                 .then((task) => updateShot(project.id, episode.id, nextEnd.id, { storyboardEndStatus: "running", storyboardEndTaskId: task.id, storyboardEndError: undefined }))
-                .catch((error) => updateShot(project.id, episode.id, nextEnd.id, { storyboardEndStatus: "error", storyboardEndError: error instanceof Error ? error.message : "尾帧图任务创建失败" }))
+                .catch((error) =>
+                    scheduleCapacityRetry(retryKey, error)
+                        ? updateShot(project.id, episode.id, nextEnd.id, { storyboardEndStatus: "queued", storyboardEndError: undefined })
+                        : updateShot(project.id, episode.id, nextEnd.id, { storyboardEndStatus: "error", storyboardEndError: error instanceof Error ? error.message : "尾帧图任务创建失败" }),
+                )
                 .finally(() => {
                     storyboardTaskRef.current = "";
                 });
@@ -313,6 +323,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         }
         const next = episode.shots.find((shot) => shot.storyboardStatus === "queued");
         if (!next || storyboardTaskRef.current) return;
+        const retryKey = `storyboard:${next.id}`;
+        if (isCapacityWaiting(retryKey)) return;
         storyboardTaskRef.current = `${episode.id}:${next.id}:creating`;
         const prompts = compileDramaShotPrompts(project, episode, next);
         const references = shotReferenceImages(project, next);
@@ -330,11 +342,15 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             clientRequestId: `drama-storyboard:${project.id}:${episode.id}:${next.id}:attempt-${next.storyboardAttempt || 1}`,
         })
             .then((task) => updateShot(project.id, episode.id, next.id, { storyboardStatus: "running", storyboardTaskId: task.id, storyboardError: undefined }))
-            .catch((error) => updateShot(project.id, episode.id, next.id, { storyboardStatus: "error", storyboardError: error instanceof Error ? error.message : "分镜图任务创建失败" }))
+            .catch((error) =>
+                scheduleCapacityRetry(retryKey, error)
+                    ? updateShot(project.id, episode.id, next.id, { storyboardStatus: "queued", storyboardError: undefined })
+                    : updateShot(project.id, episode.id, next.id, { storyboardStatus: "error", storyboardError: error instanceof Error ? error.message : "分镜图任务创建失败" }),
+            )
             .finally(() => {
                 storyboardTaskRef.current = "";
             });
-    }, [config, episode.id, episode.shots, project.id, project.ratio, project.title, updateShot]);
+    }, [config, episode.id, episode.shots, isCapacityWaiting, project.id, project.ratio, project.title, scheduleCapacityRetry, updateShot]);
 
     useEffect(() => {
         const running = episode.shots.find((shot) => shot.generationStatus === "running" && shot.generationTaskId);
@@ -360,6 +376,8 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
         if (episode.shots.some((shot) => shot.generationStatus === "running")) return;
         const next = episode.shots.find((shot) => shot.generationStatus === "queued");
         if (!next || startingShotRef.current === next.id) return;
+        const retryKey = `video:${next.id}`;
+        if (isCapacityWaiting(retryKey)) return;
         startingShotRef.current = next.id;
         const mode = next.videoMode || project.defaultVideoMode;
         const references = mode === "reference" ? shotReferenceImages(project, next) : storyboardReferenceImages(next);
@@ -388,11 +406,15 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
             },
         )
             .then((task) => updateShot(project.id, episode.id, next.id, { generationStatus: "running", generationTaskId: task.serverTaskId || task.id, generationError: undefined }))
-            .catch((error) => updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: error instanceof Error ? error.message : "视频任务创建失败" }))
+            .catch((error) =>
+                scheduleCapacityRetry(retryKey, error)
+                    ? updateShot(project.id, episode.id, next.id, { generationStatus: "queued", generationError: undefined })
+                    : updateShot(project.id, episode.id, next.id, { generationStatus: "error", generationError: error instanceof Error ? error.message : "视频任务创建失败" }),
+            )
             .finally(() => {
                 startingShotRef.current = "";
             });
-    }, [config, episode.id, episode.shots, project, updateShot]);
+    }, [config, episode.id, episode.shots, isCapacityWaiting, project, scheduleCapacityRetry, updateShot]);
 
     const cancelShot = async (shotId: string, taskId?: string, storyboardTaskId?: string, storyboardEndTaskId?: string) => {
         if (storyboardTaskId) await fetch(`/api/image-tasks/${encodeURIComponent(storyboardTaskId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) }).catch(() => undefined);
@@ -797,7 +819,17 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                                         <div className="flex flex-wrap items-center gap-1.5">
                                                             <StoryboardTag status={shot.storyboardStatus} />
                                                             {shot.storyboardFrameMode === "first_last" ? (
-                                                                <Tag color={shot.storyboardEndStatus === "running" || shot.storyboardEndStatus === "queued" ? "processing" : shot.storyboardEndStatus === "error" ? "error" : "default"}>尾帧</Tag>
+                                                                <span
+                                                                    className={`inline-flex h-6 items-center rounded-md border px-2 text-xs font-medium leading-none ${
+                                                                        shot.storyboardEndStatus === "running" || shot.storyboardEndStatus === "queued"
+                                                                            ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/35 dark:text-amber-300"
+                                                                            : shot.storyboardEndStatus === "error"
+                                                                              ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/70 dark:bg-rose-950/35 dark:text-rose-300"
+                                                                              : "border-border bg-muted/60 text-muted-foreground"
+                                                                    }`}
+                                                                >
+                                                                    尾帧
+                                                                </span>
                                                             ) : null}
                                                             <GenerationTag status={shot.generationStatus} />
                                                             {shot.audioMode === "voiceover" ? <AudioTag status={shot.audioStatus} /> : <Tag>{shot.audioMode === "mute" ? "静音" : "视频原声"}</Tag>}
@@ -813,11 +845,15 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                                                     {shot.generationError ? <p className="mt-2 text-xs text-red-500">{shot.generationError}</p> : null}
                                                     {shot.storyboardImageUrl ? (
                                                         <div className="mt-4 flex max-w-xl gap-2 overflow-x-auto">
-                                                            <img className="aspect-video w-44 shrink-0 rounded-md object-cover" src={imagePreviewUrl(shot.storyboardImageUrl, 640)} alt={`${shot.title}起始帧`} />
-                                                            {shot.storyboardEndImageUrl ? <img className="aspect-video w-44 shrink-0 rounded-md object-cover" src={imagePreviewUrl(shot.storyboardEndImageUrl, 640)} alt={`${shot.title}结束帧`} /> : null}
+                                                            <DramaMediaThumbnail media={{ type: "image", url: shot.storyboardImageUrl, title: `${shot.title}起始帧` }} onOpen={setPreviewMedia} />
+                                                            {shot.storyboardEndImageUrl ? <DramaMediaThumbnail media={{ type: "image", url: shot.storyboardEndImageUrl, title: `${shot.title}结束帧` }} onOpen={setPreviewMedia} /> : null}
                                                         </div>
                                                     ) : null}
-                                                    {shot.videoUrl ? <video className="mt-4 max-h-52 w-full max-w-sm rounded-xl bg-black" src={shot.videoUrl} controls preload="metadata" /> : null}
+                                                    {shot.videoUrl ? (
+                                                        <div className="mt-4">
+                                                            <DramaMediaThumbnail media={{ type: "video", url: shot.videoUrl, title: `${shot.title}生成视频` }} onOpen={setPreviewMedia} />
+                                                        </div>
+                                                    ) : null}
                                                     {shot.subtitle || shot.dialogue ? <p className="mt-2 max-w-2xl text-xs leading-5 text-muted-foreground">字幕：{shot.subtitle || shot.dialogue}</p> : null}
                                                     {shot.audioError ? <p className="mt-2 text-xs text-red-500">{shot.audioError}</p> : null}
                                                     {shot.audioUrl ? <audio className="mt-4 h-10 w-full max-w-sm" src={shot.audioUrl} controls preload="metadata" /> : null}
@@ -902,6 +938,7 @@ function DramaProjectEditor({ project }: { project: DramaProject }) {
                 onVersionChange={setJianyingVersion}
             />
             <DramaSubtitleModal open={subtitleOpen} shots={episode.shots} onClose={() => setSubtitleOpen(false)} />
+            <DramaMediaPreviewModal media={previewMedia} onClose={() => setPreviewMedia(undefined)} />
         </main>
     );
 }

@@ -6,19 +6,15 @@ import { ECOMMERCE_IMAGE_SKILL } from "@/lib/server/agent-skills/ecommerce-image
 import { YANAI_BEAUTY_SKILL } from "@/lib/server/agent-skills/yanai-beauty";
 import { DEFAULT_CREATIVE_SHORTCUT_SKILLS } from "@/lib/server/agent-skills/creative-shortcuts";
 import { deriveLogicalModelsConfig, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
-import { isGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { resolveConfiguredModelPointCost } from "@/lib/model-point-cost";
+import { normalizeSystemChannelAdvancedConfig } from "./store-normalizers-channel";
 import {
     type UserRole,
     type UserStatus,
-    type ApiCallFormat,
-    type SystemChannelProtocol,
-    type SystemChannelAdvancedConfig,
     type LegacyUserQuota,
     type ModelPointCosts,
     type PointUsageKind,
     type SystemModelChannel,
-    type LogicalModelCapability,
     type LogicalModelCapabilityProfile,
     type LogicalModelBinding,
     type LogicalModel,
@@ -77,6 +73,8 @@ import {
     DEFAULT_SETTINGS,
     AUTH_DATA_FILE,
 } from "./store-foundation";
+
+export { normalizeApiPath, normalizeSystemChannelAdvancedConfig, textOrEmpty } from "./store-normalizers-channel";
 import { currentQuotaDate, hashToken, normalizeEmail, normalizeUserBio } from "./store-auth-utils";
 
 export { currentQuotaDate, hashToken, normalizeDisplayName, normalizeEmail, normalizeUserBio, normalizeUsername, parseSessionCookie, randomNumericCode, validateEmail, validatePassword, validateUsername } from "./store-auth-utils";
@@ -269,6 +267,9 @@ export function deriveLogicalModels(channels: SystemModelChannel[]): LogicalMode
 
 export function normalizeAgentSkill(skill: AgentSkill): AgentSkill {
     if (skill.id === ECOMMERCE_IMAGE_SKILL.id && !skill.sourceUrl) return { ...ECOMMERCE_IMAGE_SKILL, keywords: [...ECOMMERCE_IMAGE_SKILL.keywords], workspaces: [...ECOMMERCE_IMAGE_SKILL.workspaces], enabled: skill.enabled !== false };
+    const instructions = String(skill.instructions || "")
+        .trim()
+        .slice(0, 8000);
     return {
         id: String(skill.id || randomUUID()),
         name: String(skill.name || "")
@@ -277,9 +278,11 @@ export function normalizeAgentSkill(skill: AgentSkill): AgentSkill {
         description: String(skill.description || "")
             .trim()
             .slice(0, 240),
-        instructions: String(skill.instructions || "")
-            .trim()
-            .slice(0, 8000),
+        plannerSummary:
+            String(skill.plannerSummary || skill.description || instructions)
+                .trim()
+                .slice(0, 240) || undefined,
+        instructions,
         enabled: skill.enabled !== false,
         keywords: Array.isArray(skill.keywords)
             ? skill.keywords
@@ -584,106 +587,6 @@ export function normalizeSystemChannel(channel: Partial<SystemModelChannel>): Sy
         enabled: channel.enabled !== false,
         advancedConfig: normalizeSystemChannelAdvancedConfig(channel.advancedConfig),
     };
-}
-
-export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChannelAdvancedConfig> | undefined): SystemChannelAdvancedConfig | undefined {
-    if (!config || typeof config !== "object") return undefined;
-    const protocol = ["auto", "openai", "sub2api", "qingyan", "globalaiopc", "seedance", "compatible"].includes(config.protocol || "") ? config.protocol! : "auto";
-    const globalAiOpcPresets = Array.from(new Set((Array.isArray(config.globalAiOpcPresets) ? config.globalAiOpcPresets : []).filter(isGlobalAiOpcPreset)));
-    const legacyGlobalAiOpcPreset = isGlobalAiOpcPreset(config.globalAiOpcPreset) ? config.globalAiOpcPreset : undefined;
-    const modelCapabilities = normalizeChannelModelCapabilities(config.modelCapabilities);
-    const modelConfigs = normalizeChannelModelConfigs(config.modelConfigs);
-    const modelCatalogPaths = Array.from(new Set((Array.isArray(config.modelCatalogPaths) ? config.modelCatalogPaths : []).map(normalizeApiPath).filter(Boolean))).slice(0, 12);
-    return {
-        protocol,
-        ...(globalAiOpcPresets.length
-            ? { globalAiOpcPresets, ...(globalAiOpcPresets.length === 1 ? { globalAiOpcPreset: globalAiOpcPresets[0] } : {}) }
-            : legacyGlobalAiOpcPreset
-              ? { globalAiOpcPreset: legacyGlobalAiOpcPreset, globalAiOpcPresets: [legacyGlobalAiOpcPreset] }
-              : {}),
-        textModel: textOrEmpty(config.textModel, 120),
-        imageModel: textOrEmpty(config.imageModel, 120),
-        videoModel: textOrEmpty(config.videoModel, 120),
-        createPath: normalizeApiPath(config.createPath),
-        queryPath: normalizeApiPath(config.queryPath),
-        requestTemplate: textOrEmpty(config.requestTemplate, 4000),
-        resultField: textOrEmpty(config.resultField, 500),
-        statusField: textOrEmpty(config.statusField, 500),
-        durationRange: textOrEmpty(config.durationRange, 120),
-        referenceRule: textOrEmpty(config.referenceRule, 1000),
-        supportsReferenceImage: Boolean(config.supportsReferenceImage),
-        supportsReferenceVideo: Boolean(config.supportsReferenceVideo),
-        supportsReferenceAudio: Boolean(config.supportsReferenceAudio),
-        ...(modelCatalogPaths.length ? { modelCatalogPaths } : {}),
-        ...(Object.keys(modelCapabilities).length ? { modelCapabilities } : {}),
-        ...(Object.keys(modelConfigs).length ? { modelConfigs } : {}),
-    };
-}
-
-function normalizeChannelModelCapabilities(value: unknown) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {} as NonNullable<SystemChannelAdvancedConfig["modelCapabilities"]>;
-    return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).flatMap(([model, capability]) => {
-            const key = normalizeChannelModelKey(model);
-            return key && isModelCapability(capability) ? [[key, capability] as const] : [];
-        }),
-    ) as NonNullable<SystemChannelAdvancedConfig["modelCapabilities"]>;
-}
-
-function normalizeChannelModelConfigs(value: unknown) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return {} as NonNullable<SystemChannelAdvancedConfig["modelConfigs"]>;
-    return Object.fromEntries(
-        Object.entries(value as Record<string, unknown>).flatMap(([model, raw]) => {
-            const key = normalizeChannelModelKey(model);
-            if (!key || !raw || typeof raw !== "object" || Array.isArray(raw)) return [];
-            const config = raw as Record<string, unknown>;
-            if (!isModelCapability(config.capability)) return [];
-            const protocol = ["auto", "openai", "sub2api", "qingyan", "globalaiopc", "seedance", "compatible"].includes(String(config.protocol || "")) ? (config.protocol as SystemChannelProtocol) : undefined;
-            return [
-                [
-                    key,
-                    {
-                        capability: config.capability,
-                        ...(["manual", "provider", "official", "health"].includes(String(config.source || "")) ? { source: config.source as "manual" | "provider" | "official" | "health" } : {}),
-                        ...(config.apiFormat === "openai" || config.apiFormat === "gemini" ? { apiFormat: config.apiFormat } : {}),
-                        ...(protocol ? { protocol } : {}),
-                        ...(normalizeApiPath(config.createPath) ? { createPath: normalizeApiPath(config.createPath) } : {}),
-                        ...(normalizeApiPath(config.queryPath) ? { queryPath: normalizeApiPath(config.queryPath) } : {}),
-                        ...(textOrEmpty(config.requestTemplate, 4000) ? { requestTemplate: textOrEmpty(config.requestTemplate, 4000) } : {}),
-                        ...(textOrEmpty(config.resultField, 500) ? { resultField: textOrEmpty(config.resultField, 500) } : {}),
-                        ...(textOrEmpty(config.statusField, 500) ? { statusField: textOrEmpty(config.statusField, 500) } : {}),
-                        ...(textOrEmpty(config.durationRange, 120) ? { durationRange: textOrEmpty(config.durationRange, 120) } : {}),
-                        ...(textOrEmpty(config.referenceRule, 1000) ? { referenceRule: textOrEmpty(config.referenceRule, 1000) } : {}),
-                        ...(typeof config.supportsReferenceImage === "boolean" ? { supportsReferenceImage: config.supportsReferenceImage } : {}),
-                        ...(typeof config.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: config.supportsReferenceVideo } : {}),
-                        ...(typeof config.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: config.supportsReferenceAudio } : {}),
-                    },
-                ] as const,
-            ];
-        }),
-    ) as NonNullable<SystemChannelAdvancedConfig["modelConfigs"]>;
-}
-
-function normalizeChannelModelKey(value: string) {
-    return value
-        .trim()
-        .replace(/^models\//i, "")
-        .toLowerCase()
-        .slice(0, 200);
-}
-
-function isModelCapability(value: unknown): value is LogicalModelCapability {
-    return value === "text" || value === "image" || value === "video" || value === "audio";
-}
-
-export function normalizeApiPath(value: unknown) {
-    const path = textOrEmpty(value, 300);
-    if (!path) return "";
-    return path.startsWith("/") ? path : `/${path}`;
-}
-
-export function textOrEmpty(value: unknown, maxLength: number) {
-    return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
 export function normalizePoints(value: unknown, fallback: number) {

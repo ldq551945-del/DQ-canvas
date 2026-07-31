@@ -45,7 +45,14 @@ export type GenerationLogSlotSnapshot = {
 
 export type GenerationLogRequestSnapshot = {
     version: 1;
+    userPrompt?: string;
     parameters: GenerationLogSnapshotParameters;
     references: GenerationLogReferenceSnapshot[];
     slots: GenerationLogSlotSnapshot[];
 };
+
+export function generationLogPublicPrompt(log: { prompt?: string; creativeConversationId?: string; requestSnapshot?: Pick<GenerationLogRequestSnapshot, "userPrompt"> }) {
+    const userPrompt = log.requestSnapshot?.userPrompt?.trim();
+    if (userPrompt) return userPrompt;
+    return log.creativeConversationId ? "" : String(log.prompt || "").trim();
+}

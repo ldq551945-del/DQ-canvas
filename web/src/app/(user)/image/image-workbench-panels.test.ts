@@ -20,4 +20,27 @@ describe("image result card layout", () => {
         expect(cardSource).toContain('aria-label="下载"');
         expect(cardSource).not.toContain("<Button className={RESULT_ACTION_BUTTON_CLASS}");
     });
+
+    it("uses a fixed four-column desktop grid instead of masonry columns", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/image/page.tsx"), "utf8");
+        const panelSource = await readFile(resolve(process.cwd(), "src/app/(user)/image/image-workbench-panels.tsx"), "utf8");
+
+        expect(source).toContain("xl:grid-cols-4");
+        expect(source).toContain("sm:grid-cols-2");
+        expect(source).not.toContain("columns-4");
+        expect(source).not.toContain("break-inside-avoid");
+        expect(panelSource).toContain('fluid && "aspect-square"');
+        expect(panelSource).toContain('fluid ? "object-cover" : "object-contain"');
+    });
+
+    it("keeps pending and failed single-result cards visible instead of collapsing to a line", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/image/image-workbench-panels.tsx"), "utf8");
+        const pageSource = await readFile(resolve(process.cwd(), "src/app/(user)/image/page.tsx"), "utf8");
+        const pendingSource = source.slice(source.indexOf("export function PendingImageCard"), source.indexOf("export function FailedImageCard"));
+        const failedSource = source.slice(source.indexOf("export function FailedImageCard"), source.indexOf("export function LogPanel"));
+
+        expect(pendingSource).toContain("w-full max-w-[320px]");
+        expect(failedSource).toContain('large && "max-w-[320px]"');
+        expect(pageSource).toContain('results.length === 1 ? "w-[320px] max-w-full" : "min-w-0"');
+    });
 });

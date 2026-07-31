@@ -44,6 +44,14 @@ describe("Render Blueprint contract", () => {
 
         expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Sharp 原生依赖");
     });
+
+    it("rejects an image that can collect no Sharp native package", () => {
+        const dockerfilePath = path.join(repoRoot, "Dockerfile");
+        const dockerfile = readFileSync(dockerfilePath, "utf8");
+        const unsafe = dockerfile.replace('test -n "$(find /app/sharp-runtime/node_modules/@img -mindepth 1 -maxdepth 1 -type d -print -quit)"', "");
+
+        expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Sharp 原生依赖存在性检查");
+    });
 });
 
 function validateSource(content) {

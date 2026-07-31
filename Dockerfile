@@ -24,7 +24,8 @@ COPY web ./
 RUN --mount=type=cache,target=/app/web/.next/cache pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build
 RUN set -eux; \
     mkdir -p /app/sharp-runtime/node_modules/@img; \
-    cp -LR node_modules/.pnpm/sharp@*/node_modules/@img/sharp-* /app/sharp-runtime/node_modules/@img/
+    find node_modules/.pnpm -type d -path '*/node_modules/@img/sharp-*' -exec cp -a {} /app/sharp-runtime/node_modules/@img/ \;; \
+    test -n "$(find /app/sharp-runtime/node_modules/@img -mindepth 1 -maxdepth 1 -type d -print -quit)"
 
 FROM node:22-bookworm-slim
 

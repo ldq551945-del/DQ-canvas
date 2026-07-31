@@ -36,6 +36,14 @@ describe("Render Blueprint contract", () => {
 
         expect(() => validateSource(stringify(blueprint))).toThrow("Web 与 Worker 必须引用同一运行时环境组");
     });
+
+    it("rejects an image that omits the Sharp native runtime", () => {
+        const dockerfilePath = path.join(repoRoot, "Dockerfile");
+        const dockerfile = readFileSync(dockerfilePath, "utf8");
+        const unsafe = dockerfile.replace("COPY --from=web-build /app/sharp-runtime/node_modules/@img /app/web/node_modules/@img", "");
+
+        expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Sharp 原生依赖");
+    });
 });
 
 function validateSource(content) {

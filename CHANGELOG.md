@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- [修复] 生产镜像显式携带当前 CPU 架构对应的 Sharp 与 libvips 原生运行库，并在镜像构建阶段实际加载 Sharp；避免 Linux 容器中的生成运维、媒体处理和生成 Worker 因缺少动态库返回 500。
+
 ## v0.0.3
 
 - [Agent] Agent 规划兼容 Chat Completions、Responses、Gemini 和声明式自定义协议。文本候选最多等待 3 分钟，失败后自动切换健康绑定；多结果按完成顺序返回，内部规划与复盘内容不进入用户对话。

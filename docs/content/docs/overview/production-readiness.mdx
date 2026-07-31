@@ -11,7 +11,7 @@ description: VOZEB PRO 商业部署前的健康检查、调度、备份、监控
 
 - Web 全量自动化、Prettier、TypeScript、完整依赖漏洞审计、发布检查与生产构建已通过；主应用与文档站依赖审计均为 0 个告警，发布检查使用独立构建目录，不会覆盖运行中的 standalone 产物，GitHub Web/Docs 质量任务也执行相同安全门禁。Docs 的类型、索引和生产构建已通过。真实 PostgreSQL 已覆盖社区点赞、关注、拉黑、事务回滚及当前 Schema 表集合核对，但未替代多账号人工操作与生产并发。
 - 当前生产候选默认模型为空。本地符合声明式协议的 TCP 夹具已让文本、图片、视频和音频真实返回穿过应用 runtime/适配器，并覆盖异步轮询、媒体落盘、失败退款和候选切换；这些证据只证明应用协议兼容，不代表任何真实供应商账号、模型质量、额度或 SLA 已验收。
-- 七套 Compose 与 Render Blueprint 已通过结构化契约测试。五套主应用 Compose 锁定 app/Worker 同镜像、同维护令牌、Worker 命令、数据库最小权限、存活探针、持久卷、内置/外部 PostgreSQL 分界和宝塔 host 网络隔离；两套文档 Compose 锁定独立端口和发布/本地构建来源。Render 进一步锁定付费 Web/Worker、共享令牌、私网调用、`basic-256mb` PostgreSQL、10GB 持久盘和生产镜像脚本。本机没有 Docker CLI，也没有 Render 账号部署证据，尚未执行 `docker compose config`、镜像构建、容器启动、Blueprint 创建、宝塔安装或干净 Linux 恢复验证。
+- 七套 Compose 与 Render Blueprint 已通过结构化契约测试。五套主应用 Compose 锁定 app/Worker 同镜像、同维护令牌、Worker 命令、数据库最小权限、存活探针、持久卷、内置/外部 PostgreSQL 分界和宝塔 host 网络隔离；两套文档 Compose 锁定独立端口和发布/本地构建来源。Render 进一步锁定付费 Web/Worker、共享令牌、私网调用、`basic-256mb` PostgreSQL、10GB 持久盘和生产镜像脚本。v0.0.3 发布镜像已在一台 Linux x64 服务器暴露 Sharp 的 `libvips-cpp.so.8.18.3` 缺失，导致生成运维接口与 Worker 返回 500；生产 Dockerfile 现已显式复制当前架构原生包并在镜像构建阶段加载 Sharp。本机没有 Docker CLI，也没有 Render 账号部署证据，新镜像仍需完成 `docker compose config`、拉取与启动、两个生成运维接口、Worker 心跳、图片 WebP 预览、Blueprint 创建、宝塔安装和干净 Linux 恢复验证。
 - 浏览器前序回归已覆盖主要桌面、390px/430px 和浅深主题页面；新构建切换后又使用现有管理员登录态复核后台、Agent、图片、视频、Canvas、短剧、素材和计费页面，桌面与 390px 加载为 210–396ms，根节点无横向溢出且控制台无 warning/error。生产发布仍需按目标浏览器、真实账号、真实媒体和生产网络完成最终人工验收。
 
 ## 健康检查

@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { parse } from "yaml";
 
-export function validateRenderBlueprint({ repoRoot, source }) {
+export function validateRenderBlueprint({ repoRoot, source, dockerfile: dockerfileSource }) {
     const file = "render.yaml";
     let blueprint;
     try {
@@ -25,7 +25,7 @@ export function validateRenderBlueprint({ repoRoot, source }) {
     const runtimeGroup = environmentGroups.find((group) => group?.name === "vozeb-pro-runtime");
     const webEnvironment = environmentMap(web?.envVars);
     const workerEnvironment = environmentMap(worker?.envVars);
-    const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    const dockerfile = dockerfileSource ?? readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
     ensure(services.length === 2 && web?.type === "web", "Blueprint 必须声明唯一 Web 服务");
     ensure(worker?.type === "worker", "Blueprint 缺少独立 generation worker");
@@ -36,6 +36,9 @@ export function validateRenderBlueprint({ repoRoot, source }) {
     ensure(worker?.dockerCommand === "node /app/web/scripts/generation-worker.mjs", "Render Worker 启动命令不正确");
     ensure(dockerfile.includes("COPY web/scripts/generation-worker.mjs /app/web/scripts/generation-worker.mjs"), "生产镜像缺少 generation worker");
     ensure(dockerfile.includes("COPY web/scripts/generation-runtime.mjs /app/web/scripts/generation-runtime.mjs"), "生产镜像缺少 Worker 运行时 helper");
+    ensure(dockerfile.includes("cp -LR node_modules/.pnpm/sharp@*/node_modules/@img/sharp-* /app/sharp-runtime/node_modules/@img/"), "生产镜像缺少 Sharp 原生依赖收集步骤");
+    ensure(dockerfile.includes("COPY --from=web-build /app/sharp-runtime/node_modules/@img /app/web/node_modules/@img"), "生产镜像缺少 Sharp 原生依赖");
+    ensure(dockerfile.includes("RUN cd /app/web && node -e \"require('sharp')\""), "生产镜像缺少 Sharp 运行时检查");
     ensure(hasGroup(web?.envVars, "vozeb-pro-runtime") && hasGroup(worker?.envVars, "vozeb-pro-runtime"), "Web 与 Worker 必须引用同一运行时环境组");
     ensure(environmentMap(runtimeGroup?.envVars).VOZEB_PRO_MAINTENANCE_TOKEN?.generateValue === true, "运行时环境组必须生成共享维护令牌");
     ensure(webEnvironment.VOZEB_PRO_DATA_DIR?.value === "/app/web/.data", "Web 数据目录必须位于持久盘");

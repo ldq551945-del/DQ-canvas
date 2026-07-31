@@ -36,8 +36,10 @@ VOZEB PRO 把统一创作 Agent、图片与视频工作台、画布、短剧生�
 - **视频工作台**：文生视频、图生视频、多类型参考素材、时长/比例/清晰度参数、异步续取和结果管理。
 - **画布**：文本、图片、视频、音频与生成节点，支持拖拽、连线、缩放、撤销重做、导入导出和 Agent Run。
 - **短剧生产线**：剧本、内容审核、角色/场景/道具、分镜、镜头视频、配音、字幕、版本和 FFmpeg 合成。
-- **模型路由**：管理员维护渠道、协议、真实模型、逻辑模型、能力、优先级和默认值，普通用户不接触上游密钥。
-- **商业后台**：用户、套餐、积分、CDK、订单、支付、退款、财务流水、公告、提示词、生成运营和审计日志。
+- **作品广场**：作品草稿、版本审核、发布分享、广场检索、作者主页、点赞关注、下架重发和内容治理。
+- **模型与协议**：管理员维护渠道、协议、真实模型、逻辑模型、能力、优先级和默认值，覆盖 OpenAI、Gemini、Seedance 2.0、Stable Diffusion、A1111/Forge 和声明式自定义协议。
+- **持久生成**：独立 Worker 负责图片、视频、音频和 Agent 任务续取，页面关闭或实例切换后继续查询原上游任务，并在生成运维中处理异常任务。
+- **商业后台**：用户、套餐、促销、优惠券、邀请奖励、积分、CDK、订单、支付、退款、对账、财务流水、作品治理、公告、提示词和审计日志。
 - **存储与备份**：本地媒体、S3 兼容对象存储、引用保护、对象迁移和脱敏业务数据导入导出。
 
 ## 项目功能流程
@@ -52,11 +54,15 @@ flowchart LR
     HOME["首页 /<br/>产品介绍、功能入口、公告"] --> ACTION{"访客选择"}
 
     ACTION --> ANN["公告中心 /announcements<br/>查看置顶公告和平台通知"]
+    ACTION --> GALLERY["作品广场 /gallery<br/>浏览、检索和查看公开作品"]
     ACTION --> LOGIN["登录 /login<br/>账号密码校验"]
     ACTION --> REGISTER["注册 /register<br/>注册策略与可选邮箱验证码"]
     ACTION --> FORGOT["找回密码 /forgot-password<br/>邮箱验证码与密码重置"]
     ACTION --> PRIVACY["隐私政策 /privacy"]
     ACTION --> TERMS["服务条款 /terms"]
+
+    GALLERY --> SHARE["作品详情 /share/:slug<br/>预览、点赞、关注和举报"]
+    SHARE --> CREATOR["作者主页 /u/:username<br/>查看公开作品"]
 
     REGISTER --> LOGIN
     FORGOT --> LOGIN
@@ -416,16 +422,20 @@ cp .env.example .env
 NEXT_PUBLIC_SITE_URL=https://vozeb-pro.example.com
 POSTGRES_PASSWORD=replace-with-a-strong-password
 VOZEB_PRO_ENCRYPTION_KEY=replace-with-openssl-rand-hex-32
+VOZEB_PRO_MAINTENANCE_TOKEN=replace-with-another-openssl-rand-hex-32
 ```
 
-生成加密密钥并启动：
+分别生成加密密钥和维护令牌，再写入 `.env` 并启动：
 
 ```bash
+openssl rand -hex 32
 openssl rand -hex 32
 docker compose pull
 docker compose up -d
 docker compose ps
 ```
+
+`VOZEB_PRO_MAINTENANCE_TOKEN` 是服务器部署密钥，不在管理后台填写。安装页会自动生成并放入可复制的环境变量；选择 Docker、宝塔或云数据库时，可复制的 Compose 模板同时包含 App 与 `generation-worker`，两个服务使用同一个令牌并一起启动。单独部署 Worker 时也必须注入完全相同的值。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
 
 打开 `https://你的域名/install`，依次检查数据库、初始化表结构并创建首个管理员。
 

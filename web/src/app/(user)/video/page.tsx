@@ -462,7 +462,14 @@ export default function VideoPage() {
                                             onSaveAsset={saveResultToAssets}
                                         />
                                     ) : result.status === "failed" ? (
-                                        <FailedVideoCard key={result.id} error={result.error || "生成失败"} selected={selectedResultIds.includes(result.id)} onSelectedChange={(checked) => toggleResultSelected(result.id, checked)} onRetry={retryResult} />
+                                        <FailedVideoCard
+                                            key={result.id}
+                                            error={result.error || "生成失败"}
+                                            retryable={result.canRetry === true}
+                                            selected={selectedResultIds.includes(result.id)}
+                                            onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
+                                            onRetry={retryResult}
+                                        />
                                     ) : (
                                         <PendingVideoCard key={result.id} />
                                     ),

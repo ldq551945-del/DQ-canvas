@@ -41,6 +41,7 @@ export type GenerationLogSlotSnapshot = {
     serverTaskId?: string;
     startedAt?: number;
     error?: string;
+    canRetry?: boolean;
 };
 
 export type GenerationLogRequestSnapshot = {

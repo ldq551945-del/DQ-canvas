@@ -22,6 +22,16 @@ describe("video workbench records", () => {
         ]);
     });
 
+    it("only restores retry permission for an explicitly retryable upstream failure", () => {
+        expect(
+            resultsFromLog({
+                id: "retryable",
+                status: "失败",
+                failures: [{ resultId: "failed-slot", error: "上游明确失败", canRetry: true }],
+            } as never),
+        ).toEqual([{ id: "failed-slot", status: "failed", error: "上游明确失败", canRetry: true }]);
+    });
+
     it("builds a failed log from failed generation results", () => {
         const log = buildLogFromVideoResults(null, { text: "生成视频", config: baseConfig(), references: [], videoReferences: [], audioReferences: [] }, [{ id: "result-1", status: "failed", error: "生成失败" }], 1200);
 

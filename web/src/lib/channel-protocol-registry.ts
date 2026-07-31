@@ -65,7 +65,7 @@ const seedanceSpecialOperation: ProtocolOperation = {
     capability: "video",
     createPath: "/v1/seedance-special/videos",
     imageToVideoPath: "/v1/seedance-special/videos",
-    queryPath: "/v1/result/:task_id",
+    queryPath: "/v1/videos/:task_id",
     requestTemplate: '{"model":"{{model}}","ratio":"{{ratio}}","duration":"{{duration}}","generate_audio":true,"return_last_frame":false,"seed":-1,"content":"{{content}}"}',
     resultField: "video_url",
     statusField: "status",

@@ -22,6 +22,7 @@ export type VideoTask = GenerationTaskContext & {
     polling?: { lastAttemptAt?: number; nextAttemptAt?: number };
     result?: { url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
     error?: string;
+    retryable?: boolean;
 };
 
 export async function createVideoTask(input: Omit<VideoTask, "id" | "status" | "createdAt" | "updatedAt">) {
@@ -42,14 +43,14 @@ export function claimVideoTaskPoll(id: string, intervalMs: number) {
 }
 
 export function completeReconciledVideoTask(id: string, result: NonNullable<VideoTask["result"]>) {
-    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "success", result, error: undefined } : null));
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "success", result, error: undefined, retryable: false } : null));
 }
 
-export function failReconciledVideoTask(id: string, error: string) {
-    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "error", result: undefined, error } : null));
+export function failReconciledVideoTask(id: string, error: string, retryable = false) {
+    return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => (canReconcileVideoTask(task) ? { ...task, status: "error", result: undefined, error, retryable } : null));
 }
 
-export function transitionVideoTask(task: VideoTask, patch: Partial<Pick<VideoTask, "result" | "error">> & { status: "success" | "error" | "cancelled" }) {
+export function transitionVideoTask(task: VideoTask, patch: Partial<Pick<VideoTask, "result" | "error" | "retryable">> & { status: "success" | "error" | "cancelled" }) {
     return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS);
 }
 

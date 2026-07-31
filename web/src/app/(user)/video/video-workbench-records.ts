@@ -31,6 +31,7 @@ export type GeneratedVideo = {
 export type GenerationFailure = {
     resultId: string;
     error: string;
+    canRetry?: boolean;
 };
 
 export type GenerationResult = {
@@ -38,6 +39,7 @@ export type GenerationResult = {
     status: "pending" | "success" | "failed";
     video?: GeneratedVideo;
     error?: string;
+    canRetry?: boolean;
 };
 
 export type GenerationLog = {
@@ -165,7 +167,7 @@ export async function serverVideoLogToWorkbenchLog(record: StoredGenerationLogRe
         taskResultId: pendingSlot?.id,
         video: videos[videos.length - 1],
         videos,
-        failures: (snapshot?.slots || []).flatMap((slot) => (slot.status === "failed" ? [{ resultId: slot.id, error: slot.error || record.error || "生成失败" }] : [])),
+        failures: (snapshot?.slots || []).flatMap((slot) => (slot.status === "failed" ? [{ resultId: slot.id, error: slot.error || record.error || "生成失败", canRetry: slot.canRetry === true }] : [])),
         requestSnapshot: snapshot,
         error: record.error,
         resultDeleted: !videos.length && record.status === "success",
@@ -279,7 +281,7 @@ export function serializeLog(log: GenerationLog): GenerationLog {
 export function resultsFromLog(log: GenerationLog): GenerationResult[] {
     if (log.resultDeleted) return [];
     const results: GenerationResult[] = (log.videos?.length ? log.videos : log.video ? [log.video] : []).map((video) => ({ id: video.slotId || video.id, status: "success", video }));
-    (log.failures || []).forEach((failure) => results.push({ id: failure.resultId, status: "failed", error: failure.error }));
+    (log.failures || []).forEach((failure) => results.push({ id: failure.resultId, status: "failed", error: failure.error, ...(failure.canRetry ? { canRetry: true } : {}) }));
     if (log.status === "生成中" && log.task) results.push({ id: log.taskResultId || log.id, status: "pending" });
     if (!results.length && log.error) results.push({ id: log.id, status: "failed", error: log.error });
     return results;
@@ -321,7 +323,7 @@ export function replaceResult(results: GenerationResult[], resultId: string, nex
 
 export function buildLogFromVideoResults(baseLog: GenerationLog | null, snapshot: GenerationSnapshot, results: GenerationResult[], durationMs: number, error?: string, pending?: { task: VideoGenerationTask; taskResultId: string }): GenerationLog {
     const videos = results.flatMap((result) => (result.status === "success" && result.video ? [result.video] : []));
-    const failures = results.flatMap((result) => (result.status === "failed" ? [{ resultId: result.id, error: result.error || error || "生成失败" }] : []));
+    const failures = results.flatMap((result) => (result.status === "failed" ? [{ resultId: result.id, error: result.error || error || "生成失败", canRetry: result.canRetry === true }] : []));
     const hasPending = results.some((result) => result.status === "pending");
     const status: GenerationLog["status"] = hasPending ? "生成中" : videos.length ? "成功" : "失败";
     const latestVideo = videos[videos.length - 1];
@@ -532,6 +534,7 @@ function mergeVideoRequestSnapshot(
             serverTaskId: task?.serverTaskId || previous?.serverTaskId,
             startedAt: task ? Date.now() : previous?.startedAt,
             error: result.status === "failed" ? result.error || error || previous?.error || "生成失败" : undefined,
+            canRetry: result.status === "failed" ? result.canRetry === true : undefined,
         };
         if (result.status === "success") assetIndex += 1;
         return slot;

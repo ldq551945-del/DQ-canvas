@@ -30,21 +30,26 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
+type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext };
 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    let body: CreateVideoTaskBody;
+    try {
+        body = await readJsonBody(request);
+    } catch (error) {
+        if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
+        throw error;
+    }
+    if (body.context?.clientRequestId) {
+        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, body.context.clientRequestId, body.context.attemptNo);
+        if (existing) return NextResponse.json({ task: publicTask(existing) });
+    }
     const rate = await checkGenerationRateLimit(user.id, request, "video");
     if (!rate.allowed) return NextResponse.json({ error: "视频生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
     const settings = await getAuthSettings();
-    const response = await withGenerationConcurrencyLimit(user.id, "video", 10 * 60 * 1000, settings.generationConcurrency.video, async () => {
-        let body: { config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext };
-        try {
-            body = await readJsonBody(request);
-        } catch (error) {
-            if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
-            throw error;
-        }
+    const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
         const requestedModel = typeof body.config?.model === "string" && body.config.model.trim() ? body.config.model : settings.defaultModels.videoModel;
         const channels = resolveLogicalModelCandidates(settings, "video", requestedModel).map(toSystemGenerationChannel);
         const prompt = String(body.prompt || "").trim();
@@ -56,10 +61,6 @@ export async function POST(request: Request) {
         const cookie = requestRuntimeCredential(request, user.id);
         const requestedParameters = resolveVideoGenerationParameters(body.config || {}, settings.generationDefaults);
         const billingRequestId = clean(body.context?.clientRequestId) || clean(request.headers.get("x-vozeb-pro-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
-        if (body.context?.clientRequestId) {
-            const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, body.context.clientRequestId, body.context.attemptNo);
-            if (existing) return NextResponse.json({ task: publicTask(existing) });
-        }
         let lastError: unknown;
         let capabilityError: unknown;
         let attempts: GenerationAttempt[] = [];
@@ -163,7 +164,7 @@ export async function POST(request: Request) {
                     await scheduleGenerationTask("video", localTask.id, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
                     return NextResponse.json({ task: { ...publicTask({ ...localTask, attempts }), needsReview: true }, warning: `${message}；上游创建结果待确认，系统不会自动重复创建。` }, { status: 202 });
                 }
-                await transitionVideoTask(localTask, { status: "error", error: message });
+                await transitionVideoTask(localTask, { status: "error", error: message, retryable: true });
                 await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
                 break;
             }
@@ -171,10 +172,10 @@ export async function POST(request: Request) {
         if (!lastError && capabilityError) return NextResponse.json({ error: capabilityError instanceof Error ? capabilityError.message : "当前渠道不支持参考素材" }, { status: 400 });
         if (localTask && lastError) {
             const message = toSafeGenerationErrorMessage(lastError, "视频任务创建失败");
-            await transitionVideoTask(localTask, { status: "error", error: message });
+            await transitionVideoTask(localTask, { status: "error", error: message, retryable: lastError instanceof SafeCandidateFailure });
             await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
         }
-        return NextResponse.json({ error: toSafeGenerationErrorMessage(lastError, "视频任务创建失败") }, { status: 502 });
+        return NextResponse.json({ error: toSafeGenerationErrorMessage(lastError, "视频任务创建失败"), canRetry: lastError instanceof SafeCandidateFailure }, { status: 502 });
     });
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });
 }
@@ -338,7 +339,7 @@ function proxyFetch(origin: string, baseUrl: string, path: string, cookie: strin
     return fetchInternalApi(`${origin}${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, { ...init, headers });
 }
 function publicTask(task: VideoTask) {
-    return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id || undefined, durationSeconds: task.requestedDurationSeconds };
+    return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id || undefined, durationSeconds: task.requestedDurationSeconds, canRetry: task.retryable === true };
 }
 function duration(value: unknown) {
     return resolveVideoDuration(value, 5);

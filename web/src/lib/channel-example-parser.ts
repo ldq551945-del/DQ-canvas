@@ -372,7 +372,7 @@ function inferReferenceRule(raw: string, kind: ExampleKind, protocol: SystemChan
 }
 
 function videoQueryPath(createPath: string) {
-    if (createPath === "/v1/seedance-special/videos") return "/v1/result/:task_id";
+    if (createPath === "/v1/seedance-special/videos") return "/v1/videos/:task_id";
     if (createPath === "/videos/videos") return "/result/:task_id";
     if (createPath === "/contents/generations/tasks") return "/contents/generations/tasks/:task_id";
     if (createPath === "/videos") return "/videos/:task_id";

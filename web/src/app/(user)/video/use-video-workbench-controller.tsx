@@ -26,6 +26,8 @@ import { referenceImageFromAsset, referenceVideoFromAsset, videoAssetData } from
 import { deleteGenerationLogs as deleteServerGenerationLogs } from "@/services/api/generation-logs";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
+import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
+import { VIDEO_GENERATION_WAIT_TIMEOUT_MS } from "@/services/api/video-types";
 import { deleteStoredMedia } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -327,7 +329,7 @@ export function useVideoWorkbenchController() {
                 if (throwOnFailure) throw error instanceof Error ? error : new Error(errorMessage);
                 return;
             }
-            const failedResults = startedResults.map((result) => (result.id === pendingResultId ? { id: pendingResultId, status: "failed" as const, error: errorMessage } : result));
+            const failedResults = startedResults.map((result) => (result.id === pendingResultId ? { id: pendingResultId, status: "failed" as const, error: errorMessage, canRetry: error instanceof GenerationTaskRequestError && error.canRetry } : result));
             const failedLog = { ...buildLogFromVideoResults(null, snapshot, failedResults, performance.now() - batchStartedAt, errorMessage), creativeConversationId: sharedConversationId };
             setActiveAgentRecordId(failedLog.id);
             activeLogIdRef.current = failedLog.id;
@@ -423,13 +425,18 @@ export function useVideoWorkbenchController() {
             message.error("找不到原任务记录，无法重试");
             return;
         }
+        const currentResults = resultsFromLog(currentLog);
+        const failedResult = currentResults.findLast((result) => result.status === "failed");
+        if (!failedResult?.canRetry) {
+            message.info(currentLog.task ? "原视频任务仍由后台继续查询，无需重新创建" : "当前错误未确认来自上游，系统不会重复创建任务");
+            if (currentLog.status === "生成中" && currentLog.task) scheduleVideoLog(currentLog);
+            return;
+        }
         if (currentVideoTaskCount() >= videoConcurrencyLimitRef.current) {
             message.warning("当前用户视频生成已达到并发上限，请稍后再试");
             return;
         }
-
-        const currentResults = resultsFromLog(currentLog);
-        const retryResultId = currentResults.findLast((result) => result.status === "failed")?.id || currentLog.taskResultId || currentLog.id;
+        const retryResultId = failedResult.id;
         const retrySnapshot = snapshotFromLog(currentLog, effectiveConfig, retryResultId);
         const retryModel = retrySnapshot.config.videoModel || retrySnapshot.config.model;
         if (!isAiConfigReady(retrySnapshot.config, retryModel)) {
@@ -464,7 +471,7 @@ export function useVideoWorkbenchController() {
         } catch (error) {
             finishStartingVideoTask();
             const errorMessage = error instanceof Error ? error.message : "生成失败";
-            const failedResults = replaceResult(pendingResults, retryResultId, { id: retryResultId, status: "failed", error: errorMessage });
+            const failedResults = replaceResult(pendingResults, retryResultId, { id: retryResultId, status: "failed", error: errorMessage, canRetry: error instanceof GenerationTaskRequestError && error.canRetry });
             const failedLog = buildLogFromVideoResults(currentLog, retrySnapshot, failedResults, (currentLog.durationMs || 0) + Date.now() - retryStartedAt, errorMessage);
             setPreviewLog(failedLog);
             setResults(failedResults);
@@ -646,10 +653,18 @@ export function useVideoWorkbenchController() {
         const taskConfig = buildVideoConfig(taskConfigSource, selectVideoModel(taskConfigSource, selectableModelsByCapability(taskConfigSource, "video"), log.task.model || log.model));
         const resultId = log.taskResultId || log.id;
         const snapshot = snapshotFromLog(log, taskConfig, resultId);
+        let continueInBackground = false;
         try {
-            for (let attempt = 0; attempt < 120; attempt += 1) {
+            const deadline = Date.now() + VIDEO_GENERATION_WAIT_TIMEOUT_MS;
+            while (Date.now() < deadline) {
                 if (deletedResultLogIdsRef.current.has(log.id)) return;
-                const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                let state;
+                try {
+                    state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+                } catch {
+                    await delay(10_000);
+                    continue;
+                }
                 if (state.status === "completed") {
                     if (deletedResultLogIdsRef.current.has(log.id)) return;
                     const stored = await storeGeneratedVideo(state.result);
@@ -678,23 +693,39 @@ export function useVideoWorkbenchController() {
                     message.success("视频已生成");
                     return;
                 }
-                if (state.status === "failed") throw new Error(state.error);
-                if (attempt === 119) throw new Error("视频生成超时，请稍后重试");
+                if (state.status === "failed") {
+                    const latestLog = getLatestLog(log.id) || log;
+                    const nextResults = replaceResult(resultsFromLog(latestLog), resultId, { id: resultId, status: "failed", error: state.error, canRetry: state.canRetry === true });
+                    const nextLog = buildLogFromVideoResults(latestLog, snapshot, nextResults, (latestLog.durationMs || 0) + Date.now() - (log.taskStartedAt || log.createdAt), state.error);
+                    if (activeLogIdRef.current === log.id) setResults(nextResults);
+                    await saveLog(nextLog);
+                    message.error(state.error);
+                    return;
+                }
                 await delay(log.task.provider === "seedance" ? 5000 : 2500);
             }
+            continueInBackground = true;
+            message.info("视频仍在后台生成，系统会继续查询原任务");
         } catch (error) {
             if (deletedResultLogIdsRef.current.has(log.id)) return;
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             const latestLog = getLatestLog(log.id) || log;
-            const nextResults = replaceResult(resultsFromLog(latestLog), resultId, { id: resultId, status: "failed", error: errorMessage });
-            const nextLog = buildLogFromVideoResults(latestLog, snapshot, nextResults, (latestLog.durationMs || 0) + Date.now() - (log.taskStartedAt || log.createdAt), errorMessage);
-            if (activeLogIdRef.current === log.id) setResults(nextResults);
-            await saveLog(nextLog);
-            message.error(errorMessage);
+            const pendingResults = replaceResult(resultsFromLog(latestLog), resultId, { id: resultId, status: "pending" });
+            const nextLog = buildLogFromVideoResults(latestLog, snapshot, pendingResults, latestLog.durationMs || 0, undefined, { task: log.task, taskResultId: resultId });
+            if (activeLogIdRef.current === log.id) setResults(pendingResults);
+            await saveLog(nextLog, { refresh: false });
+            continueInBackground = true;
+            message.warning(`${errorMessage}，后台将继续查询原视频任务`);
         } finally {
             activeLogIdsRef.current.delete(log.id);
             syncActiveVideoCount();
             startQueuedVideoLogs();
+            if (continueInBackground && !deletedResultLogIdsRef.current.has(log.id)) {
+                globalThis.setTimeout(() => {
+                    const latestLog = getLatestLog(log.id);
+                    if (latestLog?.status === "生成中" && latestLog.task) scheduleVideoLog(latestLog, configOverride);
+                }, 15_000);
+            }
         }
     };
 

@@ -345,7 +345,7 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
         const step = await queryVideoTaskUpstream(task, origin, cookie, cookie ? "" : task.userId);
         const now = Date.now();
         if (step.state === "failed") {
-            await failVideoTaskFromWorker(task, step.error);
+            await failVideoTaskFromWorker(task, step.error, true);
             await releaseGenerationTaskLease("video", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastPollAt: now, lastUpstreamStatus: step.status });
             return "failed";
         }

@@ -83,5 +83,5 @@ function sanitizeResult(result?: VideoTask["result"]) {
 }
 
 function publicTask(task: VideoTask) {
-    return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id, durationSeconds: task.requestedDurationSeconds, result: task.result, error: task.error };
+    return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id, durationSeconds: task.requestedDurationSeconds, result: task.result, error: task.error, canRetry: task.retryable === true };
 }

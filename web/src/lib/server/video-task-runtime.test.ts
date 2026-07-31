@@ -119,7 +119,7 @@ describe("video task upstream reconciliation", () => {
         const result = await refreshVideoTaskFromUpstream(task, "http://localhost", "session=test");
 
         expect(result).toEqual(failed);
-        expect(mocks.fail).toHaveBeenCalledWith(task.id, failed.error);
+        expect(mocks.fail).toHaveBeenCalledWith(task.id, failed.error, true);
         expect(mocks.refund).toHaveBeenCalledOnce();
         expect(mocks.normalize).not.toHaveBeenCalled();
     });
@@ -136,6 +136,52 @@ describe("video task upstream reconciliation", () => {
         expect(mocks.complete).not.toHaveBeenCalled();
         expect(mocks.fail).not.toHaveBeenCalled();
         expect(mocks.refund).not.toHaveBeenCalled();
+    });
+
+    it("recovers a completed New API video from the standard content endpoint when status queries are unavailable", async () => {
+        const task = videoTask();
+        mocks.fetchInternalApi.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+            if (String(url).endsWith(`/v1/videos/${task.upstream.id}/content`) && init?.method === "HEAD") {
+                return new Response(null, { status: 200, headers: { "content-type": "video/mp4" } });
+            }
+            return json({ error: { message: "not implemented" } }, 501);
+        });
+
+        await expect(queryVideoTaskUpstream(task, "http://localhost", "session=test")).resolves.toEqual({
+            state: "result_ready",
+            status: "completed",
+            resultUrl: `/v1/videos/${task.upstream.id}/content`,
+        });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledWith(`http://localhost${task.config.baseUrl}/v1/videos/${task.upstream.id}/content`, expect.objectContaining({ method: "HEAD" }));
+    });
+
+    it("ignores an HTML fallback page before probing the standard video content endpoint", async () => {
+        const task = videoTask();
+        mocks.fetchInternalApi.mockImplementation(async (url: string | URL | Request, init?: RequestInit) => {
+            if (String(url).endsWith(`/v1/videos/${task.upstream.id}/content`) && init?.method === "HEAD") {
+                return new Response(null, { status: 200, headers: { "content-type": "video/mp4" } });
+            }
+            return new Response("<!doctype html><title>New API</title>", { status: 200, headers: { "content-type": "text/html" } });
+        });
+
+        await expect(queryVideoTaskUpstream(task, "http://localhost", "session=test")).resolves.toMatchObject({
+            state: "result_ready",
+            resultUrl: `/v1/videos/${task.upstream.id}/content`,
+        });
+    });
+
+    it("does not apply the Seedance special content fallback to the official New API protocol", async () => {
+        const task = videoTask({
+            config: {
+                ...videoTask().config,
+                advancedConfig: { protocol: "newapi", queryPath: "/v1/videos/:task_id" } as NonNullable<VideoTask["config"]["advancedConfig"]>,
+            },
+        });
+        mocks.fetchInternalApi.mockResolvedValue(new Response("<!doctype html><title>New API</title>", { status: 200, headers: { "content-type": "text/html" } }));
+
+        await expect(queryVideoTaskUpstream(task, "http://localhost", "session=test")).rejects.toThrow("视频接口返回了无效 JSON");
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+        expect((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).method).toBeUndefined();
     });
 
     it("does not query upstream again before the polling interval elapses", async () => {
@@ -173,6 +219,6 @@ function videoTask(patch: Partial<VideoTask> = {}): VideoTask {
     };
 }
 
-function json(value: unknown) {
-    return Response.json(value);
+function json(value: unknown, status = 200) {
+    return Response.json(value, { status });
 }

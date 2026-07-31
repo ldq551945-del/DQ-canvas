@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
     transitionVideoTask: vi.fn(),
     updateVideoTask: vi.fn(),
     scheduleGenerationTask: vi.fn(),
+    withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, _limit, handler) => handler()),
 }));
 
 vi.mock("next/server", async (importOriginal) => {
@@ -30,7 +31,7 @@ vi.mock("@/lib/auth/store", () => {
 });
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi, resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/generation-task-store", () => ({
-    withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, _limit, handler) => handler()),
+    withGenerationConcurrencyLimit: mocks.withGenerationConcurrencyLimit,
     linkStoredGenerationTask: mocks.linkStoredGenerationTask,
     getStoredGenerationTaskByRequest: mocks.getStoredGenerationTaskByRequest,
 }));
@@ -107,6 +108,22 @@ describe("video generation candidate failover", () => {
         expect(payload.task).toMatchObject({ id: "local-task", model: "video", upstreamId: "upstream-two" });
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/one/"))).toBe(true);
         expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).includes("/api/ai/system/two/"))).toBe(true);
+    });
+
+    it("returns the original idempotent task before checking concurrency", async () => {
+        mocks.getStoredGenerationTaskByRequest.mockResolvedValueOnce({
+            id: "existing-task",
+            status: "running",
+            config: { model: "video-one", logicalModelId: "video" },
+            upstream: { id: "existing-upstream" },
+        });
+
+        const response = await POST(request({ model: "video" }, [], { clientRequestId: "same-request" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ task: { id: "existing-task", upstreamId: "existing-upstream" } });
+        expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
     it("does not retry another binding after an ambiguous 2xx response", async () => {

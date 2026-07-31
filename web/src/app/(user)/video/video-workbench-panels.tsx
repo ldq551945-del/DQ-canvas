@@ -142,7 +142,7 @@ export function PendingVideoCard() {
     return <WorkbenchGenerationPlaceholder kind="video" className="h-[144px] sm:aspect-video sm:h-auto" />;
 }
 
-export function FailedVideoCard({ error, selected, onSelectedChange, onRetry }: { error: string; selected?: boolean; onSelectedChange?: (checked: boolean) => void; onRetry: () => void }) {
+export function FailedVideoCard({ error, retryable, selected, onSelectedChange, onRetry }: { error: string; retryable?: boolean; selected?: boolean; onSelectedChange?: (checked: boolean) => void; onRetry: () => void }) {
     const failure = videoFailureDisplay(error);
     return (
         <div className="relative overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
@@ -154,11 +154,13 @@ export function FailedVideoCard({ error, selected, onSelectedChange, onRetry }: 
                     {error}
                 </Typography.Paragraph>
             </div>
-            <div className="flex justify-end border-t border-red-200 p-2 sm:p-3 dark:border-red-950">
-                <Button size="small" danger onClick={onRetry}>
-                    重试
-                </Button>
-            </div>
+            {retryable ? (
+                <div className="flex justify-end border-t border-red-200 p-2 sm:p-3 dark:border-red-950">
+                    <Button size="small" danger onClick={onRetry}>
+                        重试
+                    </Button>
+                </div>
+            ) : null}
         </div>
     );
 }

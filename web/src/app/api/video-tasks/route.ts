@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const rate = await checkGenerationRateLimit(user.id, request, "video");
     if (!rate.allowed) return NextResponse.json({ error: "视频任务请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
     const settings = await getAuthSettings();
-    const response = await withGenerationConcurrencyLimit(user.id, "video", 10 * 60 * 1000, settings.generationConcurrency.video, async () => {
+    const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
         let body: CreateVideoTaskBody;
         try {
             body = await readJsonBody(request);

@@ -1,10 +1,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useLayoutEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect } from "react";
 
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
+import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -163,6 +164,15 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.[taskField] && item.metadata.errorDetails === errorDetails ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING } } : item)));
         }, 30_000);
     };
+    const deferVideoTask = useCallback(
+        (nodeId: string) => {
+            setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
+            window.setTimeout(() => {
+                setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask && item.metadata.status === NODE_STATUS_LOADING ? { ...item, metadata: { ...item.metadata } } : item)));
+            }, 15_000);
+        },
+        [setNodes],
+    );
 
     useEffect(() => {
         if (userId) void hydrate();
@@ -254,11 +264,18 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                 .catch((error) => {
                     if (isGenerationCanceled(error)) return;
                     const errorDetails = error instanceof Error ? error.message : "视频生成失败";
-                    message.error(errorDetails);
-                    if (isGenerationTaskNeedsReviewError(error)) {
+                    const failureKind = classifyCanvasVideoTaskFailure(error);
+                    if (failureKind === "needs_review") {
+                        message.error(errorDetails);
                         deferReviewedTask(node.id, "videoTask", errorDetails);
                         return;
                     }
+                    if (failureKind === "query_pending") {
+                        message.info("视频仍在后台生成，系统会继续查询原任务");
+                        deferVideoTask(node.id);
+                        return;
+                    }
+                    message.error(errorDetails);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, videoTask: undefined } } : item)));
                 })
                 .finally(() => {
@@ -267,7 +284,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 });
         });
-    }, [completeVideoTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+    }, [completeVideoTask, deferVideoTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
         if (!projectLoaded) return;

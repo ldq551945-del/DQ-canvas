@@ -2,6 +2,7 @@ export class GenerationTaskRequestError extends Error {
     constructor(
         message: string,
         readonly status: number,
+        readonly canRetry = false,
     ) {
         super(message);
         this.name = "GenerationTaskRequestError";

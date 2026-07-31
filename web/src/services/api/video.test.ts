@@ -63,6 +63,17 @@ describe("video API service", () => {
         });
         expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    it("allows recreation only when the server confirms an upstream failure", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-failed", status: "error", error: "上游生成失败", canRetry: true } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(pollVideoGenerationTask(config, { id: "video-failed", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toEqual({
+            status: "failed",
+            error: "上游生成失败",
+            canRetry: true,
+        });
+    });
 });
 
 function json(value: unknown) {

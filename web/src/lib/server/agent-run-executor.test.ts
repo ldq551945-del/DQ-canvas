@@ -630,7 +630,7 @@ describe("executeAgentRun backend settings", () => {
             timeoutSpy.mockRestore();
         }
 
-        expect(timeoutCalls).toContain(60_000);
+        expect(timeoutCalls).toContain(3 * 60_000);
         expect(mocks.fetchInternalApi.mock.calls.map(([url]) => String(url))).toEqual([expect.stringMatching(/\/chat\/completions$/)]);
         expect(mocks.run?.status).toBe("failed");
         expect(mocks.events.some((event) => event.type === "run.completed")).toBe(false);

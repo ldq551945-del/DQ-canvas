@@ -40,7 +40,26 @@ export type ResolvedVideoMediaUrl = { url: string; remoteUrl?: string };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; serverTaskId?: string; durationSeconds?: number };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; canRetry?: boolean };
+
+export const VIDEO_GENERATION_WAIT_TIMEOUT_MS = 30 * 60_000;
+
+export class VideoGenerationUpstreamError extends Error {
+    readonly canRetry: boolean;
+
+    constructor(message: string, canRetry = true) {
+        super(message);
+        this.canRetry = canRetry;
+        this.name = "VideoGenerationUpstreamError";
+    }
+}
+
+export class VideoGenerationWaitTimeoutError extends Error {
+    constructor() {
+        super("视频仍在后台生成，系统会继续查询原任务");
+        this.name = "VideoGenerationWaitTimeoutError";
+    }
+}
 
 export const GLOBAL_AIOPC_VIDEO_CREATE_PATH = "/videos/videos";
 export const GLOBAL_AIOPC_VIDEO_RESULT_PATH = "/result";

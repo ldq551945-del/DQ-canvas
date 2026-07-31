@@ -40,8 +40,8 @@ export async function persistVideoTaskResult(task: VideoTask, resultUrl: string,
     return completeVideoTask(task, resultUrl, origin, cookie, workerUserId);
 }
 
-export async function failVideoTaskFromWorker(task: VideoTask, error: string) {
-    return failVideoTask(task, error);
+export async function failVideoTaskFromWorker(task: VideoTask, error: string, retryable = false) {
+    return failVideoTask(task, error, retryable);
 }
 
 function taskPollingPolicy(task: VideoTask) {
@@ -74,10 +74,10 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
     return completed || getVideoTask(task.id);
 }
 
-async function failVideoTask(task: VideoTask, error: string) {
+async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     const attempts = finishGenerationAttempt(task.attempts || [], task.attempts?.at(-1)?.attemptNo || 1, { status: "failed", error });
     await updateVideoTask(task.id, { attempts });
-    const failed = await failReconciledVideoTask(task.id, error);
+    const failed = await failReconciledVideoTask(task.id, error, retryable);
     if (failed && task.status === "running") await refundVideoTask(failed);
     return failed || getVideoTask(task.id);
 }
@@ -101,6 +101,7 @@ async function refundVideoTask(task: VideoTask) {
 async function queryVideoUpstream(task: VideoTask, origin: string, cookie: string, workerUserId = "") {
     const createPath = task.upstream.pollPath || "/video/generations";
     const preset = globalAiOpcPreset(task);
+    const seedanceSpecial = task.config.advancedConfig?.protocol === "seedance-special";
     const paths = preset?.queryPath
         ? [preset.queryPath.replace(/:(?:task_id|taskId|id)\b/g, encodeURIComponent(task.upstream.id))]
         : providerQueryPaths(task.config.advancedConfig, task.upstream.id, [
@@ -117,14 +118,52 @@ async function queryVideoUpstream(task: VideoTask, origin: string, cookie: strin
             cache: "no-store",
             signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)),
         });
+        if (seedanceSpecial && videoContentReady(response)) {
+            await response.body?.cancel().catch(() => undefined);
+            return { status: "completed", video_url: path };
+        }
         const text = await response.text();
         if (!response.ok) {
             lastError = readVideoProviderHttpError(text, response.status);
             continue;
         }
-        return parseVideoProviderJson(text);
+        try {
+            return parseVideoProviderJson(text);
+        } catch (error) {
+            if (!seedanceSpecial) throw error;
+            lastError = "视频查询接口返回了非 JSON 内容";
+        }
     }
+    const contentPath = seedanceSpecial ? await readyVideoContentPath(task, origin, cookie, workerUserId) : "";
+    if (contentPath) return { status: "completed", video_url: contentPath };
     throw new Error(lastError || "视频任务查询失败");
+}
+
+async function readyVideoContentPath(task: VideoTask, origin: string, cookie: string, workerUserId: string) {
+    const id = encodeURIComponent(task.upstream.id);
+    const paths = [`/v1/videos/${id}/content`, `/videos/${id}/content`];
+    for (const path of paths) {
+        const url = `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path}`;
+        const headers = workerUserId ? maintenanceWorkerHeaders(workerUserId) : { cookie };
+        const head = await fetchInternalApi(url, { method: "HEAD", headers, cache: "no-store", signal: AbortSignal.timeout(60_000) }).catch(() => null);
+        if (head && videoContentReady(head)) return path;
+        if (head && ![405, 501].includes(head.status)) continue;
+        const rangeHeaders = new Headers(headers);
+        rangeHeaders.set("range", "bytes=0-0");
+        const probe = await fetchInternalApi(url, { headers: rangeHeaders, cache: "no-store", signal: AbortSignal.timeout(60_000) }).catch(() => null);
+        if (!probe) continue;
+        const ready = videoContentReady(probe);
+        await probe.body?.cancel().catch(() => undefined);
+        if (ready) return path;
+    }
+    return "";
+}
+
+function videoContentReady(response: Response) {
+    if (!response.ok) return false;
+    const contentType = response.headers.get("content-type")?.toLowerCase() || "";
+    const disposition = response.headers.get("content-disposition")?.toLowerCase() || "";
+    return contentType.startsWith("video/") || contentType === "application/octet-stream" || /filename[^;]*\.(?:mp4|webm|mov|m4v)\b/.test(disposition);
 }
 
 function globalAiOpcPreset(task: VideoTask) {

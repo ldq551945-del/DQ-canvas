@@ -26,6 +26,7 @@ const loadAssetPickerModal = () => import("../components/asset-picker-modal").th
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { NODE_STATUS_ERROR, NODE_STATUS_IDLE, NODE_STATUS_LOADING, NODE_STATUS_SUCCESS, VIDEO_NODE_MAX_HEIGHT, VIDEO_NODE_MAX_WIDTH, createCanvasNode } from "./canvas-page-elements";
+import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
 import {
     buildAudioGenerationMetadata,
     buildGenerationConfig,
@@ -77,6 +78,15 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
     } = state;
     const { startGenerationRequest, finishGenerationRequest, completeVideoTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
     const { screenToCanvas, applyAgentOps } = interactions;
+    const deferVideoTask = useCallback(
+        (nodeId: string, errorDetails?: string, delayMs = 15_000) => {
+            setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails } } : item)));
+            window.setTimeout(() => {
+                setNodes((prev) => prev.map((item) => (item.id === nodeId && item.metadata?.videoTask && item.metadata.status === NODE_STATUS_LOADING ? { ...item, metadata: { ...item.metadata } } : item)));
+            }, delayMs);
+        },
+        [setNodes],
+    );
 
     const handleGenerateNode = useCallback(
         async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
@@ -425,10 +435,27 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                const videoTaskId = pendingChildIds.find((id) => nodesRef.current.find((item) => item.id === id)?.metadata?.videoTask);
+                const videoFailure = mode === "video" && videoTaskId ? classifyCanvasVideoTaskFailure(error) : undefined;
+                if (videoTaskId && videoFailure && videoFailure !== "upstream_failed") {
+                    if (videoFailure === "needs_review") {
+                        message.error(errorDetails);
+                        deferVideoTask(videoTaskId, errorDetails, 30_000);
+                    } else {
+                        message.info("视频仍在后台生成，系统会继续查询原任务");
+                        deferVideoTask(videoTaskId);
+                    }
+                    return;
+                }
+                const terminalVideoFailure = videoFailure === "upstream_failed";
                 message.error(errorDetails);
                 setNodes((prev) =>
                     prev.map((node) =>
-                        node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails, textTask: undefined } }) : node,
+                        node.id === nodeId || pendingChildIds.includes(node.id)
+                            ? node.id === nodeId && !markSourceStatus
+                                ? node
+                                : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails, textTask: undefined, ...(terminalVideoFailure ? { videoTask: undefined } : {}) } }
+                            : node,
                     ),
                 );
             } finally {
@@ -436,7 +463,21 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 setRunningNodeId(null);
             }
         },
-        [completeAudioTask, completeTextTask, completeVideoTask, currentProject?.creativeConversationId, effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startAndCompleteImageTask, startGenerationRequest],
+        [
+            completeAudioTask,
+            completeTextTask,
+            completeVideoTask,
+            currentProject?.creativeConversationId,
+            deferVideoTask,
+            effectiveConfig,
+            finishGenerationRequest,
+            isAiConfigReady,
+            message,
+            openConfigDialog,
+            projectId,
+            startAndCompleteImageTask,
+            startGenerationRequest,
+        ],
     );
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
@@ -571,6 +612,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             completeTextTask,
             completeVideoTask,
             currentProject?.creativeConversationId,
+            deferVideoTask,
             effectiveConfig,
             finishGenerationRequest,
             isAiConfigReady,

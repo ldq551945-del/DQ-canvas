@@ -8,9 +8,9 @@ describe("model request policy", () => {
         expect(resolveModelRequestTimeoutMs(undefined, "image")).toBe(10 * 60_000);
     });
 
-    it("keeps every text model attempt at one minute", () => {
-        expect(resolveModelRequestTimeoutMs({ capabilityProfile: { timeoutMs: 15_000 } }, "text")).toBe(60_000);
-        expect(resolveModelRequestTimeoutMs({ capabilityProfile: { timeoutMs: 8 * 60_000 } }, "text")).toBe(60_000);
+    it("keeps every text model attempt at three minutes", () => {
+        expect(resolveModelRequestTimeoutMs({ capabilityProfile: { timeoutMs: 15_000 } }, "text")).toBe(3 * 60_000);
+        expect(resolveModelRequestTimeoutMs({ capabilityProfile: { timeoutMs: 8 * 60_000 } }, "text")).toBe(3 * 60_000);
     });
 
     it("applies and bounds a binding timeout", () => {

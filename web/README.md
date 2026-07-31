@@ -1,23 +1,23 @@
-# web
+# Web 应用
 
-VOZEB PRO application source files for the user workbenches, Canvas, admin console, API routes, authentication, server storage, and generation task polling.
+该目录包含 VOZEB PRO 主应用，包括用户创作工作台、Canvas、短剧项目、管理后台、Route Handler、身份认证、服务端存储和生成任务 Worker。
 
-Run local development:
+## 本地开发
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Build for a low-memory server:
+## 生产构建
 
 ```bash
 NEXT_BUILD_CPUS=1 NODE_OPTIONS=--max-old-space-size=1024 pnpm build
 pnpm start:standalone
 ```
 
-The build command runs strict TypeScript checking in a separate process before the Next.js build, preventing both phases from sharing the same 1GB heap.
+构建脚本先在独立进程中执行严格 TypeScript 检查，再运行 Next.js 构建，避免两个阶段共用 1GB 堆内存。
 
-## Server data
+## 服务端数据
 
-PostgreSQL or the JSON Provider stores authenticated user conversations, Canvas projects, short dramas, library assets, workbench records, generation tasks, and Agent events. Images, videos, and audio are written to `VOZEB_PRO_DATA_DIR` using dated permanent or temporary directories. Keep the application data volume persistent in Docker and back it up with the database.
+PostgreSQL 或 JSON Provider 保存用户会话、Canvas、短剧、素材、工作台记录、生成任务和 Agent 事件。图片、视频与音频写入 `VOZEB_PRO_DATA_DIR`；Docker 部署必须持久化该目录，并与数据库一起备份。

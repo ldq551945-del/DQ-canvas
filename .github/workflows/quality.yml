@@ -41,6 +41,8 @@ jobs:
         run: pnpm run format:check
       - name: Production build
         run: pnpm run build
+        env:
+          NEXT_SKIP_BUILD_TYPECHECK: "1"
 
   docs:
     runs-on: ubuntu-latest

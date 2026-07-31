@@ -487,7 +487,7 @@ pnpm run dev
 | `web/src/lib/server/database/`              | PostgreSQL 表结构、参数化 Repository、查询映射和文件 Provider 回退         |
 | `web/src/components/` / `web/src/hooks/`    | 跨页面 UI、工作台控制器、素材选择、复制下载和会话交互                      |
 | `web/src/services/api/` / `web/src/stores/` | 浏览器访问本站 API 的类型化客户端，以及用户、主题、配置和素材瞬时状态      |
-| `web/scripts/`                              | standalone 启动、管理员密码重置和发布前检查脚本                            |
+| `web/scripts/`                              | 低内存生产构建、standalone 启动、生成 Worker、管理员密码重置和发布检查脚本 |
 | `web/public/`                               | 站点 Logo、浏览器图标和模型品牌图标                                        |
 | `docs/content/docs/`                        | 功能、安装、部署、数据库、商业准备、进度和排障文档                         |
 | `docs/public/screenshots/`                  | 用户端、公开页和管理后台的脱敏 WebP 功能截图                               |

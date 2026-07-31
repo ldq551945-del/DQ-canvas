@@ -4,6 +4,7 @@ import { Drawer } from "antd";
 import { CircleHelp } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef } from "react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { navigationGroups, navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -19,8 +20,15 @@ type MobileNavDrawerProps = {
 export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDrawerProps) {
     const pathname = usePathname();
     const router = useRouter();
+    const previousPathnameRef = useRef(pathname);
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
     const helpActive = pathname.startsWith("/help");
+
+    useEffect(() => {
+        if (previousPathnameRef.current === pathname) return;
+        previousPathnameRef.current = pathname;
+        onClose();
+    }, [onClose, pathname]);
 
     return (
         <Drawer

@@ -14,12 +14,17 @@ const repoRoot = path.resolve(webRoot, "..");
 describe("low-memory release type-check contract", () => {
     it("runs strict type-check once before the standalone build", () => {
         const releaseCheck = readFileSync(path.join(webRoot, "scripts/release-check.mjs"), "utf8");
+        const productionBuild = readFileSync(path.join(webRoot, "scripts/production-build.mjs"), "utf8");
+        const packageJson = JSON.parse(readFileSync(path.join(webRoot, "package.json"), "utf8"));
         const nextConfig = readFileSync(path.join(webRoot, "next.config.ts"), "utf8");
         const standaloneStart = readFileSync(path.join(webRoot, "scripts/start-standalone.mjs"), "utf8");
         const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
 
         expect(releaseCheck.indexOf('["run", "typecheck"]')).toBeLessThan(releaseCheck.indexOf('["run", "build"]'));
         expect(releaseCheck).toContain('NEXT_SKIP_BUILD_TYPECHECK: "1"');
+        expect(packageJson.scripts.build).toBe("node scripts/production-build.mjs");
+        expect(productionBuild.indexOf("node_modules/typescript/bin/tsc")).toBeLessThan(productionBuild.indexOf("node_modules/next/dist/bin/next"));
+        expect(productionBuild).toContain('NEXT_SKIP_BUILD_TYPECHECK: "1"');
         expect(releaseCheck).toContain("prepareStandaloneAssets");
         expect(nextConfig).toContain("typescript: { ignoreBuildErrors: skipBuildTypeCheck }");
         expect(standaloneStart).toContain('process.env.NEXT_DIST_DIR?.trim() || ".next"');

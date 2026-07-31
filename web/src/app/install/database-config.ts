@@ -16,9 +16,10 @@ type DatabaseConfig = {
     password: string;
     ssl: boolean;
     encryptionKey: string;
+    maintenanceToken: string;
 };
 
-export function generateEncryptionKey() {
+export function generateDeploymentSecret() {
     const bytes = new Uint8Array(32);
     globalThis.crypto.getRandomValues(bytes);
     return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -30,11 +31,13 @@ export function buildDeploymentSnippets(config: DatabaseConfig) {
     const database = config.database.trim() || "vozeb_pro";
     const username = config.username.trim() || "vozeb_pro";
     const databaseUrl = buildPostgresUrl({ database, host, password: config.password, port, username });
+    const databaseEnv = config.mode === "docker" ? `POSTGRES_DB=${database}\nPOSTGRES_USER=${username}\nPOSTGRES_PASSWORD=${config.password}` : `DATABASE_URL=${databaseUrl}`;
     const envText = `VOZEB_PRO_DATABASE_PROVIDER=postgres
-DATABASE_URL=${databaseUrl}
+${databaseEnv}
 VOZEB_PRO_DATABASE_POOL_MAX=10
 VOZEB_PRO_DATABASE_SSL=${config.ssl ? "1" : "0"}
-VOZEB_PRO_ENCRYPTION_KEY=${config.encryptionKey}${config.mode === "baota" ? "\nVOZEB_PRO_TRUSTED_PROXY_HOPS=1" : ""}`;
+VOZEB_PRO_ENCRYPTION_KEY=${config.encryptionKey}
+VOZEB_PRO_MAINTENANCE_TOKEN=${config.maintenanceToken}${config.mode === "baota" ? "\nVOZEB_PRO_TRUSTED_PROXY_HOPS=1" : ""}`;
 
     return {
         envText,
@@ -63,6 +66,11 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
       POSTGRES_PASSWORD: ${quoteYaml(config.password)}
     volumes:
       - vozeb-pro-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${username} -d ${database}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   app:
@@ -76,9 +84,14 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
       DATABASE_URL: ${quoteYaml(databaseUrl)}
       VOZEB_PRO_DATABASE_SSL: "0"
       VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+${appHealthcheck()}
     restart: unless-stopped
+
+${workerService(config.maintenanceToken, "http://app:3000")}
 
 volumes:
   vozeb-pro-data:
@@ -98,7 +111,11 @@ function externalCompose(config: DatabaseConfig, databaseUrl: string) {
       DATABASE_URL: ${quoteYaml(databaseUrl)}
       VOZEB_PRO_DATABASE_SSL: "${config.ssl ? "1" : "0"}"
       VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+${appHealthcheck()}
     restart: unless-stopped
+
+${workerService(config.maintenanceToken, "http://app:3000")}
 
 volumes:
   vozeb-pro-data:`;
@@ -116,11 +133,37 @@ function baotaCompose(config: DatabaseConfig, databaseUrl: string) {
       DATABASE_URL: ${quoteYaml(databaseUrl)}
       VOZEB_PRO_DATABASE_SSL: "0"
       VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
       VOZEB_PRO_TRUSTED_PROXY_HOPS: "1"
+${appHealthcheck()}
     restart: unless-stopped
+
+${workerService(config.maintenanceToken, "http://127.0.0.1:3000", true)}
 
 volumes:
   vozeb-pro-data:`;
+}
+
+function appHealthcheck() {
+    return `    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s`;
+}
+
+function workerService(maintenanceToken: string, origin: string, hostNetwork = false) {
+    return `  generation-worker:
+    image: ghcr.io/csyqlz/vozeb-pro:latest
+    command: ["node", "/app/web/scripts/generation-worker.mjs"]${hostNetwork ? "\n    network_mode: host" : ""}
+    environment:
+      VOZEB_PRO_WORKER_API_ORIGIN: ${origin}
+      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(maintenanceToken)}
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped`;
 }
 
 function buildPostgresUrl(input: { username: string; password: string; host: string; port: string; database: string }) {

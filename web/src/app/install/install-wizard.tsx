@@ -113,7 +113,7 @@ function IntroStep({ onNext }: { onNext: () => void }) {
 
             <div className="mt-7 overflow-hidden rounded-lg border border-slate-200/80 bg-white/75 shadow-sm">
                 <ProcessRow index="01" title="准备 PostgreSQL" text="本机使用 localhost；Docker 内置数据库使用 postgres；宝塔宿主机数据库使用 127.0.0.1；云数据库使用服务商连接地址。" />
-                <ProcessRow index="02" title="写入环境变量" text="安装页不会保存数据库密码。复制生成的配置后，写入 .env.local、Docker Compose 或服务器环境变量。" />
+                <ProcessRow index="02" title="写入部署配置" text="安装页不会保存数据库密码。复制的环境变量包含加密密钥与维护令牌，Compose 模板同时包含 App 和生成 Worker。" />
                 <ProcessRow index="03" title="让配置生效并初始化" text="根据所选部署方式执行页面给出的重启命令，等待服务恢复后刷新检查；连接成功后手动初始化表结构，再创建管理员。" last />
             </div>
 

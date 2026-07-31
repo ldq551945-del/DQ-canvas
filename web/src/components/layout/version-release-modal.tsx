@@ -5,15 +5,33 @@ import { Modal, Tag, Timeline } from "antd";
 import { useVersionCheck } from "@/hooks/use-version-check";
 import { APP_VERSION } from "@/constant/env";
 
-function getTagColor(type: string) {
-    if (type === "新增") return "green";
-    if (type === "修复") return "red";
-    if (type === "优化") return "cyan";
-    if (type === "调整") return "blue";
-    if (type === "二开") return "gold";
-    if (type === "致谢") return "volcano";
-    if (type === "文档") return "purple";
-    return "default";
+const releaseTagColors: Record<string, string> = {
+    Agent: "geekblue",
+    生成: "green",
+    上游: "cyan",
+    创作: "magenta",
+    "Canvas/短剧": "purple",
+    作品: "gold",
+    商业: "volcano",
+    后台: "blue",
+    界面: "lime",
+    安全: "red",
+    性能: "cyan",
+    工程: "geekblue",
+    安装: "orange",
+    发布: "orange",
+    "品牌/文档": "purple",
+    新增: "green",
+    修复: "red",
+    优化: "cyan",
+    调整: "blue",
+    二开: "gold",
+    致谢: "volcano",
+    文档: "purple",
+};
+
+export function getReleaseTagColor(type: string) {
+    return releaseTagColors[type] || "default";
 }
 
 function getReleaseTitle(version: string) {
@@ -81,7 +99,7 @@ export function VersionReleaseModal({ className, style, label }: VersionReleaseM
                                     <div className="mt-2 space-y-1.5">
                                         {release.items.map((item, index) => (
                                             <div key={`${release.version}-${index}`} className="flex items-start gap-2 text-sm leading-6 text-stone-700 dark:text-stone-300">
-                                                <Tag color={getTagColor(item.type)} className="m-0 mt-0.5 shrink-0 whitespace-nowrap">
+                                                <Tag color={getReleaseTagColor(item.type)} className="m-0 mt-0.5 shrink-0 whitespace-nowrap">
                                                     {item.type}
                                                 </Tag>
                                                 <span className="min-w-0 flex-1">{item.content}</span>

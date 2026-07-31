@@ -1,55 +1,37 @@
-# docs
+# 项目文档
 
-VOZEB PRO documentation site files, including public guides, deployment notes, and
-release support pages.
+该目录包含 VOZEB PRO 文档站，包括产品功能、安装部署、后台配置、接口与数据库、生产运维和项目治理说明。文档站基于 Next.js 与 Fumadocs，使用 standalone 方式运行，搜索等 Route Handler 在生产环境继续可用。
 
-This is a Next.js application generated with
-[Create Fumadocs](https://github.com/fuma-nama/fumadocs).
-
-It runs as a server-backed Next.js docs site and is configured for standalone
-output. Route handlers such as search and LLM text remain available at runtime.
-
-Run development server:
+## 本地开发
 
 ```bash
-bun run dev
+pnpm install
+pnpm dev
 ```
 
-Build and run local production server:
+## 生产构建
 
 ```bash
-bun run build
-bun run start
+pnpm build
+pnpm start
 ```
 
-Run the published image with Docker Compose:
+使用已发布镜像启动：
 
 ```bash
 docker compose up -d
 ```
 
-Or build locally with Docker Compose:
+本地构建镜像并启动：
 
 ```bash
 docker compose -f docker-compose.local.yml up -d --build
 ```
 
-## Explore
+## 目录职责
 
-In the project, you can see:
-
-- `lib/source.ts`: Code for content source adapter, `loader()` provides the interface to access your content.
-- `lib/layout.shared.tsx`: Shared options for layouts, optional but preferred to keep.
-
-| Route                     | Description                                            |
-| ------------------------- | ------------------------------------------------------ |
-| `app/(home)`              | The route group for your landing page and other pages. |
-| `app/docs`                | The documentation layout and pages.                    |
-| `app/api/search/route.ts` | The Route Handler for search.                          |
-
-### Fumadocs MDX
-
-A `source.config.ts` config file has been included, you can customise different
-options like frontmatter schema.
-
-Read the [Introduction](https://fumadocs.dev/docs/mdx) for further details.
+- `content/docs/`：公开文档正文与导航元数据。
+- `src/app/`：文档站页面、布局和搜索接口。
+- `src/lib/`：内容源、布局和站点配置。
+- `public/`：文档图片与公开静态资源。
+- `source.config.ts`：Fumadocs MDX 内容结构配置。

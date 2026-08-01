@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, type MouseEventHandler, type PointerEventH
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
 import { cn } from "@/lib/utils";
+import { CreativeAgentTextModelPicker } from "@/components/agent/creative-agent-controls";
 
 type SkillOption = {
     id: string;
@@ -36,6 +37,7 @@ export function CreativeComposer({
     models,
     selectedModels,
     smartPlanning,
+    agentModelId,
     uploading,
     onRemoveAttachment,
     onSelectSkill,
@@ -43,6 +45,7 @@ export function CreativeComposer({
     onToggleModel,
     onClearModels,
     onToggleSmartPlanning,
+    onAgentModelChange,
     centered = false,
 }: {
     inputRef: RefObject<TextAreaRef | null>;
@@ -60,6 +63,7 @@ export function CreativeComposer({
     models: ModelOption[];
     selectedModels: ModelOption[];
     smartPlanning: boolean;
+    agentModelId?: string;
     uploading: boolean;
     onRemoveAttachment: (id: string) => void;
     onSelectSkill: (skill: SkillOption) => void;
@@ -67,6 +71,7 @@ export function CreativeComposer({
     onToggleModel: (model: ModelOption) => void;
     onClearModels: () => void;
     onToggleSmartPlanning: () => void;
+    onAgentModelChange: (model: string) => void;
     centered?: boolean;
 }) {
     const [skillPickerOpen, setSkillPickerOpen] = useState(false);
@@ -268,6 +273,7 @@ export function CreativeComposer({
                             }}
                         />
                     </Tooltip>
+                    <CreativeAgentTextModelPicker value={agentModelId} onChange={onAgentModelChange} disabled={busy} disabledTitle="Agent 正在运行，暂时不能切换智能体模型" className="!size-9 !min-w-9 !text-[#6f7b89] dark:!text-[#96a0ac]" />
                     <Popover
                         trigger="click"
                         placement="topRight"
@@ -278,7 +284,9 @@ export function CreativeComposer({
                                 <div className="flex items-center justify-between gap-3 px-2 pb-3">
                                     <div className="min-w-0">
                                         <p className="text-sm font-semibold text-[#20242a] dark:text-[#f3f5f7]">生成模型</p>
-                                        <p className="mt-0.5 truncate text-[11px] text-[#8b949f] dark:text-[#7f8996]">{selectedModels.length ? `已选择 ${selectedModels.length} 个模型` : "默认由智能规划自动匹配"}</p>
+                                        <p className="mt-0.5 truncate text-[11px] text-[#8b949f] dark:text-[#7f8996]">
+                                            {selectedModels.length ? `已选择 ${selectedModels.length} 个模型` : smartPlanning ? "默认由智能规划自动匹配" : "未锁定媒体模型，由 Agent 自动匹配"}
+                                        </p>
                                     </div>
                                     <button
                                         type="button"

@@ -10,6 +10,7 @@ import { CreativeStoreConflict } from "@/lib/server/creative-runtime-store";
 import { resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 
 export async function GET(request: Request) {
     const user = await getCurrentUser(request);
@@ -39,6 +40,7 @@ export async function POST(request: Request) {
         const rate = await checkRateLimit(`agent-run:${user.id}`, { maxRequests: 10, windowMs: 60 * 1000 });
         if (!rate.allowed) return NextResponse.json({ code: 429, data: null, msg: "Agent 请求过于频繁，请稍后重试" }, { status: 429 });
         const settings = await getAuthSettings();
+        if (input.agentModelId && !resolveLogicalModelCandidates(settings, "text", input.agentModelId).length) throw new CreativeRuntimeInputError("所选智能体模型当前不可用，请重新选择");
         const response = await withGenerationConcurrencyLimit(user.id, "agent", 10 * 60 * 1000, settings.generationConcurrency.agent, async () => {
             const created = await createAgentRun(user.id, input);
             if (created.created) {

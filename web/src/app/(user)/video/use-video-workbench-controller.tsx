@@ -103,16 +103,19 @@ export function useVideoWorkbenchController() {
     } = useWorkbenchAgentSessions("video", userId);
     const [selectedSkill, setSelectedSkill] = useState<AgentSkillSummary>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [modelPickerRequest, setModelPickerRequest] = useState(0);
     const planningDefaultKeyRef = useRef("");
     const requestModelSelection = useCallback(() => {
         setModelPickerRequest((value) => value + 1);
-        message.warning("当前视频工作台未启用智能规划，请先选择视频模型");
+        message.info("智能规划已关闭，可选择视频模型锁定候选；不选择也可由 Agent 自动匹配");
     }, [message]);
     const resetPlanningToDefault = useCallback(
         (notify: boolean) => {
             setSelectedModelIds([]);
+            setSelectedSkill(undefined);
+            setSelectedAgentModelId("");
             setSmartPlanning(defaultSmartPlanning);
             if (!defaultSmartPlanning && notify) requestModelSelection();
         },
@@ -173,6 +176,7 @@ export function useVideoWorkbenchController() {
         setSelectedResultIds([]);
         setSelectedSkill(undefined);
         setSelectedModelIds([]);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
         syncActiveVideoCount();
         if (userId) void refreshLogs(userId);
@@ -348,6 +352,7 @@ export function useVideoWorkbenchController() {
         previousPrompt: lastAgentPrompt,
         models: videoModelOptions,
         modelIds: selectedModelIds,
+        agentModelId: selectedAgentModelId || undefined,
         skillIds: selectedSkill ? [selectedSkill.id] : [],
         smartPlanning,
         currentConfig: {
@@ -511,6 +516,7 @@ export function useVideoWorkbenchController() {
     };
 
     const selectSkill = (skill: AgentSkillSummary) => {
+        setSmartPlanning(false);
         const defaults = skill.defaultConfig || {};
         if (defaults.size !== undefined) updateConfig("size", String(defaults.size));
         if (defaults.videoSeconds !== undefined) updateConfig("videoSeconds", String(defaults.videoSeconds));
@@ -519,15 +525,17 @@ export function useVideoWorkbenchController() {
     };
 
     const selectVideoModelOption = (value: string) => {
+        setSmartPlanning(false);
         const selected = selectedModelIds.includes(value);
         const next = selected ? selectedModelIds.filter((id) => id !== value) : [...selectedModelIds, value].slice(-6);
         setSelectedModelIds(next);
         if (next.length) updateConfig("videoModel", selected ? next[0] : value);
-        setSmartPlanning(next.length === 0);
     };
 
     const enableSmartPlanning = () => {
         setSelectedModelIds([]);
+        setSelectedSkill(undefined);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
     };
 
@@ -752,11 +760,15 @@ export function useVideoWorkbenchController() {
         setLastAgentPrompt(session?.lastPrompt || publicPrompt);
         setSelectedSkill(undefined);
         resetPlanningToDefault(false);
+        setSmartPlanning(false);
         setReferences([]);
         setVideoReferences([]);
         setAudioReferences([]);
         const historyModel = selectVideoModel(effectiveConfig, videoModelOptions, log.config.videoModel || log.model);
-        if (historyModel) updateConfig("videoModel", historyModel);
+        if (historyModel) {
+            setSelectedModelIds([historyModel]);
+            updateConfig("videoModel", historyModel);
+        }
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.vquality) updateConfig("vquality", log.config.vquality);
         if (log.config.videoSeconds) updateConfig("videoSeconds", log.config.videoSeconds);
@@ -868,6 +880,8 @@ export function useVideoWorkbenchController() {
         selectedSkill,
         setSelectedSkill,
         selectedModelIds,
+        selectedAgentModelId,
+        setSelectedAgentModelId,
         smartPlanning,
         modelPickerRequest,
         setSmartPlanning,

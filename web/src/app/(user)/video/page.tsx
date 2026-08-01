@@ -107,6 +107,8 @@ export default function VideoPage() {
         selectedSkill,
         setSelectedSkill,
         selectedModelIds,
+        selectedAgentModelId,
+        setSelectedAgentModelId,
         smartPlanning,
         modelPickerRequest,
         setSmartPlanning,
@@ -259,14 +261,32 @@ export default function VideoPage() {
                             onLibrary={() => setAssetPickerOpen(true)}
                             settingsContent={
                                 <div className="grid grid-cols-2 gap-3">
-                                    <GenerationSettings config={effectiveConfig} model={model} updateConfig={updateConfig} openConfigDialog={openConfigDialog} hideModel />
+                                    <GenerationSettings
+                                        config={effectiveConfig}
+                                        model={model}
+                                        updateConfig={(key, value) => {
+                                            setSmartPlanning(false);
+                                            updateConfig(key, value);
+                                        }}
+                                        openConfigDialog={openConfigDialog}
+                                        hideModel
+                                    />
                                 </div>
                             }
                             skills={availableSkills}
                             selectedSkill={selectedSkill}
                             onSelectSkill={selectSkill}
-                            onRemoveSkill={() => setSelectedSkill(undefined)}
+                            onRemoveSkill={() => {
+                                setSmartPlanning(false);
+                                setSelectedSkill(undefined);
+                            }}
                             smartPlanning={smartPlanning}
+                            agentModelId={selectedAgentModelId}
+                            onAgentModelChange={(value) => {
+                                setSmartPlanning(false);
+                                setSelectedAgentModelId(value);
+                            }}
+                            agentModelDisabled={agentRunning}
                             modelPickerRequest={modelPickerRequest}
                             defaultModelCapability="video"
                             onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}

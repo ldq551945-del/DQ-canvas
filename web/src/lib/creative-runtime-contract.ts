@@ -127,6 +127,7 @@ export type CreativeRunRequest = {
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
+    agentModelId?: string;
 };
 
 export class CreativeRuntimeInputError extends Error {
@@ -157,6 +158,7 @@ export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest 
     const assetIds = Array.from(new Set((Array.isArray(input.assetIds) ? input.assetIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
     const skillIds = Array.from(new Set((Array.isArray(input.skillIds) ? input.skillIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
     const modelIds = Array.from(new Set((Array.isArray(input.modelIds) ? input.modelIds : []).map((item) => optionalText(item, MAX_ID)).filter((item): item is string => Boolean(item))));
+    const agentModelId = optionalText(input.agentModelId, MAX_ID);
     if (!clientRequestId) throw new CreativeRuntimeInputError("请求标识不能为空");
     if (!surface) throw new CreativeRuntimeInputError("创作入口不正确");
     if (!prompt) throw new CreativeRuntimeInputError("创作需求不能为空");
@@ -167,7 +169,7 @@ export function normalizeCreativeRunRequest(value: unknown): CreativeRunRequest 
     if (surface !== "chat" && !projectId) throw new CreativeRuntimeInputError(surface === "canvas" ? "画布标识不能为空" : "短剧项目标识不能为空");
     if (snapshot !== undefined && new TextEncoder().encode(JSON.stringify(snapshot)).length > MAX_SNAPSHOT_BYTES) throw new CreativeRuntimeInputError("当前项目快照过大", 413);
 
-    return { clientRequestId, surface, conversationId, projectId, prompt, snapshot, assetIds, skillIds, modelIds };
+    return { clientRequestId, surface, conversationId, projectId, prompt, snapshot, assetIds, skillIds, modelIds, agentModelId };
 }
 
 export function normalizeCreativeSurface(value: unknown): CreativeSurface | null {

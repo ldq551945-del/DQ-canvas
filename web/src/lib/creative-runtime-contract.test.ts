@@ -4,14 +4,30 @@ import { CreativeRuntimeInputError, isCreativeProjectHandoff, normalizeCreativeR
 
 describe("normalizeCreativeRunRequest", () => {
     it("normalizes a chat request and deduplicates assets", () => {
-        expect(normalizeCreativeRunRequest({ clientRequestId: " req-1 ", surface: "chat", prompt: " hello ", assetIds: ["a", "a", "b"], skillIds: ["character-design", "character-design"], modelIds: [" image-pro ", "image-pro", "video-pro"] })).toEqual({
+        expect(
+            normalizeCreativeRunRequest({
+                clientRequestId: " req-1 ",
+                surface: "chat",
+                prompt: " hello ",
+                assetIds: ["a", "a", "b"],
+                skillIds: ["character-design", "character-design"],
+                modelIds: [" image-pro ", "image-pro", "video-pro"],
+                agentModelId: " planner-pro ",
+            }),
+        ).toEqual({
             clientRequestId: "req-1",
             surface: "chat",
             prompt: "hello",
             assetIds: ["a", "b"],
             skillIds: ["character-design"],
             modelIds: ["image-pro", "video-pro"],
+            agentModelId: "planner-pro",
         });
+    });
+
+    it("limits and omits optional Agent model identifiers", () => {
+        expect(normalizeCreativeRunRequest({ ...validChatRequest(), agentModelId: `  ${"m".repeat(200)}  ` }).agentModelId).toHaveLength(160);
+        expect(normalizeCreativeRunRequest({ ...validChatRequest(), agentModelId: "   " }).agentModelId).toBeUndefined();
     });
 
     it("requires projects for canvas and drama", () => {
@@ -30,6 +46,10 @@ describe("normalizeCreativeRunRequest", () => {
         }
     });
 });
+
+function validChatRequest() {
+    return { clientRequestId: "request", surface: "chat", prompt: "hello" };
+}
 
 describe("isCreativeProjectHandoff", () => {
     it("accepts complete handoffs and rejects incomplete event payloads", () => {

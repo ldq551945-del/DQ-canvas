@@ -1,16 +1,123 @@
 "use client";
 
 import { Button, Popover, Tooltip } from "antd";
-import { Boxes, Check, FileAudio, FileVideo, ImageIcon, Lightbulb, Orbit, Sparkles, X } from "lucide-react";
+import { Bot, Boxes, Check, FileAudio, FileVideo, ImageIcon, Lightbulb, Orbit, Sparkles, X } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { ModelIcon } from "@/components/model-picker";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { cn } from "@/lib/utils";
+import { modelOptionLabel, selectableModelsByCapability, useEffectiveConfig } from "@/stores/use-config-store";
 
 export type CreativeAgentModelOption = { id: string; name: string; capability: "image" | "video" | "audio" };
 export type CreativeAgentControlTheme = { panel: string; border: string; text: string; muted: string; activeBackground: string; activeText: string };
 export const creativeAgentModelCapabilities = ["image", "video", "audio"] as const;
+
+export function CreativeAgentTextModelPicker({
+    value,
+    onChange,
+    disabled = false,
+    disabledTitle,
+    theme,
+    className,
+}: {
+    value?: string;
+    onChange: (model: string) => void;
+    disabled?: boolean;
+    disabledTitle?: string;
+    theme?: CreativeAgentControlTheme;
+    className?: string;
+}) {
+    const config = useEffectiveConfig();
+    const [open, setOpen] = useState(false);
+    const options = config.logicalModels.length ? config.logicalModels.filter((model) => model.enabled && model.capability === "text").map((model) => model.id) : selectableModelsByCapability(config, "text");
+    const selected = options.find((model) => model === value);
+    const defaultModel = config.textModel && options.includes(config.textModel) ? config.textModel : "";
+    const selectedLabel = selected ? modelOptionLabel(config, selected) : "";
+    const defaultLabel = defaultModel ? modelOptionLabel(config, defaultModel) : "未配置";
+    const tooltip = disabled ? disabledTitle || "当前不可切换智能体模型" : value ? `智能体模型：${selectedLabel || value}` : `智能体模型：跟随后台默认（${defaultLabel}）`;
+
+    useEffect(() => {
+        if (disabled) setOpen(false);
+    }, [disabled]);
+
+    const currentModel = selected || defaultModel;
+    const currentModelLabel = selectedLabel || defaultLabel;
+    const content = (
+        <div className="w-[calc(100vw-32px)] max-w-[360px] p-1">
+            <div className="thin-scrollbar max-h-60 space-y-1 overflow-y-auto">
+                <button
+                    type="button"
+                    className={cn(
+                        "flex min-h-14 w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs transition",
+                        !value ? "bg-stone-100 text-stone-950 dark:bg-stone-800 dark:text-white" : "text-stone-600 hover:bg-stone-50 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800/70 dark:hover:text-white",
+                    )}
+                    onClick={() => {
+                        onChange("");
+                        setOpen(false);
+                    }}
+                >
+                    <span className="grid size-7 shrink-0 place-items-center text-stone-600 dark:text-stone-200">
+                        <Bot className="size-3.5" />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold">跟随后台默认</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-stone-500 dark:text-stone-400">{defaultModel || "未配置默认文本模型"}</span>
+                    </span>
+                    <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">默认</span>
+                    {!value ? <Check className="size-3.5 shrink-0" /> : null}
+                </button>
+                {options.map((model) => {
+                    const active = model === value;
+                    return (
+                        <button
+                            key={model}
+                            type="button"
+                            className={cn(
+                                "flex min-h-14 w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs transition",
+                                active ? "bg-stone-100 text-stone-950 dark:bg-stone-800 dark:text-white" : "text-stone-600 hover:bg-stone-50 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800/70 dark:hover:text-white",
+                            )}
+                            onClick={() => {
+                                onChange(model);
+                                setOpen(false);
+                            }}
+                        >
+                            <span className="grid size-7 shrink-0 place-items-center text-stone-600 dark:text-stone-200">
+                                <ModelIcon model={`${model} ${modelOptionLabel(config, model)}`} />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold">{modelOptionLabel(config, model)}</span>
+                                <span className="mt-0.5 block truncate text-[11px] text-stone-500 dark:text-stone-400">{model}</span>
+                            </span>
+                            <span className="shrink-0 text-xs text-stone-500 dark:text-stone-400">文本渠道</span>
+                            {active ? <Check className="size-3.5 shrink-0" /> : null}
+                        </button>
+                    );
+                })}
+                {!options.length ? <p className="px-2 py-4 text-center text-xs text-stone-500 dark:text-stone-400">暂无可用文本模型</p> : null}
+            </div>
+        </div>
+    );
+    const mutedStyle = theme ? { color: theme.muted } : undefined;
+    const activeStyle = theme && value ? { background: theme.activeBackground, color: theme.activeText } : mutedStyle;
+
+    return (
+        <Popover trigger="click" placement="topLeft" open={open} onOpenChange={(nextOpen) => !disabled && setOpen(nextOpen)} content={content}>
+            <Tooltip title={tooltip}>
+                <Button
+                    type="text"
+                    shape="circle"
+                    disabled={disabled}
+                    className={cn("!h-8 !w-8 !min-w-8 !shrink-0 !p-0", value && !theme && "!bg-stone-100 !text-stone-950 dark:!bg-stone-800 dark:!text-white", className)}
+                    style={activeStyle}
+                    aria-label={tooltip}
+                >
+                    <span className="grid size-4 place-items-center">{currentModel ? <ModelIcon model={`${currentModel} ${currentModelLabel}`} /> : <Bot className="size-4" />}</span>
+                </Button>
+            </Tooltip>
+        </Popover>
+    );
+}
 
 export function CreativeAgentSkillCard({ skill, onRemove, theme, className }: { skill: AgentSkillSummary; onRemove: () => void; theme?: CreativeAgentControlTheme; className?: string }) {
     return (
@@ -48,6 +155,9 @@ export function CreativeAgentControls({
     onToggleModel,
     onClearModels,
     onSmartPlanningChange,
+    agentModelId,
+    onAgentModelChange,
+    agentModelDisabled = false,
     theme,
     compact = false,
     className,
@@ -65,6 +175,9 @@ export function CreativeAgentControls({
     onToggleModel: (model: CreativeAgentModelOption) => void;
     onClearModels: () => void;
     onSmartPlanningChange: (enabled: boolean) => void;
+    agentModelId?: string;
+    onAgentModelChange: (model: string) => void;
+    agentModelDisabled?: boolean;
     theme?: CreativeAgentControlTheme;
     compact?: boolean;
     className?: string;
@@ -127,7 +240,9 @@ export function CreativeAgentControls({
             <div className="flex items-center justify-between gap-3 px-2 pb-2 pt-1">
                 <div className="min-w-0">
                     <p className="text-sm font-semibold text-stone-900 dark:text-stone-100">选择生成模型</p>
-                    <p className="mt-0.5 truncate text-[11px] text-stone-500 dark:text-stone-400">{selectedModels.length ? `已选择 ${selectedModels.length} 个，最多 6 个` : smartPlanning ? "默认由智能规划自动匹配" : "手动模式需要选择生成模型"}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-stone-500 dark:text-stone-400">
+                        {selectedModels.length ? `已选择 ${selectedModels.length} 个，最多 6 个` : smartPlanning ? "默认由智能规划自动匹配" : "未锁定媒体模型，由 Agent 自动匹配"}
+                    </p>
                 </div>
                 <button
                     type="button"
@@ -148,7 +263,7 @@ export function CreativeAgentControls({
             </div>
             {selectedModels.length ? (
                 <div className="mb-2 flex items-center justify-between border-y border-stone-200/80 px-2 py-2 text-xs dark:border-stone-700">
-                    <span className="text-stone-500 dark:text-stone-400">手动模型会关闭智能规划</span>
+                    <span className="text-stone-500 dark:text-stone-400">手动模型会锁定媒体候选，Agent 仍负责规划</span>
                     <button type="button" className="font-medium text-stone-600 hover:text-stone-950 dark:text-stone-300 dark:hover:text-white" onClick={onClearModels}>
                         清空并恢复智能规划
                     </button>
@@ -237,6 +352,7 @@ export function CreativeAgentControls({
                     {compact ? null : <span className="text-xs">智能</span>}
                 </Button>
             </Tooltip>
+            <CreativeAgentTextModelPicker value={agentModelId} onChange={onAgentModelChange} disabled={agentModelDisabled} disabledTitle="Agent 正在运行，暂时不能切换智能体模型" theme={theme} />
             <Popover trigger="click" placement="top" open={modelOpen} onOpenChange={setModelOpen} content={modelContent}>
                 <Tooltip title={selectedModels.length ? `已选择 ${selectedModels.length} 个模型` : "选择生成模型"}>
                     <Button

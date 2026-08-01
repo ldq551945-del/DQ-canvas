@@ -91,16 +91,19 @@ export function useImageWorkbenchController() {
     } = useWorkbenchAgentSessions("image", userId);
     const [selectedSkill, setSelectedSkill] = useState<AgentSkillSummary>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [modelPickerRequest, setModelPickerRequest] = useState(0);
     const planningDefaultKeyRef = useRef("");
     const requestModelSelection = useCallback(() => {
         setModelPickerRequest((value) => value + 1);
-        message.warning("当前生图工作台未启用智能规划，请先选择图片模型");
+        message.info("智能规划已关闭，可选择图片模型锁定候选；不选择也可由 Agent 自动匹配");
     }, [message]);
     const resetPlanningToDefault = useCallback(
         (notify: boolean) => {
             setSelectedModelIds([]);
+            setSelectedSkill(undefined);
+            setSelectedAgentModelId("");
             setSmartPlanning(defaultSmartPlanning);
             if (!defaultSmartPlanning && notify) requestModelSelection();
         },
@@ -184,6 +187,7 @@ export function useImageWorkbenchController() {
         setMissingResultIds([]);
         setSelectedSkill(undefined);
         setSelectedModelIds([]);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
         if (userId) void refreshLogs(userId);
         else replaceLogs([]);
@@ -425,6 +429,7 @@ export function useImageWorkbenchController() {
         previousPrompt: lastAgentPrompt,
         models: selectableModelsByCapability(effectiveConfig, "image"),
         modelIds: selectedModelIds,
+        agentModelId: selectedAgentModelId || undefined,
         skillIds: selectedSkill ? [selectedSkill.id] : [],
         smartPlanning,
         currentConfig: {
@@ -530,6 +535,7 @@ export function useImageWorkbenchController() {
     };
 
     const selectSkill = (skill: AgentSkillSummary) => {
+        setSmartPlanning(false);
         const defaults = skill.defaultConfig || {};
         if (defaults.quality !== undefined) updateConfig("quality", String(defaults.quality));
         if (defaults.count !== undefined) updateConfig("count", String(defaults.count));
@@ -538,15 +544,17 @@ export function useImageWorkbenchController() {
     };
 
     const selectImageModel = (value: string) => {
+        setSmartPlanning(false);
         const selected = selectedModelIds.includes(value);
         const next = selected ? selectedModelIds.filter((id) => id !== value) : [...selectedModelIds, value].slice(-6);
         setSelectedModelIds(next);
         if (next.length) updateConfig("imageModel", selected ? next[0] : value);
-        setSmartPlanning(next.length === 0);
     };
 
     const enableSmartPlanning = () => {
         setSelectedModelIds([]);
+        setSelectedSkill(undefined);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
     };
 
@@ -641,9 +649,14 @@ export function useImageWorkbenchController() {
         setLastAgentPrompt(session?.lastPrompt || publicPrompt);
         setSelectedSkill(undefined);
         resetPlanningToDefault(false);
+        setSmartPlanning(false);
         setReferences([]);
         setSelectedResultIds([]);
-        if (currentLog.config.imageModel || currentLog.model) updateConfig("imageModel", currentLog.config.imageModel || currentLog.model);
+        const historyModel = selectableModelsByCapability(effectiveConfig, "image").find((value) => value === (currentLog.config.imageModel || currentLog.model));
+        if (historyModel) {
+            setSelectedModelIds([historyModel]);
+            updateConfig("imageModel", historyModel);
+        }
         if (currentLog.config.quality) updateConfig("quality", currentLog.config.quality);
         if (currentLog.config.size) updateConfig("size", currentLog.config.size);
         updateConfig("count", "1");
@@ -811,6 +824,8 @@ export function useImageWorkbenchController() {
         selectedSkill,
         setSelectedSkill,
         selectedModelIds,
+        selectedAgentModelId,
+        setSelectedAgentModelId,
         smartPlanning,
         modelPickerRequest,
         setSmartPlanning,

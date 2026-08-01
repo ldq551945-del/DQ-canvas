@@ -24,6 +24,7 @@ export async function POST(request: Request) {
     const submittedSkills = Array.isArray(body.skillIds) ? body.skillIds : [];
     if (!prompt) return NextResponse.json({ code: 400, data: null, msg: "创作需求不能为空" }, { status: 400 });
     if (body.requestId !== undefined && (typeof body.requestId !== "string" || !/^[a-zA-Z0-9_-]{1,160}$/.test(body.requestId))) return NextResponse.json({ code: 400, data: null, msg: "Agent 请求标识无效" }, { status: 400 });
+    if (body.agentModelId !== undefined && (typeof body.agentModelId !== "string" || !/^[a-zA-Z0-9._:/-]{1,160}$/.test(body.agentModelId.trim()))) return NextResponse.json({ code: 400, data: null, msg: "智能体模型标识无效" }, { status: 400 });
     if (prompt.length > 4000 || String(body.previousPrompt || "").length > 8000 || String(body.conversationId || "").length > 160 || submittedModels.length > 100 || selectedModels.length > 6 || submittedSkills.length > 8)
         return NextResponse.json({ code: 400, data: null, msg: "Agent 请求内容过长" }, { status: 400 });
 

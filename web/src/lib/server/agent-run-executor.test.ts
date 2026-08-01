@@ -171,36 +171,50 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.status).toBe("completed");
     });
 
-    it("runs an explicitly selected generation model without a default text model", async () => {
-        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "生成商品主图", requestedModelIds: ["image-model"] });
-        const manualSettings = settings("image-model", "image-channel") as unknown as {
+    it("keeps Agent planning for an explicitly selected generation model without a default text model", async () => {
+        mocks.run = runFixture({ surface: "chat", projectId: undefined, prompt: "生成商品主图", requestedModelIds: ["image-model"], requestedAgentModelId: "planner-pro" });
+        const manualSettings = settingsWithSelectedPlanner("image-model", "image-channel") as unknown as {
             defaultModels: { textModel: string };
-            systemChannels: Array<{ id: string }>;
-            logicalModels: Array<{ capability: string }>;
         };
         manualSettings.defaultModels.textModel = "";
-        manualSettings.systemChannels = manualSettings.systemChannels.filter((channel) => channel.id !== "planner-channel");
-        manualSettings.logicalModels = manualSettings.logicalModels.filter((model) => model.capability !== "text");
         mocks.getAuthSettings.mockResolvedValue(manualSettings as never);
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (String(url).endsWith("/responses") || String(url).endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(canvasPlan("foreign-image")) }] });
+            if (init?.method === "POST") return Response.json({ task: { id: "child-manual" } });
+            if (url.includes("/api/image-tasks/")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/output.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
-        expect(mocks.getCreativeConversationContext).not.toHaveBeenCalled();
-        expect(mocks.listRecentCreativeMediaAssets).not.toHaveBeenCalled();
-        expect(mocks.fetchInternalApi.mock.calls.some(([url]) => String(url).endsWith("/responses") || String(url).endsWith("/chat/completions"))).toBe(false);
+        const planningCall = mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/responses") || String(url).endsWith("/chat/completions"));
+        const planningBody = JSON.parse(String((planningCall?.[1] as RequestInit | undefined)?.body)) as { messages?: Array<{ role: string; content: string }> };
+        const planningInput = JSON.parse(planningBody.messages?.find((message) => message.role === "user")?.content || "{}") as { requestedModelIds?: string[]; availableModels?: Array<{ id: string; name: string; capability: string }> };
+        expect(planningInput.requestedModelIds).toEqual(["image-model"]);
+        expect(planningInput.availableModels?.filter((model) => model.capability === "image")).toEqual([{ id: "image-model", name: "图片", capability: "image" }]);
         expect(mocks.fetchInternalApi.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).endsWith("/api/image-tasks"))).toBe(true);
+        expect(mocks.run?.tasks[0]?.model).toBe("image-model");
         expect(mocks.run?.status).toBe("completed");
     });
 
     it("creates Canvas plan nodes when a generation model is selected explicitly", async () => {
         mocks.run = runFixture({ surface: "canvas", prompt: "生成商品主图", requestedModelIds: ["image-model"] });
         mocks.getAuthSettings.mockResolvedValue(settings("image-model", "image-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (String(url).endsWith("/responses") || String(url).endsWith("/chat/completions")) return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(canvasPlan("foreign-image")) }] });
+            if (init?.method === "POST") return Response.json({ task: { id: "child-canvas" } });
+            if (url.includes("/api/image-tasks/")) return Response.json({ task: { status: "success", result: { url: "https://cdn.example.com/output.png" } } });
+            throw new Error(`unexpected request: ${url}`);
+        });
 
         await executeAgentRun(mocks.run, "http://localhost", "session=test");
 
         expect(mocks.events.find((event) => event.type === "run.planned")).toBeUndefined();
         expect(mocks.events.find((event) => event.type === "canvas.ops")?.data).toMatchObject({
             ops: expect.arrayContaining([expect.objectContaining({ type: "add_node", id: "task-agent-run-0", nodeType: "task" }), expect.objectContaining({ type: "add_node", id: "output-agent-run-0-0", nodeType: "image" })]),
+        });
+        expect(mocks.events.find((event) => event.type === "canvas.ops")?.data).toMatchObject({
+            ops: expect.arrayContaining([expect.objectContaining({ type: "add_node", id: "task-agent-run-0", metadata: expect.objectContaining({ model: "image-model" }) })]),
         });
         expect(mocks.run?.status).toBe("completed");
     });
@@ -589,6 +603,37 @@ describe("executeAgentRun backend settings", () => {
         expect(mocks.run?.status).toBe("completed");
         expect(mocks.events.find((event) => event.type === "run.completed")?.data).toMatchObject({ completed: 0, reply: "在的，你可以直接告诉我想创作什么。" });
         expect(mocks.refundUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("uses the persisted explicitly selected Agent model when planning", async () => {
+        mocks.run = { ...planningRun("你在吗？"), requestedAgentModelId: "planner-pro" };
+        mocks.getAuthSettings.mockResolvedValue(settingsWithSelectedPlanner("image-default", "image-default-channel"));
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url.includes("/selected-planner-channel/") && url.endsWith("/chat/completions"))
+                return Response.json({ output: [{ type: "function_call", name: "create_agent_plan", arguments: JSON.stringify(conversationPlan("image-default", "已使用指定智能体。")) }] });
+            throw new Error(`unexpected request: ${url}`);
+        });
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        const planningCall = mocks.fetchInternalApi.mock.calls.find(([url]) => String(url).endsWith("/chat/completions"));
+        const body = JSON.parse(String(planningCall?.[1]?.body)) as { model: string };
+        expect(planningCall?.[0]).toContain("/api/ai/system/selected-planner-channel/chat/completions");
+        expect(body.model).toBe("vendor/planner-pro");
+        expect(mocks.run?.status).toBe("completed");
+        expect(mocks.run?.requestedAgentModelId).toBe("planner-pro");
+    });
+
+    it("fails clearly when the persisted explicitly selected Agent model is no longer available", async () => {
+        mocks.run = { ...planningRun(), requestedAgentModelId: "removed-planner" };
+        mocks.getAuthSettings.mockResolvedValue(canvasSettings("image-default", "image-default-channel"));
+
+        await executeAgentRun(mocks.run, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.run?.status).toBe("failed");
+        expect(mocks.events.find((event) => event.type === "run.failed")?.data).toEqual({ message: "所选智能体模型当前不可用，请重新选择" });
+        expect(mocks.run?.requestedAgentModelId).toBe("removed-planner");
     });
 
     it("rejects an unstructured prose planner response instead of pretending generation completed", async () => {
@@ -1035,6 +1080,22 @@ function plannerFailoverSettings(imageModel: string, channelId: string) {
         { id: "planner-primary-binding", channelId: "planner-primary", upstreamModel: "vendor/planner-primary", enabled: true, priority: 1 },
         { id: "planner-backup-binding", channelId: "planner-backup", upstreamModel: "vendor/planner-backup", enabled: true, priority: 2 },
     ];
+    return value as never;
+}
+
+function settingsWithSelectedPlanner(imageModel: string, channelId: string) {
+    const value = settings(imageModel, channelId) as unknown as {
+        systemChannels: Array<{ id: string; name: string; enabled: boolean; baseUrl: string; apiKey: string; models: string[] }>;
+        logicalModels: Array<{ id: string; name: string; capability: string; enabled: boolean; bindings: Array<{ id: string; channelId: string; upstreamModel: string; enabled: boolean; priority: number }> }>;
+    };
+    value.systemChannels.push({ id: "selected-planner-channel", name: "指定智能体", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "selected-planner-secret", models: ["vendor/planner-pro"] });
+    value.logicalModels.push({
+        id: "planner-pro",
+        name: "指定智能体",
+        capability: "text",
+        enabled: true,
+        bindings: [{ id: "selected-planner-binding", channelId: "selected-planner-channel", upstreamModel: "vendor/planner-pro", enabled: true, priority: 1 }],
+    });
     return value as never;
 }
 

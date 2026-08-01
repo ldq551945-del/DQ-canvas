@@ -32,6 +32,7 @@ type PendingDramaSubmission = {
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
+    agentModelId?: string;
     temporaryUserId: string;
     temporaryAssistantId: string;
     snapshot: ReturnType<typeof dramaSnapshot>;
@@ -63,6 +64,7 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
     const [prompt, setPrompt] = useState("");
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
     const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [loading, setLoading] = useState(true);
@@ -151,6 +153,7 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                 assetIds: submission.assetIds,
                 skillIds: submission.skillIds,
                 modelIds: submission.modelIds,
+                agentModelId: submission.agentModelId,
                 snapshot: submission.snapshot,
             });
             failedSubmissionsRef.current.delete(submission.temporaryAssistantId);
@@ -200,6 +203,10 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
     const submit = async () => {
         const content = prompt.trim();
         if (!content || sending || submittingRef.current || uploading) return;
+        if (!smartPlanning && selectedModelIds.length === 0 && models.length === 0) {
+            message.warning("当前没有可用媒体模型，请联系管理员配置");
+            return;
+        }
         submittingRef.current = true;
         setPrompt("");
         setSending(true);
@@ -215,6 +222,7 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
             assetIds,
             skillIds: selectedSkillId ? [selectedSkillId] : [],
             modelIds: smartPlanning ? [] : selectedModelIds,
+            agentModelId: selectedAgentModelId || undefined,
             temporaryUserId,
             temporaryAssistantId,
             snapshot: dramaSnapshot(project, episode),
@@ -249,15 +257,17 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
     };
 
     const toggleModel = (model: CreativeAgentModelOption) => {
+        setSmartPlanning(false);
         setSelectedModelIds((current) => {
             const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id].slice(-6);
-            setSmartPlanning(next.length === 0);
             return next;
         });
     };
 
     const enableSmartPlanning = () => {
         setSelectedModelIds([]);
+        setSelectedSkillId(undefined);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
     };
 
@@ -330,7 +340,16 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                 <div ref={endRef} />
             </div>
             <div className="m-3 min-w-0 shrink-0 rounded-lg border border-border bg-background p-2 shadow-[0_8px_24px_rgba(15,23,42,.08)]">
-                {selectedSkill ? <CreativeAgentSkillCard skill={selectedSkill} onRemove={() => setSelectedSkillId(undefined)} className="pb-1" /> : null}
+                {selectedSkill ? (
+                    <CreativeAgentSkillCard
+                        skill={selectedSkill}
+                        onRemove={() => {
+                            setSmartPlanning(false);
+                            setSelectedSkillId(undefined);
+                        }}
+                        className="pb-1"
+                    />
+                ) : null}
                 {selectedAssets.length ? (
                     <div className="thin-scrollbar flex gap-2 overflow-x-auto px-1 pb-2">
                         {selectedAssets.map((asset) => {
@@ -395,10 +414,19 @@ function DramaAgentContent({ project, episode, onConversationChange }: { project
                             models={models}
                             selectedModels={selectedModels}
                             smartPlanning={smartPlanning}
-                            onSelectSkill={(skill) => setSelectedSkillId(skill.id)}
+                            agentModelId={selectedAgentModelId}
+                            agentModelDisabled={sending}
+                            onSelectSkill={(skill) => {
+                                setSmartPlanning(false);
+                                setSelectedSkillId(skill.id);
+                            }}
                             onToggleModel={toggleModel}
                             onClearModels={enableSmartPlanning}
                             onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}
+                            onAgentModelChange={(model) => {
+                                setSmartPlanning(false);
+                                setSelectedAgentModelId(model);
+                            }}
                         />
                     </div>
                     {sending && runId ? (

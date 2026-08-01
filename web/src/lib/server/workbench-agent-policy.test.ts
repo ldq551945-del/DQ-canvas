@@ -20,6 +20,16 @@ describe("workbench agent policy", () => {
         expect(trusted.hasReferences).toBe(true);
     });
 
+    it("keeps only a resolvable text model as the smart-planning agent model", () => {
+        const plannerSettings = structuredClone(settings);
+        plannerSettings.systemChannels[0].models.push("vendor/planner");
+        plannerSettings.logicalModels.push({ id: "planner-pro", name: "专业规划模型", capability: "text", enabled: true, bindings: [{ id: "planner-pro", channelId: "basic", upstreamModel: "vendor/planner", enabled: true, priority: 1 }] });
+
+        expect(buildTrustedWorkbenchBody(plannerSettings, { agentModelId: " planner-pro " }).agentModelId).toBe("planner-pro");
+        expect(buildTrustedWorkbenchBody(plannerSettings, { agentModelId: "image-basic" }).agentModelId).toBeUndefined();
+        expect(buildTrustedWorkbenchBody(plannerSettings, { agentModelId: "planner-pro", smartPlanning: false }).agentModelId).toBe("planner-pro");
+    });
+
     it("honors model binding capability limits over a broad channel declaration", () => {
         const restricted = structuredClone(settings);
         const model = restricted.logicalModels.find((item) => item.id === "video-image-audio");
@@ -74,6 +84,30 @@ describe("workbench agent policy", () => {
         expect(result.decisions).toContainEqual(expect.objectContaining({ label: "模型", value: "基础图片模型", reason: "按你在输入区手动选择的模型执行" }));
     });
 
+    it("keeps a manual multi-model plan inside the selected media model set", () => {
+        const plannerSettings = structuredClone(settings);
+        plannerSettings.systemChannels[0].models.push("vendor/image-alt");
+        plannerSettings.logicalModels.push({ id: "image-alt", name: "备用图片模型", capability: "image", enabled: true, bindings: [{ id: "image-alt", channelId: "basic", upstreamModel: "vendor/image-alt", enabled: true, priority: 2 }] });
+        const body = buildTrustedWorkbenchBody(plannerSettings, {
+            workspace: "image",
+            smartPlanning: false,
+            modelIds: ["image-basic", "image-alt"],
+            currentConfig: { imageModel: "image-basic", size: "1:1", quality: "high", count: 1 },
+        });
+        const result = finalizeWorkbenchPlan(plan({ model: "foreign-model", size: "1:1", quality: "high", count: 1 }), {
+            body,
+            prompt: "生成商品图",
+            workspace: "image",
+            skillIds: [],
+            referenceRequired: false,
+            planOnly: false,
+            conversationOnly: false,
+        });
+
+        expect(result.parameterPatch.model).toBe("image-basic");
+        expect(result.decisions).toContainEqual(expect.objectContaining({ label: "模型", value: "基础图片模型", reason: "按你在输入区手动选择的模型范围执行" }));
+    });
+
     it("keeps exact custom dimensions ahead of the planner and reference ratio", () => {
         const result = finalizeWorkbenchPlan(plan({ model: "image-basic", size: "16:9", quality: "high", count: 1 }), {
             body: { workspace: "image", currentConfig: { size: "1824x1024", referenceAspectRatio: "9:16" }, hasReferences: true, referenceTypes: ["image"] },
@@ -117,7 +151,7 @@ describe("workbench agent policy", () => {
         expect(result.parameterPatch.size).toBe("1824x1024");
     });
 
-    it("does not turn a missing manual selection into the current default model", () => {
+    it("keeps Agent media planning available when manual mode has no explicit lock", () => {
         const trusted = buildTrustedWorkbenchBody(settings, {
             workspace: "image",
             smartPlanning: false,
@@ -126,8 +160,9 @@ describe("workbench agent policy", () => {
 
         expect(trusted.smartPlanning).toBe(false);
         expect(trusted.modelIds).toEqual([]);
-        expect(trusted.models).toEqual([]);
-        expect(trusted.currentConfig).toMatchObject({ imageModel: "" });
+        expect(trusted.models).toEqual(["image-basic"]);
+        expect(trusted.modelOptions).toEqual([{ id: "image-basic", name: "基础图片模型" }]);
+        expect(trusted.currentConfig).toMatchObject({ imageModel: "image-basic" });
     });
 
     it("restricts manual multi-model planning to trusted selected models", () => {

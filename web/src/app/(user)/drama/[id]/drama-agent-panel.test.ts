@@ -15,9 +15,19 @@ describe("Drama project Agent references", () => {
         const source = await readFile(resolve(process.cwd(), "src/app/(user)/drama/[id]/drama-agent-panel.tsx"), "utf8");
 
         expect(source).toContain("clientRequestId: submission.clientRequestId");
+        expect(source).toContain("agentModelId: submission.agentModelId");
         expect(source).toContain("failedSubmissionsRef.current.get(assistantMessageId)");
         expect(source).toContain('aria-label="重试本次项目 Agent 请求"');
         expect(source).toContain("metadata: { assetIds }");
         expect(source).toMatch(/messageAssetIds\(message\)\s*\.filter/);
+    });
+
+    it("submits the selected Agent text model and resets it when smart planning resumes", async () => {
+        const source = await readFile(resolve(process.cwd(), "src/app/(user)/drama/[id]/drama-agent-panel.tsx"), "utf8");
+
+        expect(source).toContain("agentModelId: selectedAgentModelId || undefined");
+        expect(source).toContain("agentModelId={selectedAgentModelId}");
+        expect(source).toContain("onAgentModelChange={(model) =>");
+        expect(source).toContain('setSelectedAgentModelId("")');
     });
 });

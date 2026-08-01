@@ -53,6 +53,33 @@ describe("workbench agent model routing", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
+    it("rejects an invalid agent model identifier before loading settings", async () => {
+        const response = await POST(workbenchRequest({ prompt: "生成商品图", workspace: "image", agentModelId: "planner model" }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ data: null, msg: "智能体模型标识无效" });
+        expect(mocks.getAuthSettings).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-text or unavailable agent model", async () => {
+        const unavailableSettings = alternatePlannerSettings();
+        mocks.getAuthSettings.mockResolvedValue({
+            ...unavailableSettings,
+            logicalModels: [
+                ...unavailableSettings.logicalModels,
+                { id: "disabled-planner", name: "停用规划模型", capability: "text", enabled: false, bindings: [{ id: "disabled-planner-binding", channelId: "main", upstreamModel: "vendor/planner", enabled: true, priority: 1 }] },
+                { id: "orphan-planner", name: "无渠道规划模型", capability: "text", enabled: true, bindings: [{ id: "orphan-planner-binding", channelId: "missing", upstreamModel: "vendor/planner", enabled: true, priority: 1 }] },
+            ],
+        });
+
+        for (const agentModelId of ["image-logical", "disabled-planner", "orphan-planner"]) {
+            const response = await POST(workbenchRequest({ prompt: "生成商品图", workspace: "image", agentModelId }));
+            expect(response.status).toBe(400);
+            expect(await response.json()).toMatchObject({ data: null, msg: "所选智能体模型当前不可用，请重新选择" });
+        }
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
     it("uses only resolvable backend logical models for planning and fallback", async () => {
         const response = await POST(
             new Request("http://localhost/api/agent/workbench", {
@@ -89,6 +116,24 @@ describe("workbench agent model routing", () => {
         expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
         expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^workbench-plan:[a-f0-9]{32}:chat-json$/);
         expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it("uses the selected agent model for routing, billing, and idempotency", async () => {
+        mocks.getAuthSettings.mockResolvedValue(alternatePlannerSettings());
+        mocks.fetchInternalApi.mockImplementation(async () =>
+            Response.json({ output: [{ type: "function_call", name: "plan_workbench_action", arguments: JSON.stringify({ parameterPatch: { model: "image-logical" }, resolvedPrompt: "生成商品图", shouldGenerate: true, reply: "开始" }) }] }),
+        );
+
+        const defaultResponse = await POST(workbenchRequest({ requestId: "same-request", prompt: "生成商品图", workspace: "image" }));
+        const selectedResponse = await POST(workbenchRequest({ requestId: "same-request", prompt: "生成商品图", workspace: "image", agentModelId: "planner-pro" }));
+        const defaultHeaders = new Headers((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).headers);
+        const selectedHeaders = new Headers((mocks.fetchInternalApi.mock.calls[1]?.[1] as RequestInit).headers);
+
+        expect(defaultResponse.status).toBe(200);
+        expect(selectedResponse.status).toBe(200);
+        expect(defaultHeaders.get("x-vozeb-pro-logical-model")).toBe("planner");
+        expect(selectedHeaders.get("x-vozeb-pro-logical-model")).toBe("planner-pro");
+        expect(selectedHeaders.get("x-vozeb-pro-points-idempotency-key")).not.toBe(defaultHeaders.get("x-vozeb-pro-points-idempotency-key"));
     });
 
     it("loads and records the shared creative conversation", async () => {
@@ -146,8 +191,19 @@ describe("workbench agent model routing", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
-    it("uses a validated manual generation model without a default text model", async () => {
+    it("keeps Agent planning in manual generation mode without a default text model", async () => {
         mocks.getAuthSettings.mockResolvedValue({ ...settings, defaultModels: { ...settings.defaultModels, textModel: "" } });
+        mocks.fetchInternalApi.mockResolvedValueOnce(
+            Response.json({
+                output: [
+                    {
+                        type: "function_call",
+                        name: "plan_workbench_action",
+                        arguments: JSON.stringify({ parameterPatch: { model: "image-logical", size: "16:9", quality: "high", count: 3 }, resolvedPrompt: "商品主图", shouldGenerate: true, reply: "开始" }),
+                    },
+                ],
+            }),
+        );
 
         const response = await POST(
             workbenchRequest({
@@ -155,6 +211,7 @@ describe("workbench agent model routing", () => {
                 workspace: "image",
                 smartPlanning: false,
                 modelIds: ["image-logical"],
+                agentModelId: "planner",
                 currentConfig: { imageModel: "image-logical", size: "16:9", quality: "high", count: 3 },
             }),
         );
@@ -162,10 +219,20 @@ describe("workbench agent model routing", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ data: { shouldGenerate: true, parameterPatch: { model: "image-logical", size: "16:9", quality: "high", count: 3 } } });
         expect(mocks.getCreativeConversationContext).not.toHaveBeenCalled();
-        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+        const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
+        const upstreamBody = JSON.parse(String(init.body)) as { messages: Array<{ role: string; content: string }> };
+        const planningInput = JSON.parse(upstreamBody.messages.find((message) => message.role === "user")?.content || "{}") as { availableModels?: Array<{ id: string; name: string }>; currentConfig?: Record<string, unknown> };
+        expect(planningInput.availableModels).toEqual([{ id: "image-logical", name: "图片模型" }]);
+        expect(planningInput.currentConfig).toMatchObject({ imageModel: "image-logical" });
     });
 
-    it("rejects manual mode without an explicitly selected model", async () => {
+    it("rejects planning when no media model is configured at all", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            defaultModels: { ...settings.defaultModels, imageModel: "" },
+            logicalModels: settings.logicalModels.filter((model) => model.capability !== "image"),
+        });
         const response = await POST(
             workbenchRequest({
                 prompt: "生成商品图",
@@ -175,8 +242,8 @@ describe("workbench agent model routing", () => {
             }),
         );
 
-        expect(response.status).toBe(400);
-        expect(await response.json()).toMatchObject({ data: null, msg: "请先选择一个可用的图片模型" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({ data: null, msg: "请联系管理员配置可用的图片模型" });
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
@@ -334,6 +401,17 @@ describe("workbench agent model routing", () => {
 
         expect(response.status).toBe(502);
         expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner", 0, "text", 1, undefined, "points-workbench-free");
+    });
+
+    it("refunds an invalid response against the selected agent model", async () => {
+        mocks.getAuthSettings.mockResolvedValue(alternatePlannerSettings());
+        mocks.fetchInternalApi.mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "not structured" } }] }, { headers: { "x-vozeb-pro-points-cost": "2", "x-vozeb-pro-points-record-id": "points-selected-planner" } }));
+
+        const response = await POST(workbenchRequest({ requestId: "selected-plan", prompt: "规划咖啡海报", workspace: "image", agentModelId: "planner-pro" }));
+
+        expect(response.status).toBe(502);
+        expect(await response.json()).toMatchObject({ data: null, msg: "所选智能体模型规划失败，请检查渠道可用性" });
+        expect(mocks.refundUserPoints).toHaveBeenCalledWith("user", "planner-pro", 2, "text", 1, undefined, "points-selected-planner");
     });
 
     it("refunds a valid planner call when conversation persistence fails", async () => {
@@ -595,6 +673,13 @@ const settings = {
         { id: "disabled-image", name: "停用图片模型", capability: "image", enabled: false, bindings: [{ id: "disabled-binding", channelId: "main", upstreamModel: "vendor/image", enabled: true, priority: 3 }] },
     ],
 };
+
+function alternatePlannerSettings() {
+    return {
+        ...settings,
+        logicalModels: [...settings.logicalModels, { id: "planner-pro", name: "专业规划模型", capability: "text", enabled: true, bindings: [{ id: "planner-pro-binding", channelId: "main", upstreamModel: "vendor/planner", enabled: true, priority: 1 }] }],
+    };
+}
 
 function videoSettings() {
     return {

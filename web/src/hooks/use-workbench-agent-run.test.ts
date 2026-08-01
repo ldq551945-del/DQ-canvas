@@ -59,10 +59,11 @@ describe("workbench Agent failure update", () => {
         expect(config).toMatchObject({ imageModel: "gpt-image-2", size: "9:16", quality: "high", count: "4" });
     });
 
-    it("requires an explicit model when smart planning is disabled", () => {
+    it("only requires a model when manual mode has no available media models", () => {
         expect(workbenchRequiresManualModel(false, [])).toBe(true);
         expect(workbenchRequiresManualModel(false, ["video-v1"])).toBe(false);
         expect(workbenchRequiresManualModel(true, [])).toBe(false);
+        expect(workbenchRequiresManualModel(false, [], ["video-v1"])).toBe(false);
     });
 
     it("accepts only generation submissions that return a persisted record id", () => {
@@ -75,5 +76,6 @@ describe("workbench Agent failure update", () => {
 
         expect(source).toContain("userPrompt: text");
         expect(source).toContain("promptOverride: pending.resolvedPrompt, userPrompt: pending.userPrompt");
+        expect(source).toContain("agentModelId: agentModelId || undefined");
     });
 });

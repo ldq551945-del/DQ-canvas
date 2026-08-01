@@ -53,6 +53,7 @@ type UseWorkbenchAgentRunOptions = {
     previousPrompt: string;
     models: string[];
     modelIds: string[];
+    agentModelId?: string;
     skillIds: string[];
     smartPlanning: boolean;
     currentConfig: Record<string, unknown>;
@@ -76,6 +77,7 @@ export function useWorkbenchAgentRun({
     previousPrompt,
     models,
     modelIds,
+    agentModelId,
     skillIds,
     smartPlanning,
     currentConfig,
@@ -102,7 +104,7 @@ export function useWorkbenchAgentRun({
     const runAgentGenerate = useCallback(async () => {
         const text = prompt.trim();
         if (!text || agentRequestRef.current) return;
-        if (workbenchRequiresManualModel(smartPlanning, modelIds)) {
+        if (workbenchRequiresManualModel(smartPlanning, modelIds, models)) {
             onManualModelRequired?.();
             return;
         }
@@ -137,6 +139,7 @@ export function useWorkbenchAgentRun({
                         previousPrompt,
                         models,
                         modelIds,
+                        agentModelId: agentModelId || undefined,
                         skillIds,
                         smartPlanning,
                         currentConfig,
@@ -195,6 +198,7 @@ export function useWorkbenchAgentRun({
         await executePlanning(true);
     }, [
         applyParameterPatch,
+        agentModelId,
         attachments,
         conversationId,
         currentConfig,
@@ -277,8 +281,8 @@ export function acceptWorkbenchGenerationSubmission(recordId: string | null | un
     return recordId;
 }
 
-export function workbenchRequiresManualModel(smartPlanning: boolean, modelIds: string[]) {
-    return !smartPlanning && modelIds.length === 0;
+export function workbenchRequiresManualModel(smartPlanning: boolean, modelIds: string[], availableModels: string[] = []) {
+    return !smartPlanning && modelIds.length === 0 && availableModels.length === 0;
 }
 
 export function buildWorkbenchAgentFailureUpdate({

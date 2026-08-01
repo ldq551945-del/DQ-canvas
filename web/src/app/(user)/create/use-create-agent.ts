@@ -31,6 +31,7 @@ type PendingCreateSubmission = {
     assetIds: string[];
     skillIds: string[];
     modelIds: string[];
+    agentModelId?: string;
     temporaryUserId: string;
     temporaryAssistantId: string;
 };
@@ -307,6 +308,7 @@ export function useCreateAgent() {
                     assetIds: snapshot.assetIds,
                     skillIds: snapshot.skillIds,
                     modelIds: snapshot.modelIds,
+                    agentModelId: snapshot.agentModelId,
                 });
                 const run = created.run;
                 failedSubmissionsRef.current.delete(snapshot.temporaryAssistantId);
@@ -339,7 +341,7 @@ export function useCreateAgent() {
     );
 
     const submit = useCallback(
-        async (prompt: string, options?: { skillIds?: string[]; modelIds?: string[] }) => {
+        async (prompt: string, options?: { skillIds?: string[]; modelIds?: string[]; agentModelId?: string }) => {
             const content = prompt.trim();
             if (!content || sending || submittingRef.current) return false;
             submittingRef.current = true;
@@ -360,6 +362,7 @@ export function useCreateAgent() {
                 assetIds,
                 skillIds: options?.skillIds || [],
                 modelIds: options?.modelIds || [],
+                agentModelId: options?.agentModelId,
                 temporaryUserId,
                 temporaryAssistantId,
             };

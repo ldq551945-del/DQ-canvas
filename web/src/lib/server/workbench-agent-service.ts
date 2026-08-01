@@ -7,7 +7,7 @@ import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { parseWorkbenchPlanCall, type WorkbenchFunctionCallResult } from "./workbench-agent-plan";
 import { createWorkbenchPlanningMessages, workbenchTool } from "./workbench-agent-prompt";
-import { analyzeWorkbenchRequest, buildTrustedWorkbenchBody, directWorkbenchPlan, finalizeWorkbenchPlan, type WorkbenchRequestBody } from "./workbench-agent-policy";
+import { analyzeWorkbenchRequest, buildTrustedWorkbenchBody, finalizeWorkbenchPlan, type WorkbenchRequestBody } from "./workbench-agent-policy";
 
 export type { WorkbenchRequestBody } from "./workbench-agent-policy";
 
@@ -23,19 +23,14 @@ export class WorkbenchPlanningError extends Error {
 export async function planWorkbenchAgent(input: { requestUrl: string; cookie: string; userId: string; body: WorkbenchRequestBody; prompt: string; signal?: AbortSignal }) {
     const settings = await getAuthSettings();
     const body = buildTrustedWorkbenchBody(settings, input.body);
+    const requestedAgentModelId = cleanId(input.body.agentModelId);
+    if (requestedAgentModelId && !body.agentModelId) throw new WorkbenchPlanningError("所选智能体模型当前不可用，请重新选择", 400);
     const workspace = body.workspace || "image";
-    if (body.smartPlanning === false && !body.modelIds?.length) {
-        throw new WorkbenchPlanningError(`请先选择一个可用的${workspace === "video" ? "视频" : "图片"}模型`, 400);
-    }
+    if (!body.models?.length && !body.referenceTypes?.length) throw new WorkbenchPlanningError(`请联系管理员配置可用的${workspace === "video" ? "视频" : "图片"}模型`, 503);
     const { skills, referenceRequired, planOnly, conversationOnly } = analyzeWorkbenchRequest(settings, workspace, input.prompt, body.skillIds);
     const conversationId = cleanId(body.conversationId);
     const skillIds = skills.map((skill) => skill.id);
-    if (body.smartPlanning === false && body.modelIds?.length) {
-        const finalized = withWorkbenchSkillInstructions(directWorkbenchPlan({ body, prompt: input.prompt, workspace, skillIds, referenceRequired, planOnly, conversationOnly }), skills);
-        await saveWorkbenchExchange(input, conversationId, workspace, finalized);
-        return { ...finalized, ...(conversationId ? { conversationId } : {}) };
-    }
-    const model = settings.defaultModels.textModel;
+    const model = body.agentModelId || settings.defaultModels.textModel;
     const candidates = resolveLogicalModelCandidates(settings, "text", model);
     if (!model || !candidates.length) throw new WorkbenchPlanningError("请管理员先配置并启用默认文本模型", 503);
     let conversationContext;
@@ -52,7 +47,7 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     let latestError: unknown;
     for (const candidate of rankTextPlanningCandidates(candidates.map((candidate) => ({ ...candidate, channelId: candidate.channel.id })))) {
         try {
-            const idempotencyKey = body.requestId ? systemAiIdempotencyKey("workbench-plan", input.userId, body.requestId, workspace, candidate.channel.id, candidate.upstreamModel) : undefined;
+            const idempotencyKey = body.requestId ? systemAiIdempotencyKey("workbench-plan", input.userId, body.requestId, workspace, model, candidate.channel.id, candidate.upstreamModel) : undefined;
             const requestHeaders = { ...headers, ...systemAiBillingHeaders(model, idempotencyKey, candidate.upstreamModel) };
             const structured = await requestStructuredText({
                 origin,
@@ -82,7 +77,7 @@ export async function planWorkbenchAgent(input: { requestUrl: string; cookie: st
     }
     if (!finalized) {
         if (latestError instanceof WorkbenchPlanningError) throw latestError;
-        throw new WorkbenchPlanningError("默认文本模型规划失败，请检查渠道可用性");
+        throw new WorkbenchPlanningError(body.agentModelId ? "所选智能体模型规划失败，请检查渠道可用性" : "默认文本模型规划失败，请检查渠道可用性");
     }
     if (input.signal?.aborted) {
         if (acceptedBilling) await refundTextCost(input.userId, model, acceptedBilling.pointsCost, acceptedBilling.pointsRecordId);

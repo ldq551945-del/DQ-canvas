@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, Bot, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
-import { Button, Modal, Tooltip } from "antd";
+import { App, Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -76,6 +76,7 @@ export function CanvasAssistantPanel({
     closing,
     onCollapse,
 }: CanvasAssistantPanelProps) {
+    const { message } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const user = useUserStore((state) => state.user);
     const { skills, skillsLoading, models } = useCreativeAgentOptions("canvas");
@@ -84,6 +85,7 @@ export function CanvasAssistantPanel({
     const [prompt, setPrompt] = useState("");
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [isRunning, setIsRunning] = useState(false);
     const [activeRunId, setActiveRunId] = useState("");
@@ -169,6 +171,7 @@ export function CanvasAssistantPanel({
         requestLatest();
         setSelectedSkillId(undefined);
         setSelectedModelIds([]);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
         if (activeSession && activeSession.messages.length === 0) {
             setLocalActiveSessionId(activeSession.id);
@@ -196,6 +199,10 @@ export function CanvasAssistantPanel({
     };
 
     const sendMessage = async (text: string, savedReferences?: CanvasAssistantReference[]) => {
+        if (!smartPlanning && selectedModelIds.length === 0 && models.length === 0) {
+            message.warning("当前没有可用媒体模型，请联系管理员配置");
+            return;
+        }
         const session = activeSession || createSession();
         if (!activeSession) {
             setLocalSessions([session]);
@@ -230,6 +237,7 @@ export function CanvasAssistantPanel({
                     assetIds: [],
                     skillIds: selectedSkillId ? [selectedSkillId] : [],
                     modelIds: smartPlanning ? [] : selectedModelIds,
+                    agentModelId: selectedAgentModelId || undefined,
                 }),
             });
             const payload = await response.json();
@@ -348,15 +356,17 @@ export function CanvasAssistantPanel({
     };
 
     const toggleModel = (model: CreativeAgentModelOption) => {
+        setSmartPlanning(false);
         setSelectedModelIds((current) => {
             const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id].slice(-6);
-            setSmartPlanning(next.length === 0);
             return next;
         });
     };
 
     const enableSmartPlanning = () => {
         setSelectedModelIds([]);
+        setSelectedSkillId(undefined);
+        setSelectedAgentModelId("");
         setSmartPlanning(true);
     };
 
@@ -525,7 +535,19 @@ export function CanvasAssistantPanel({
                             setRemovedReferenceIds((prev) => new Set(prev).add(id));
                             if (selectedNodeIds.has(id)) onSelectNodeIds(new Set(Array.from(selectedNodeIds).filter((nodeId) => nodeId !== id)));
                         }}
-                        beforeInput={selectedSkill ? <CreativeAgentSkillCard skill={selectedSkill} onRemove={() => setSelectedSkillId(undefined)} theme={controlTheme} className="pb-1" /> : null}
+                        beforeInput={
+                            selectedSkill ? (
+                                <CreativeAgentSkillCard
+                                    skill={selectedSkill}
+                                    onRemove={() => {
+                                        setSmartPlanning(false);
+                                        setSelectedSkillId(undefined);
+                                    }}
+                                    theme={controlTheme}
+                                    className="pb-1"
+                                />
+                            ) : null
+                        }
                         left={
                             <>
                                 <CanvasPromptLibrary onSelect={setPrompt} />
@@ -537,10 +559,19 @@ export function CanvasAssistantPanel({
                                     models={models}
                                     selectedModels={selectedModels}
                                     smartPlanning={smartPlanning}
-                                    onSelectSkill={(skill) => setSelectedSkillId(skill.id)}
+                                    agentModelId={selectedAgentModelId}
+                                    agentModelDisabled={isRunning}
+                                    onSelectSkill={(skill) => {
+                                        setSmartPlanning(false);
+                                        setSelectedSkillId(skill.id);
+                                    }}
                                     onToggleModel={toggleModel}
                                     onClearModels={enableSmartPlanning}
                                     onSmartPlanningChange={(enabled) => (enabled ? enableSmartPlanning() : setSmartPlanning(false))}
+                                    onAgentModelChange={(model) => {
+                                        setSmartPlanning(false);
+                                        setSelectedAgentModelId(model);
+                                    }}
                                     theme={controlTheme}
                                 />
                             </>

@@ -13,10 +13,13 @@ describe("useCreateAgent submission retry", () => {
         const retrySource = source.slice(retryStart, source.indexOf("const cancel", retryStart));
 
         expect(executeSource).toContain("clientRequestId: snapshot.clientRequestId");
+        expect(executeSource).toContain("agentModelId: snapshot.agentModelId");
         expect(submitSource).toContain("metadata: { assetIds }");
+        expect(submitSource).toContain("agentModelId: options?.agentModelId");
         expect(submitSource).toContain("setSelectedAssetIds((current) => current.filter");
         expect(retrySource).toContain("failedSubmissionsRef.current.get(assistantMessageId)");
         expect(retrySource).toContain("executeSubmission(snapshot)");
+        expect(retrySource).not.toContain("agentModelId:");
         expect(retrySource).not.toContain("setMessages((current) => [");
     });
 

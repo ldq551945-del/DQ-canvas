@@ -42,6 +42,7 @@ export default function CreatePage() {
     const [skillsLoading, setSkillsLoading] = useState(true);
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
+    const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [historyOpen, setHistoryOpen] = useState(false);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
@@ -102,8 +103,16 @@ export default function CreatePage() {
         });
     };
 
+    const enableSmartPlanning = () => {
+        setSelectedModelIds([]);
+        setSelectedSkillId(undefined);
+        setSelectedAgentModelId("");
+        setSmartPlanning(true);
+    };
+
     const newConversation = () => {
         newAgentConversation();
+        enableSmartPlanning();
         router.replace("/create");
     };
 
@@ -113,7 +122,17 @@ export default function CreatePage() {
             inputRef.current?.focus();
             return;
         }
-        if (await agent.submit(prompt, { skillIds: selectedSkillId ? [selectedSkillId] : [], ...(!smartPlanning && selectedModelIds.length ? { modelIds: selectedModelIds } : {}) })) {
+        if (!smartPlanning && selectedModelIds.length === 0 && modelOptions.length === 0) {
+            message.warning("当前没有可用媒体模型，请联系管理员配置");
+            return;
+        }
+        if (
+            await agent.submit(prompt, {
+                skillIds: selectedSkillId ? [selectedSkillId] : [],
+                agentModelId: selectedAgentModelId || undefined,
+                ...(!smartPlanning && selectedModelIds.length ? { modelIds: selectedModelIds } : {}),
+            })
+        ) {
             setPrompt("");
             setSelectedSkillId(undefined);
         }
@@ -172,14 +191,15 @@ export default function CreatePage() {
     };
 
     const selectSkill = (skill: AgentSkillSummary) => {
+        setSmartPlanning(false);
         setSelectedSkillId(skill.id);
         window.requestAnimationFrame(() => inputRef.current?.focus());
     };
 
     const toggleModel = (model: (typeof modelOptions)[number]) => {
+        setSmartPlanning(false);
         setSelectedModelIds((current) => {
             const next = current.includes(model.id) ? current.filter((id) => id !== model.id) : [...current, model.id].slice(-6);
-            setSmartPlanning(next.length === 0);
             return next;
         });
         window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -201,20 +221,25 @@ export default function CreatePage() {
             models={modelOptions}
             selectedModels={selectedModels}
             smartPlanning={smartPlanning}
+            agentModelId={selectedAgentModelId}
             uploading={agent.uploading}
             onRemoveAttachment={agent.removeAttachment}
             onSelectSkill={selectSkill}
-            onRemoveSkill={() => setSelectedSkillId(undefined)}
+            onRemoveSkill={() => {
+                setSmartPlanning(false);
+                setSelectedSkillId(undefined);
+            }}
             onToggleModel={toggleModel}
             onClearModels={() => {
-                setSelectedModelIds([]);
-                setSmartPlanning(true);
+                enableSmartPlanning();
             }}
             onToggleSmartPlanning={() => {
-                setSmartPlanning((enabled) => {
-                    if (!enabled) setSelectedModelIds([]);
-                    return !enabled;
-                });
+                if (smartPlanning) setSmartPlanning(false);
+                else enableSmartPlanning();
+            }}
+            onAgentModelChange={(model) => {
+                setSmartPlanning(false);
+                setSelectedAgentModelId(model);
             }}
             onAttachment={() => attachmentInputRef.current?.click()}
             onPasteImages={(files) => void uploadAttachments(files)}

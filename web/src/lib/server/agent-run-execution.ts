@@ -149,6 +149,7 @@ export function normalizeTasks(
     surface: CreativeSurface,
     referencedAssets: CreativeAsset[],
     requestedImageSize?: string,
+    requestedModelIds: string[] = [],
 ): AgentRunTask[] {
     const defaults = Object.assign({}, ...skills.map((skill) => skill.defaultConfig || {})) as Record<string, unknown>;
     const skillInstructions = skills
@@ -160,6 +161,14 @@ export function normalizeTasks(
     const selectedNodeIds = new Set(selectedCanvasNodeIds(snapshot).filter((id) => nodes.has(id)));
     const assets = new Map(referencedAssets.map((asset) => [asset.id, asset]));
     const configuredImageSize = agentSurfaceImageSize(surface, snapshot);
+    const lockedModelsByCapability = new Map<LogicalModelCapability, string[]>();
+    for (const modelId of requestedModelIds) {
+        const model = settings.logicalModels.find((item) => item.enabled && item.id === modelId && item.capability !== "text" && resolveLogicalModel(settings, item.capability, item.id));
+        if (!model) continue;
+        const current = lockedModelsByCapability.get(model.capability) || [];
+        if (!current.includes(model.id)) current.push(model.id);
+        lockedModelsByCapability.set(model.capability, current);
+    }
     return plan.deliverables.map((item, index) => {
         const targetNodeId = surface === "canvas" ? resolveCanvasTaskTargetNodeId(item.targetNodeId, item.type, selectedNodeIds, nodes) : undefined;
         const target = targetNodeId ? nodes.get(targetNodeId) : undefined;
@@ -182,7 +191,7 @@ export function normalizeTasks(
             references,
             title: item.title.trim(),
             type: item.type,
-            model: resolvePlannedModel(settings, item.type, item.model),
+            model: resolvePlannedModel(settings, item.type, item.model, lockedModelsByCapability.get(item.type)),
             prompt: `${withCreativeFoundation(item.prompt.trim(), plan.foundation)}${skillInstructions ? `\n\n执行以下已选 Skill 约束：\n${skillInstructions}` : ""}${textConstraintInstruction(requestPrompt, item.type)}${target ? `\n\n基于画布已有节点进行局部修改：${target.summary}` : ""}${referenceContext ? `\n\n使用已引用创作资产：${referenceContext}` : ""}`,
             count: resolveAgentTaskCount(item.type, item.count, defaults.count, globalDefaults.canvasImageCount),
             ratio: resolveAgentTaskRatio({
@@ -244,8 +253,9 @@ function defaultModel(settings: Awaited<ReturnType<typeof getAuthSettings>>, cap
     return model && resolveLogicalModel(settings, capability, model) ? model : "";
 }
 
-function resolvePlannedModel(settings: Awaited<ReturnType<typeof getAuthSettings>>, capability: LogicalModelCapability, planned: unknown) {
+function resolvePlannedModel(settings: Awaited<ReturnType<typeof getAuthSettings>>, capability: LogicalModelCapability, planned: unknown, lockedModels: string[] = []) {
     const model = typeof planned === "string" ? planned.trim() : "";
+    if (lockedModels.length) return lockedModels.includes(model) ? model : lockedModels[0];
     if (model && resolveLogicalModel(settings, capability, model)) return model;
     return defaultModel(settings, capability) || undefined;
 }

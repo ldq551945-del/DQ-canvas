@@ -47,4 +47,24 @@ describe("workbench Agent conversation", () => {
         expect(imagePanels).toContain('<WorkbenchGenerationPlaceholder kind="image"');
         expect(videoPanels).toContain('<WorkbenchGenerationPlaceholder kind="video"');
     });
+
+    it("threads the Agent text model through both media workbenches", async () => {
+        const [sharedPanel, imagePage, imageController, videoPage, videoController] = await Promise.all([
+            readFile(resolve(process.cwd(), "src/components/agent/workbench-agent-panel.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/image/page.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/image/use-image-workbench-controller.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/video/page.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/video/use-video-workbench-controller.tsx"), "utf8"),
+        ]);
+
+        expect(sharedPanel).toContain("agentModelId={agentModelId}");
+        expect(sharedPanel).toContain("onAgentModelChange={onAgentModelChange}");
+        for (const page of [imagePage, videoPage]) {
+            expect(page).toContain("agentModelId={selectedAgentModelId}");
+            expect(page).toContain("agentModelDisabled={agentRunning}");
+        }
+        for (const controller of [imageController, videoController]) {
+            expect(controller).toContain("agentModelId: selectedAgentModelId || undefined");
+        }
+    });
 });

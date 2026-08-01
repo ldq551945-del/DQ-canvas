@@ -60,4 +60,17 @@ describe("create Agent home layout", () => {
         expect(previewModal).toContain("xl:grid-cols-[minmax(0,1fr)_360px]");
         expect(previewModal).toContain('asset.mediaType === "image" || asset.mediaType === "video"');
     });
+
+    it("places the Agent model picker between planning and generation controls", async () => {
+        const [page, composer] = await Promise.all([readFile(resolve(process.cwd(), "src/app/(user)/create/page.tsx"), "utf8"), readFile(resolve(process.cwd(), "src/app/(user)/create/components/creative-composer.tsx"), "utf8")]);
+
+        expect(page).toContain('const [selectedAgentModelId, setSelectedAgentModelId] = useState("")');
+        expect(page).toContain("agentModelId: selectedAgentModelId");
+        expect(page).toContain("onAgentModelChange={(model) =>");
+        expect(page).toContain('setSelectedAgentModelId("")');
+        expect(composer).toContain("CreativeAgentTextModelPicker");
+        expect(composer.indexOf("<CreativeAgentTextModelPicker")).toBeGreaterThan(composer.indexOf("<Lightbulb"));
+        expect(composer.indexOf("<CreativeAgentTextModelPicker")).toBeLessThan(composer.indexOf("<Orbit"));
+        expect(composer).toContain("disabled={busy}");
+    });
 });

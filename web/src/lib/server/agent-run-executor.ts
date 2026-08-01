@@ -7,7 +7,7 @@ import { agentPlannerInput, agentPlannerSystemPrompt, agentPlanReply, conversati
 import { getCreativeAssetsByIds, getCreativeConversationContext, listRecentCreativeMediaAssets } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { parseAgentPlanCall, type AgentFunctionCallResult } from "./agent-function-call";
-import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, directAgentPlan, executeTasks, normalizeTasks, planToOps, refundFunctionCall, requestFunctionCall } from "./agent-run-execution";
+import { agentModelOptions, agentPlanFallbackExample, agentPlanTool, canContinue, executeTasks, normalizeTasks, planToOps, refundFunctionCall, requestFunctionCall } from "./agent-run-execution";
 import { isExplicitProjectHandoffRequest, normalizeAgentProjectHandoff } from "./agent-run-project-handoff";
 import { normalizeCanvasPlanForSelection } from "./agent-run-task-input";
 import { GenerationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
@@ -46,34 +46,26 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             await executeTasks(run.id, origin, cookie, executionId, settings);
             return;
         }
-        const directModelSelection = Boolean(claimed.requestedModelIds?.length);
-        const usesMemoryCandidates = !directModelSelection && claimed.surface === "chat" && claimed.referencedAssetIds.length === 0;
+        const requestedModelIds = Array.from(new Set((claimed.requestedModelIds || []).map((id) => (typeof id === "string" ? id.trim() : "")).filter(Boolean)));
+        const usesMemoryCandidates = claimed.surface === "chat" && claimed.referencedAssetIds.length === 0;
         const [settings, explicitAssets, conversationContext, memoryAssets] = await Promise.all([
             getAuthSettings(),
             getCreativeAssetsByIds(claimed.referencedAssetIds),
-            directModelSelection ? Promise.resolve(undefined) : getCreativeConversationContext(claimed.conversationId, claimed.userId, claimed.id),
+            getCreativeConversationContext(claimed.conversationId, claimed.userId, claimed.id),
             usesMemoryCandidates ? listRecentCreativeMediaAssets(claimed.conversationId, claimed.userId, 6) : Promise.resolve([]),
         ]);
         const allModels = agentModelOptions(settings);
-        const availableModels = filterAgentPlannerModels(allModels, claimed);
+        const requestedModels = requestedModelIds.map((id) => allModels.find((model) => model.id === id));
+        if (requestedModels.some((model) => !model || model.capability === "text")) throw new Error("部分所选模型当前不可用，请重新选择");
+        const availableModels = constrainPlannerModels(filterAgentPlannerModels(allModels, claimed), allModels, requestedModelIds);
         const skillOptions = plannerAgentSkills(settings, claimed);
         if (!(await canContinue(run.id, executionId))) return;
-        if (claimed.requestedModelIds?.length) {
-            const skills = selectAgentSkills(settings, claimed.surface, claimed.selectedSkillIds);
-            const selectedModels = claimed.requestedModelIds.map((id) => allModels.find((item) => item.id === id && item.capability !== "text")).filter((item): item is ReturnType<typeof agentModelOptions>[number] => Boolean(item));
-            if (selectedModels.length !== claimed.requestedModelIds.length) throw new Error("部分所选模型当前不可用，请重新选择");
-            const plan = directAgentPlan(selectedModels, claimed.prompt, claimed.referencedAssetIds);
-            const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, explicitAssets, claimed.requestedImageSize);
-            await updateAgentRunById(run.id, {}, { type: "skills.selected", data: { skills: skills.map((skill) => ({ id: skill.id, name: skill.name })) } }, ["running"], executionId);
-            const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply: plan.reply } } : { type: "run.planned", data: { reply: plan.reply, tasks: tasks.map(taskPlanSummary) } };
-            await updateAgentRunById(run.id, { tasks, foundation: plan.foundation, reviewed: false, timings: { ...(claimed.timings || { requestAcceptedAt: claimed.createdAt }), planningCompletedAt: Date.now() } }, event, ["running"], executionId);
-            await executeTasks(run.id, origin, cookie, executionId, settings);
-            return;
-        }
         const referencedAssets = usesMemoryCandidates ? memoryAssets : explicitAssets;
         const referenceSource = claimed.referencedAssetIds.length ? "current-turn-explicit" : usesMemoryCandidates && referencedAssets.length ? "conversation-memory-candidates" : "none";
-        const model = settings.defaultModels.textModel;
+        const requestedAgentModelId = typeof claimed.requestedAgentModelId === "string" ? claimed.requestedAgentModelId.trim() : "";
+        const model = requestedAgentModelId || settings.defaultModels.textModel;
         const candidates = resolveLogicalModelCandidates(settings, "text", model);
+        if (requestedAgentModelId && !candidates.length) throw new Error("所选智能体模型当前不可用，请重新选择");
         if (!model || !candidates.length) throw new Error("后台尚未配置可用的默认文本模型");
         const fallbackExample = agentPlanFallbackExample(availableModels);
         const planningInput = [
@@ -143,7 +135,7 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
             planningPersisted = true;
             return;
         }
-        const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize);
+        const tasks = normalizeTasks(plan, skills, settings, claimed.snapshot, claimed.prompt, claimed.surface, referencedAssets, claimed.requestedImageSize, requestedModelIds);
         const projectHandoff = normalizeAgentProjectHandoff(plan, claimed.surface, referencedAssets, claimed.prompt);
         const reply = agentPlanReply({ ...plan, projectHandoff }, tasks, claimed.surface);
         const event = claimed.surface === "canvas" ? { type: "canvas.ops", data: { ops: planToOps(plan, tasks, run.id, claimed.snapshot), reply } } : { type: "run.planned", data: { reply, tasks: tasks.map(taskPlanSummary), projectHandoff } };
@@ -180,4 +172,14 @@ export async function executeAgentRun(run: AgentRun, origin: string, cookie: str
     } finally {
         if (controllers.get(run.id) === controller) controllers.delete(run.id);
     }
+}
+
+function constrainPlannerModels<T extends { id: string; capability: string }>(plannerModels: T[], allModels: T[], requestedModelIds: string[]) {
+    if (!requestedModelIds.length) return plannerModels;
+    const requested = new Set(requestedModelIds);
+    const selectedMedia = allModels.filter((model) => requested.has(model.id) && model.capability !== "text");
+    // Keep text models available for copy/script deliverables, but constrain
+    // every media capability to the user's explicitly selected set.
+    const textModels = plannerModels.filter((model) => model.capability === "text");
+    return Array.from(new Map([...textModels, ...selectedMedia].map((model) => [model.id, model])).values());
 }

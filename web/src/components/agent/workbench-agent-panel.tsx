@@ -235,6 +235,9 @@ export function WorkbenchComposerFrame({
     onRemoveSkill,
     smartPlanning,
     onSmartPlanningChange,
+    agentModelId,
+    onAgentModelChange,
+    agentModelDisabled = false,
     models,
     selectedModels,
     onToggleModel,
@@ -254,6 +257,9 @@ export function WorkbenchComposerFrame({
     onRemoveSkill: () => void;
     smartPlanning: boolean;
     onSmartPlanningChange: (enabled: boolean) => void;
+    agentModelId?: string;
+    onAgentModelChange: (model: string) => void;
+    agentModelDisabled?: boolean;
     models: CreativeAgentModelOption[];
     selectedModels: CreativeAgentModelOption[];
     onToggleModel: (model: CreativeAgentModelOption) => void;
@@ -294,6 +300,9 @@ export function WorkbenchComposerFrame({
                     onToggleModel={onToggleModel}
                     onClearModels={onClearModels}
                     onSmartPlanningChange={onSmartPlanningChange}
+                    agentModelId={agentModelId}
+                    onAgentModelChange={onAgentModelChange}
+                    agentModelDisabled={agentModelDisabled}
                     modelPickerRequest={modelPickerRequest}
                     defaultModelCapability={defaultModelCapability}
                     middle={

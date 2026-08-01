@@ -11,6 +11,7 @@ export type WorkbenchModelOption = { id: string; name: string };
 export type WorkbenchRequestBody = {
     requestId?: string;
     conversationId?: string;
+    agentModelId?: string;
     prompt?: string;
     previousPrompt?: string;
     workspace?: WorkbenchWorkspace;
@@ -29,6 +30,10 @@ type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
 
 export function buildTrustedWorkbenchBody(settings: AuthSettings, body: WorkbenchRequestBody): WorkbenchRequestBody {
     const workspace: WorkbenchWorkspace = body.workspace === "video" ? "video" : "image";
+    // The Agent remains the planner in manual media mode; only the media
+    // model candidates are constrained by the user's explicit selection.
+    const requestedAgentModelId = typeof body.agentModelId === "string" ? body.agentModelId.trim().slice(0, 160) : "";
+    const agentModelId = requestedAgentModelId ? resolveLogicalModelCandidates(settings, "text", requestedAgentModelId)[0]?.logicalModelId : undefined;
     const attachments = normalizeWorkbenchAgentAttachments(body.attachments);
     const referenceTypes = normalizeReferenceTypes([...(body.referenceTypes || []), ...attachments.map((item) => item.kind)], workspace);
     const availableModelOptions = workbenchModelOptions(settings, workspace, referenceTypes);
@@ -38,13 +43,18 @@ export function buildTrustedWorkbenchBody(settings: AuthSettings, body: Workbenc
     const requestedModelIds = Array.from(new Set(Array.isArray(body.modelIds) ? body.modelIds : []))
         .filter((id) => availableModelIds.includes(id))
         .slice(0, 6);
+    // An explicit media selection locks the candidate set. Other manual edits
+    // (for example a Skill, Agent model, or generation parameter) still leave
+    // media selection to the Agent, so an empty modelIds list must not disable
+    // the rest of the planning flow.
     const manualSelection = manualSelectionRequested && requestedModelIds.length > 0;
-    const modelOptions = manualSelectionRequested ? availableModelOptions.filter((model) => requestedModelIds.includes(model.id)) : availableModelOptions;
+    const modelOptions = manualSelection ? availableModelOptions.filter((model) => requestedModelIds.includes(model.id)) : availableModelOptions;
     const models = modelOptions.map((model) => model.id);
     const currentConfig = workbenchCurrentConfig(body.currentConfig, workspace, models);
     if (manualSelection && !currentConfig[modelKey]) currentConfig[modelKey] = requestedModelIds[0];
     return {
         ...body,
+        agentModelId,
         workspace,
         models,
         modelIds: manualSelection ? requestedModelIds : [],
@@ -95,11 +105,14 @@ export function finalizeWorkbenchPlan(plan: WorkbenchPlan, input: { body: Workbe
             referenceMissing: false,
         };
     }
-    const modelKey = workspace === "image" ? "imageModel" : "videoModel";
-    const lockedModel = body.smartPlanning === false && body.modelIds?.length === 1 ? body.modelIds[0] : "";
-    if (lockedModel && body.models?.includes(lockedModel)) {
-        plan.parameterPatch.model = lockedModel;
-        plan.decisions = withLockedModelDecision(plan.decisions, lockedModel, body.modelOptions);
+    const manualModelIds = body.smartPlanning === false ? Array.from(new Set((body.modelIds || []).filter((id) => body.models?.includes(id)))) : [];
+    if (manualModelIds.length) {
+        const plannedModel = typeof plan.parameterPatch.model === "string" ? plan.parameterPatch.model : "";
+        const selectedModel = manualModelIds.includes(plannedModel) ? plannedModel : manualModelIds[0];
+        plan.parameterPatch.model = selectedModel;
+        if (manualModelIds.length === 1 || selectedModel !== plannedModel) {
+            plan.decisions = withLockedModelDecision(plan.decisions, selectedModel, body.modelOptions, manualModelIds.length > 1 ? "按你在输入区手动选择的模型范围执行" : undefined);
+        }
     }
     if (!plan.selectedSkillIds.length) plan.selectedSkillIds = skillIds;
     const promptSize = extractImageSizeFromPrompt(prompt);
@@ -169,9 +182,9 @@ function selectedWorkbenchSkillIds(settings: AuthSettings, workspace: WorkbenchW
     return [...new Set(value.filter((item): item is string => typeof item === "string" && allowed.has(item)))].slice(0, 8);
 }
 
-function withLockedModelDecision(decisions: WorkbenchPlanDecision[] | undefined, modelId: string, modelOptions: WorkbenchModelOption[] | undefined) {
+function withLockedModelDecision(decisions: WorkbenchPlanDecision[] | undefined, modelId: string, modelOptions: WorkbenchModelOption[] | undefined, reason = "按你在输入区手动选择的模型执行") {
     const option = modelOptions?.find((item) => item.id === modelId);
-    return [{ label: "模型", value: option?.name || modelId, reason: "按你在输入区手动选择的模型执行" }, ...(decisions || []).filter((item) => item.label !== "模型")].slice(0, 5);
+    return [{ label: "模型", value: option?.name || modelId, reason }, ...(decisions || []).filter((item) => item.label !== "模型")].slice(0, 5);
 }
 
 function workbenchModelOptions(settings: AuthSettings, workspace: WorkbenchWorkspace, referenceTypes: WorkbenchReferenceType[]): WorkbenchModelOption[] {

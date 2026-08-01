@@ -2,16 +2,36 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRun } from "./agent-run-store";
 
-const mocks = vi.hoisted(() => ({ mutateCreativeRun: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createCreativeRunBundle: vi.fn(), mutateCreativeRun: vi.fn() }));
 
 vi.mock("./creative-runtime-store", () => ({
-    createCreativeRunBundle: vi.fn(),
+    createCreativeRunBundle: mocks.createCreativeRunBundle,
     getCreativeRunByClientRequestId: vi.fn(),
     mutateCreativeRun: mocks.mutateCreativeRun,
 }));
 vi.mock("./generation-task-store", () => ({ getStoredGenerationTask: vi.fn(), listStoredGenerationTasks: vi.fn() }));
 
-import { setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+import { createAgentRun, setAgentRunStatus, updateAgentRunById, updateAgentRunTaskById } from "./agent-run-store";
+
+describe("createAgentRun", () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    it("persists the explicitly requested Agent model independently from generation models", async () => {
+        mocks.createCreativeRunBundle.mockImplementation(async (_userId, input) => input.run);
+
+        await createAgentRun("user", {
+            clientRequestId: "request",
+            surface: "chat",
+            prompt: "生成商品图",
+            assetIds: [],
+            skillIds: [],
+            modelIds: ["image-pro"],
+            agentModelId: "planner-pro",
+        });
+
+        expect(mocks.createCreativeRunBundle).toHaveBeenCalledWith("user", expect.objectContaining({ run: expect.objectContaining({ requestedAgentModelId: "planner-pro", requestedModelIds: ["image-pro"] }) }));
+    });
+});
 
 describe("setAgentRunStatus", () => {
     beforeEach(() => vi.clearAllMocks());

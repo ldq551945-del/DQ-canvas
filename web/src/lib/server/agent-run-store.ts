@@ -64,6 +64,7 @@ export type AgentRun = {
     referencedAssetIds: string[];
     selectedSkillIds?: string[];
     requestedModelIds?: string[];
+    requestedAgentModelId?: string;
     requestedImageSize?: string;
     assetIds: string[];
     status: AgentRunStatus;
@@ -109,6 +110,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         referencedAssetIds: input.assetIds,
         selectedSkillIds: input.skillIds,
         ...(input.modelIds.length ? { requestedModelIds: input.modelIds } : {}),
+        ...(input.agentModelId ? { requestedAgentModelId: input.agentModelId } : {}),
         requestedImageSize: extractImageSizeFromPrompt(input.prompt) || undefined,
         assetIds: [],
         status: "planning",

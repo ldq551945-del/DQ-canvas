@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkPublicMediaRateLimit, checkRateLimit, getClientIp, isSafeOutboundUrl, rateLimitHeaders } from "./security";
+
+const dnsMocks = vi.hoisted(() => ({ lookup: vi.fn() }));
+
+vi.mock("node:dns/promises", () => ({ lookup: dnsMocks.lookup }));
+
+import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkPublicMediaRateLimit, checkRateLimit, getClientIp, isClashFakeIpAddress, isSafeOutboundUrl, rateLimitHeaders } from "./security";
 
 describe("checkRateLimit", () => {
     it("blocks requests beyond the configured window limit", async () => {
@@ -114,6 +119,20 @@ describe("checkRateLimit", () => {
 
         vi.stubEnv("NODE_ENV", "production");
         await expect(isSafeOutboundUrl("http://127.0.0.1:4010/v1/models")).resolves.toBe(true);
+        vi.unstubAllEnvs();
+    });
+
+    it("allows Clash Fake-IP DNS only through the explicit deployment switch", async () => {
+        dnsMocks.lookup.mockResolvedValue([{ address: "198.18.3.115", family: 4 }]);
+        vi.stubEnv("VOZEB_PRO_ALLOW_FAKE_IP_DNS", "");
+        await expect(isSafeOutboundUrl("https://api.openai.com/v1/models")).resolves.toBe(false);
+
+        vi.stubEnv("VOZEB_PRO_ALLOW_FAKE_IP_DNS", "1");
+        await expect(isSafeOutboundUrl("https://api.openai.com/v1/models")).resolves.toBe(true);
+        await expect(isSafeOutboundUrl("https://198.18.3.115/v1/models")).resolves.toBe(false);
+        expect(isClashFakeIpAddress("198.18.0.1")).toBe(true);
+        expect(isClashFakeIpAddress("198.19.255.254")).toBe(true);
+        expect(isClashFakeIpAddress("198.20.0.1")).toBe(false);
         vi.unstubAllEnvs();
     });
 });

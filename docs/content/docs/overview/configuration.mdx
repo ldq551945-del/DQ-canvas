@@ -107,6 +107,14 @@ ALL_PROXY=http://proxy-host:7890
 
 代理变量只作用于服务端请求，不会下发给浏览器。
 
+Clash Verge / Mihomo 使用 TUN Fake-IP 模式时，容器中的公网域名可能解析为 `198.18.0.0/15`，而不是目标站点的真实公网地址。确认 Docker 容器的直接外网请求已经由 Clash 接管后，可以显式开启：
+
+```dotenv
+VOZEB_PRO_ALLOW_FAKE_IP_DNS=1
+```
+
+该开关只接受“域名 DNS 解析结果全部位于 Clash Fake-IP 网段”的地址；直接填写 `198.18.x.x`、localhost、内网 IP 和云元数据域名仍会被拒绝。未使用 Fake-IP DNS 时保持 `0`。
+
 ## 模型渠道与逻辑模型
 
 进入 `管理员后台 -> 上游配置 -> 模型渠道`：

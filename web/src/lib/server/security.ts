@@ -185,10 +185,18 @@ async function isSafeOutboundHost(hostname: string) {
 
     try {
         const addresses = await lookup(host, { all: true, verbatim: true });
-        return addresses.length > 0 && addresses.every((address) => isPublicIpAddress(address.address));
+        if (!addresses.length) return false;
+        if (addresses.every((address) => isPublicIpAddress(address.address))) return true;
+        return process.env.VOZEB_PRO_ALLOW_FAKE_IP_DNS === "1" && addresses.every((address) => isClashFakeIpAddress(address.address));
     } catch {
         return false;
     }
+}
+
+export function isClashFakeIpAddress(address: string) {
+    if (isIP(address) !== 4) return false;
+    const [first, second] = address.split(".").map((part) => Number(part));
+    return first === 198 && (second === 18 || second === 19);
 }
 
 export function isPublicIpAddress(address: string) {

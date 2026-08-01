@@ -80,6 +80,14 @@ describe("workbench agent model routing", () => {
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
+    it("rejects an explicit stale media model selection instead of falling back", async () => {
+        const response = await POST(workbenchRequest({ prompt: "生成商品图", workspace: "image", smartPlanning: false, modelIds: ["removed-image"] }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ data: null, msg: "所选媒体模型当前不可用，请重新选择" });
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
     it("uses only resolvable backend logical models for planning and fallback", async () => {
         const response = await POST(
             new Request("http://localhost/api/agent/workbench", {

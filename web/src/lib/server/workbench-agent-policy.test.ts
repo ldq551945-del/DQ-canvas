@@ -165,6 +165,16 @@ describe("workbench agent policy", () => {
         expect(trusted.currentConfig).toMatchObject({ imageModel: "image-basic" });
     });
 
+    it("rejects an explicit media selection when every submitted model is unavailable", () => {
+        expect(() =>
+            buildTrustedWorkbenchBody(settings, {
+                workspace: "image",
+                smartPlanning: false,
+                modelIds: ["removed-image"],
+            }),
+        ).toThrow("所选媒体模型当前不可用，请重新选择");
+    });
+
     it("restricts manual multi-model planning to trusted selected models", () => {
         const body = buildTrustedWorkbenchBody(settings, {
             workspace: "video",

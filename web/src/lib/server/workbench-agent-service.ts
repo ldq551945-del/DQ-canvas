@@ -7,7 +7,7 @@ import { rankTextPlanningCandidates, requestStructuredText } from "@/lib/server/
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey, type SystemAiBilling } from "@/lib/server/system-ai-billing";
 import { parseWorkbenchPlanCall, type WorkbenchFunctionCallResult } from "./workbench-agent-plan";
 import { createWorkbenchPlanningMessages, workbenchTool } from "./workbench-agent-prompt";
-import { analyzeWorkbenchRequest, buildTrustedWorkbenchBody, finalizeWorkbenchPlan, type WorkbenchRequestBody } from "./workbench-agent-policy";
+import { analyzeWorkbenchRequest, buildTrustedWorkbenchBody, finalizeWorkbenchPlan, WorkbenchPolicyInputError, type WorkbenchRequestBody } from "./workbench-agent-policy";
 
 export type { WorkbenchRequestBody } from "./workbench-agent-policy";
 
@@ -22,7 +22,13 @@ export class WorkbenchPlanningError extends Error {
 
 export async function planWorkbenchAgent(input: { requestUrl: string; cookie: string; userId: string; body: WorkbenchRequestBody; prompt: string; signal?: AbortSignal }) {
     const settings = await getAuthSettings();
-    const body = buildTrustedWorkbenchBody(settings, input.body);
+    let body: WorkbenchRequestBody;
+    try {
+        body = buildTrustedWorkbenchBody(settings, input.body);
+    } catch (error) {
+        if (error instanceof WorkbenchPolicyInputError) throw new WorkbenchPlanningError(error.message, error.status);
+        throw error;
+    }
     const requestedAgentModelId = cleanId(input.body.agentModelId);
     if (requestedAgentModelId && !body.agentModelId) throw new WorkbenchPlanningError("所选智能体模型当前不可用，请重新选择", 400);
     const workspace = body.workspace || "image";

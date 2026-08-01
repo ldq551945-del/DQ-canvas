@@ -26,6 +26,10 @@ export type WorkbenchRequestBody = {
     modelOptions?: WorkbenchModelOption[];
 };
 
+export class WorkbenchPolicyInputError extends Error {
+    readonly status = 400;
+}
+
 type AuthSettings = Awaited<ReturnType<typeof getAuthSettings>>;
 
 export function buildTrustedWorkbenchBody(settings: AuthSettings, body: WorkbenchRequestBody): WorkbenchRequestBody {
@@ -40,9 +44,17 @@ export function buildTrustedWorkbenchBody(settings: AuthSettings, body: Workbenc
     const availableModelIds = availableModelOptions.map((model) => model.id);
     const modelKey = workspace === "image" ? "imageModel" : "videoModel";
     const manualSelectionRequested = body.smartPlanning === false;
-    const requestedModelIds = Array.from(new Set(Array.isArray(body.modelIds) ? body.modelIds : []))
+    const submittedModelIds = Array.isArray(body.modelIds)
+        ? body.modelIds
+              .filter((id): id is string => typeof id === "string")
+              .map((id) => id.trim())
+              .filter(Boolean)
+        : [];
+    const explicitModelIdsSubmitted = manualSelectionRequested && Array.isArray(body.modelIds) && body.modelIds.length > 0;
+    const requestedModelIds = Array.from(new Set(submittedModelIds))
         .filter((id) => availableModelIds.includes(id))
         .slice(0, 6);
+    if (explicitModelIdsSubmitted && !requestedModelIds.length) throw new WorkbenchPolicyInputError("所选媒体模型当前不可用，请重新选择");
     // An explicit media selection locks the candidate set. Other manual edits
     // (for example a Skill, Agent model, or generation parameter) still leave
     // media selection to the Agent, so an empty modelIds list must not disable

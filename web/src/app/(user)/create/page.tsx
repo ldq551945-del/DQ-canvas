@@ -46,7 +46,7 @@ export default function CreatePage() {
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [historyOpen, setHistoryOpen] = useState(false);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
-    const site = publicSettings?.site || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = publicSettings?.site || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const agent = useCreateAgent();
     const openAgentConversation = agent.openConversation;
     const newAgentConversation = agent.newConversation;

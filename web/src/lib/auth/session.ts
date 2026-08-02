@@ -4,7 +4,7 @@ import type { NextResponse } from "next/server";
 import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
 import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
 
-const SESSION_COOKIE_NAME = "vozeb_pro_session";
+const SESSION_COOKIE_NAME = "dq_session";
 
 type CurrentUser = PublicUser;
 
@@ -48,7 +48,7 @@ export function clearSessionCookie(response: NextResponse, request?: Request) {
 }
 
 function shouldUseSecureSessionCookie(request?: Request) {
-    const override = process.env.VOZEB_PRO_COOKIE_SECURE?.trim().toLowerCase();
+    const override = process.env.DQ_COOKIE_SECURE?.trim().toLowerCase();
     if (["1", "true", "yes", "on"].includes(override || "")) return true;
     if (["0", "false", "no", "off"].includes(override || "")) return false;
 

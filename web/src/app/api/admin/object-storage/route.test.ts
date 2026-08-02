@@ -21,7 +21,7 @@ const settings = {
     endpoint: "https://oss.example.com",
     region: "auto",
     bucket: "media",
-    prefix: "vozeb-pro",
+    prefix: "dq",
     forcePathStyle: false,
     hasAccessKeyId: true,
     hasSecretAccessKey: true,

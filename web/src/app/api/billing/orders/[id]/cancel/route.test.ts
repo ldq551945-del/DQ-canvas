@@ -15,7 +15,7 @@ describe("POST /api/billing/orders/[id]/cancel", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user", role: "user" });
-        mocks.cancelBillingOrderForUser.mockResolvedValue({ id: "order", orderNo: "VZ001", status: "canceled" });
+        mocks.cancelBillingOrderForUser.mockResolvedValue({ id: "order", orderNo: "DQ001", status: "canceled" });
     });
 
     it("cancels the current user's pending order", async () => {

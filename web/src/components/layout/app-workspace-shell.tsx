@@ -22,7 +22,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [sidebarExpanded, setSidebarExpanded] = useState(false);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const tool = navigationToolForPathname(pathname);
     const fullscreen = /^\/canvas\/[^/]+/.test(pathname);
     const rootSlug = pathname.split("/").filter(Boolean)[0] || "";
@@ -45,7 +45,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                         >
                             <Menu className="size-5" />
                         </button>
-                        <Link href="/create" className="inline-flex shrink-0 items-center lg:hidden" aria-label={site.title || "VOZEB PRO"}>
+                        <Link href="/create" className="inline-flex shrink-0 items-center lg:hidden" aria-label={site.title || "DQ-绘图"}>
                             <SiteLogo logoUrl={site.logoUrl} className="size-6" />
                         </Link>
                         <button

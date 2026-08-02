@@ -33,7 +33,7 @@ describe("creative run event signal", () => {
 
     it("wakes the local SSE waiter from a PostgreSQL notification", async () => {
         const waiting = waitForCreativeRunEvent("run-remote", 10_000);
-        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledWith("vozeb_pro_run_events", expect.any(Function)));
+        await vi.waitFor(() => expect(mocks.subscribe).toHaveBeenCalledWith("dq_run_events", expect.any(Function)));
         mocks.notify?.("run-remote");
         await expect(waiting).resolves.toBe(true);
     });

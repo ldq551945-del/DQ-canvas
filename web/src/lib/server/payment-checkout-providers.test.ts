@@ -7,7 +7,7 @@ import { checkoutFromMetadata, checkoutMetadata, createProviderCheckout } from "
 
 const order = {
     id: "order-one",
-    orderNo: "VZ001",
+    orderNo: "DQ001",
     productId: "product",
     userId: "user",
     productKind: "plan",
@@ -33,8 +33,8 @@ const config: PaymentRuntimeConfig = {
     saved: { providers: {} },
     providers: {},
     valuesByEnvName: {
-        VOZEB_PRO_STRIPE_SECRET_KEY: "sk_test_secret",
-        VOZEB_PRO_STRIPE_API_BASE: "https://stripe.test",
+        DQ_STRIPE_SECRET_KEY: "sk_test_secret",
+        DQ_STRIPE_API_BASE: "https://stripe.test",
     },
 };
 
@@ -54,7 +54,7 @@ describe("payment checkout providers", () => {
         expect(fetchMock).toHaveBeenCalledWith(
             "https://stripe.test/v1/checkout/sessions",
             expect.objectContaining({
-                headers: expect.objectContaining({ "Idempotency-Key": "vozeb-pro-checkout-order-one" }),
+                headers: expect.objectContaining({ "Idempotency-Key": "dq-checkout-order-one" }),
             }),
         );
     });
@@ -133,7 +133,7 @@ describe("payment checkout providers", () => {
     it("rejects a face-to-face QR response for another merchant order", async () => {
         vi.stubGlobal(
             "fetch",
-            vi.fn(async () => signedAlipayResponse({ alipay_trade_precreate_response: { code: "10000", msg: "Success", out_trade_no: "VZ-OTHER", qr_code: "https://qr.alipay.test/other" } })),
+            vi.fn(async () => signedAlipayResponse({ alipay_trade_precreate_response: { code: "10000", msg: "Success", out_trade_no: "DQ-OTHER", qr_code: "https://qr.alipay.test/other" } })),
         );
 
         await expect(createProviderCheckout("alipay", { ...order, provider: "alipay", currency: "CNY" }, {}, alipayConfig("face_to_face"))).rejects.toThrow("支付宝当面付返回的订单号不匹配");
@@ -164,11 +164,11 @@ function alipayConfig(mode = "official"): PaymentRuntimeConfig {
         saved: { providers: {} },
         providers: { alipay: { enabled: true, saved: true } },
         valuesByEnvName: {
-            VOZEB_PRO_ALIPAY_MODE: mode,
-            VOZEB_PRO_ALIPAY_APP_ID: "2026000000000000",
-            VOZEB_PRO_ALIPAY_PRIVATE_KEY: alipayPrivateKey,
-            VOZEB_PRO_ALIPAY_PUBLIC_KEY: alipayPublicKey,
-            VOZEB_PRO_ALIPAY_GATEWAY_URL: "https://alipay.test/gateway.do",
+            DQ_ALIPAY_MODE: mode,
+            DQ_ALIPAY_APP_ID: "2026000000000000",
+            DQ_ALIPAY_PRIVATE_KEY: alipayPrivateKey,
+            DQ_ALIPAY_PUBLIC_KEY: alipayPublicKey,
+            DQ_ALIPAY_GATEWAY_URL: "https://alipay.test/gateway.do",
         },
     };
 }

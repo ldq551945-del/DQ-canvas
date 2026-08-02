@@ -7,7 +7,7 @@ import sharp from "sharp";
 
 import { createLocalMediaResponse, MAX_MEDIA_RANGE_BYTES, mediaContentDisposition, requestedImageVariant } from "./local-media-response";
 
-const directory = resolve(tmpdir(), `vozeb-pro-media-response-${process.pid}-${Date.now()}`);
+const directory = resolve(tmpdir(), `dq-media-response-${process.pid}-${Date.now()}`);
 const filePath = resolve(directory, "sample.mp4");
 const largeFilePath = resolve(directory, "large.mp4");
 const imagePath = resolve(directory, "sample.png");

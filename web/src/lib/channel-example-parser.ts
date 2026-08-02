@@ -362,7 +362,7 @@ function collectReferenceFields(value: Record<string, unknown>) {
 }
 
 function inferReferenceRule(raw: string, kind: ExampleKind, protocol: SystemChannelProtocol, fields: string[]) {
-    if (/multipart\/form-data|\s-F\s|--form\b/i.test(raw)) return "参考图使用 multipart/form-data 文件上传，由 VOZEB PRO 自动组装。";
+    if (/multipart\/form-data|\s-F\s|--form\b/i.test(raw)) return "参考图使用 multipart/form-data 文件上传，由 DQ-绘图 自动组装。";
     if (protocol === "sub2api") return "图生图使用 JSON 请求体；参考图字段为 image_urls 字符串数组。站内素材会先保存到服务器，再使用站点地址提供给上游读取。";
     if (!fields.length && kind !== "image-edit" && kind !== "video") return "";
     const fieldText = fields.length ? fields.join("、") : kind === "image-edit" ? "image/images/ref_assets" : "image/images/referenceImages";

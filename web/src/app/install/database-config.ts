@@ -28,16 +28,16 @@ export function generateDeploymentSecret() {
 export function buildDeploymentSnippets(config: DatabaseConfig) {
     const host = config.host.trim() || "localhost";
     const port = config.port.trim() || "5432";
-    const database = config.database.trim() || "vozeb_pro";
-    const username = config.username.trim() || "vozeb_pro";
+    const database = config.database.trim() || "dq";
+    const username = config.username.trim() || "dq";
     const databaseUrl = buildPostgresUrl({ database, host, password: config.password, port, username });
     const databaseEnv = config.mode === "docker" ? `POSTGRES_DB=${database}\nPOSTGRES_USER=${username}\nPOSTGRES_PASSWORD=${config.password}` : `DATABASE_URL=${databaseUrl}`;
-    const envText = `VOZEB_PRO_DATABASE_PROVIDER=postgres
+    const envText = `DQ_DATABASE_PROVIDER=postgres
 ${databaseEnv}
-VOZEB_PRO_DATABASE_POOL_MAX=10
-VOZEB_PRO_DATABASE_SSL=${config.ssl ? "1" : "0"}
-VOZEB_PRO_ENCRYPTION_KEY=${config.encryptionKey}
-VOZEB_PRO_MAINTENANCE_TOKEN=${config.maintenanceToken}${config.mode === "baota" ? "\nVOZEB_PRO_TRUSTED_PROXY_HOPS=1" : ""}`;
+DQ_DATABASE_POOL_MAX=10
+DQ_DATABASE_SSL=${config.ssl ? "1" : "0"}
+DQ_ENCRYPTION_KEY=${config.encryptionKey}
+DQ_MAINTENANCE_TOKEN=${config.maintenanceToken}${config.mode === "baota" ? "\nDQ_TRUSTED_PROXY_HOPS=1" : ""}`;
 
     return {
         envText,
@@ -65,7 +65,7 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
       POSTGRES_USER: ${quoteYaml(username)}
       POSTGRES_PASSWORD: ${quoteYaml(config.password)}
     volumes:
-      - vozeb-pro-postgres:/var/lib/postgresql/data
+      - dq-postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${username} -d ${database}"]
       interval: 5s
@@ -74,17 +74,17 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
     restart: unless-stopped
 
   app:
-    image: ghcr.io/csyqlz/vozeb-pro:latest
+    image: ghcr.io/ldq551945-del/dq:latest
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - vozeb-pro-data:/app/web/.data
+      - dq-data:/app/web/.data
     environment:
-      VOZEB_PRO_DATABASE_PROVIDER: "postgres"
+      DQ_DATABASE_PROVIDER: "postgres"
       DATABASE_URL: ${quoteYaml(databaseUrl)}
-      VOZEB_PRO_DATABASE_SSL: "0"
-      VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      DQ_DATABASE_SSL: "0"
+      DQ_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      DQ_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,54 +94,54 @@ ${appHealthcheck()}
 ${workerService(config.maintenanceToken, "http://app:3000")}
 
 volumes:
-  vozeb-pro-data:
-  vozeb-pro-postgres:`;
+  dq-data:
+  dq-postgres:`;
 }
 
 function externalCompose(config: DatabaseConfig, databaseUrl: string) {
     return `services:
   app:
-    image: ghcr.io/csyqlz/vozeb-pro:latest
+    image: ghcr.io/ldq551945-del/dq:latest
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
-      - vozeb-pro-data:/app/web/.data
+      - dq-data:/app/web/.data
     environment:
-      VOZEB_PRO_DATABASE_PROVIDER: "postgres"
+      DQ_DATABASE_PROVIDER: "postgres"
       DATABASE_URL: ${quoteYaml(databaseUrl)}
-      VOZEB_PRO_DATABASE_SSL: "${config.ssl ? "1" : "0"}"
-      VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      DQ_DATABASE_SSL: "${config.ssl ? "1" : "0"}"
+      DQ_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      DQ_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
 ${appHealthcheck()}
     restart: unless-stopped
 
 ${workerService(config.maintenanceToken, "http://app:3000")}
 
 volumes:
-  vozeb-pro-data:`;
+  dq-data:`;
 }
 
 function baotaCompose(config: DatabaseConfig, databaseUrl: string) {
     return `services:
   app:
-    image: ghcr.io/csyqlz/vozeb-pro:latest
+    image: ghcr.io/ldq551945-del/dq:latest
     network_mode: host
     volumes:
-      - vozeb-pro-data:/app/web/.data
+      - dq-data:/app/web/.data
     environment:
-      VOZEB_PRO_DATABASE_PROVIDER: "postgres"
+      DQ_DATABASE_PROVIDER: "postgres"
       DATABASE_URL: ${quoteYaml(databaseUrl)}
-      VOZEB_PRO_DATABASE_SSL: "0"
-      VOZEB_PRO_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
-      VOZEB_PRO_TRUSTED_PROXY_HOPS: "1"
+      DQ_DATABASE_SSL: "0"
+      DQ_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      DQ_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      DQ_TRUSTED_PROXY_HOPS: "1"
 ${appHealthcheck()}
     restart: unless-stopped
 
 ${workerService(config.maintenanceToken, "http://127.0.0.1:3000", true)}
 
 volumes:
-  vozeb-pro-data:`;
+  dq-data:`;
 }
 
 function appHealthcheck() {
@@ -155,11 +155,11 @@ function appHealthcheck() {
 
 function workerService(maintenanceToken: string, origin: string, hostNetwork = false) {
     return `  generation-worker:
-    image: ghcr.io/csyqlz/vozeb-pro:latest
+    image: ghcr.io/ldq551945-del/dq:latest
     command: ["node", "/app/web/scripts/generation-worker.mjs"]${hostNetwork ? "\n    network_mode: host" : ""}
     environment:
-      VOZEB_PRO_WORKER_API_ORIGIN: ${origin}
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${quoteYaml(maintenanceToken)}
+      DQ_WORKER_API_ORIGIN: ${origin}
+      DQ_MAINTENANCE_TOKEN: ${quoteYaml(maintenanceToken)}
     depends_on:
       app:
         condition: service_healthy

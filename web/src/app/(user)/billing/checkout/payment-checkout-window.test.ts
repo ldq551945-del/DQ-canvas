@@ -50,7 +50,7 @@ describe("payment checkout window", () => {
 });
 
 function checkout(patch: Partial<PaymentCheckout>): PaymentCheckout {
-    return { provider: "stripe", orderId: "order", orderNo: "VZ001", kind: "redirect", ...patch };
+    return { provider: "stripe", orderId: "order", orderNo: "DQ001", kind: "redirect", ...patch };
 }
 
 function popupWindow() {

@@ -5,7 +5,7 @@ import { ArrowLeft, CheckCircle2, CloudCog, DatabaseBackup, Scale } from "lucide
 const terms = [
     {
         title: "开源协议与致谢",
-        body: "VOZEB PRO 是面向 AI 创作、画布、提示词管理和素材沉淀的开源项目。你可以在遵守 AGPL-3.0 协议和原作者致谢要求的前提下部署、修改和分发。",
+        body: "DQ-绘图 是面向 AI 创作、画布、提示词管理和素材沉淀的开源项目。你可以在遵守 AGPL-3.0 协议和原作者致谢要求的前提下部署、修改和分发。",
         icon: <Scale className="size-5" />,
     },
     {
@@ -27,7 +27,7 @@ const terms = [
 
 export const metadata: Metadata = {
     title: "使用条款",
-    description: "查看 VOZEB PRO 的开源协议、服务配置、内容管理与备份使用说明。",
+    description: "查看 DQ-绘图 的开源协议、服务配置、内容管理与备份使用说明。",
     alternates: { canonical: "/terms" },
 };
 
@@ -47,10 +47,10 @@ export default function TermsPage() {
                     <div className="border-b border-stone-200 bg-stone-950 px-6 py-8 text-white sm:px-8 dark:border-white/10 dark:bg-white/[0.06]">
                         <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium text-cyan-100">
                             <Scale className="size-3.5" />
-                            VOZEB PRO Legal
+                            DQ-绘图 Legal
                         </div>
                         <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">使用条款</h1>
-                        <p className="mt-4 max-w-2xl text-base leading-8 text-stone-200 dark:text-stone-300">使用、部署或二次开发 VOZEB PRO 前，请确认你已理解开源协议、服务配置责任、内容合规和升级备份要求。</p>
+                        <p className="mt-4 max-w-2xl text-base leading-8 text-stone-200 dark:text-stone-300">使用、部署或二次开发 DQ-绘图 前，请确认你已理解开源协议、服务配置责任、内容合规和升级备份要求。</p>
                     </div>
 
                     <div className="grid gap-4 p-4 sm:p-6 lg:grid-cols-2">

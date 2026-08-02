@@ -76,7 +76,7 @@ describe("site metadata routes", () => {
         expect(response.headers.get("location")).toBe("/icon.svg");
     });
 
-    it("falls back to the infinite-evolution icon when favicon points back to itself", async () => {
+    it("falls back to the DQ drawing icon when favicon points back to itself", async () => {
         mocks.getPublicSiteSettings.mockResolvedValue({ title: "默认站点", iconUrl: "/favicon.ico", logoUrl: "/logo.svg" });
 
         const response = await favicon(new Request("http://localhost:3000/api/site-icon"));

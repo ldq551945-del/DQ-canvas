@@ -37,7 +37,7 @@ describe("creative review service", () => {
                         },
                     ],
                 }),
-                { status: 200, headers: { "Content-Type": "application/json", "x-vozeb-pro-points-cost": "2" } },
+                { status: 200, headers: { "Content-Type": "application/json", "x-dq-points-cost": "2" } },
             ),
         );
 
@@ -54,15 +54,15 @@ describe("creative review service", () => {
         expect(fetchInternalApi).toHaveBeenCalledWith("http://localhost:3000/api/ai/system/text-channel/responses", expect.objectContaining({ body: expect.stringContaining('"type":"input_image"') }));
         expect(JSON.parse(fetchInternalApi.mock.calls[0][1].body).model).toBe("vendor-planner");
         const headers = new Headers(fetchInternalApi.mock.calls[0][1].headers);
-        expect(headers.get("x-vozeb-pro-logical-model")).toBe("planner");
-        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toMatch(/^creative-review:[a-f0-9]{32}$/);
+        expect(headers.get("x-dq-logical-model")).toBe("planner");
+        expect(headers.get("x-dq-points-idempotency-key")).toMatch(/^creative-review:[a-f0-9]{32}$/);
     });
 
     it("refunds an invalid structured review and preserves the result as unavailable", async () => {
         fetchInternalApi.mockResolvedValueOnce(
             new Response(JSON.stringify({ output: [{ type: "function_call", name: "review_creative_outputs", arguments: JSON.stringify({ status: "passed" }) }] }), {
                 status: 200,
-                headers: { "Content-Type": "application/json", "x-vozeb-pro-points-cost": "3", "x-vozeb-pro-points-record-id": "points-review-3" },
+                headers: { "Content-Type": "application/json", "x-dq-points-cost": "3", "x-dq-points-record-id": "points-review-3" },
             }),
         );
 
@@ -82,7 +82,7 @@ describe("creative review service", () => {
         fetchInternalApi.mockResolvedValueOnce(
             new Response(JSON.stringify({ output: [{ type: "function_call", name: "review_creative_outputs", arguments: "{" }] }), {
                 status: 200,
-                headers: { "Content-Type": "application/json", "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-review-free" },
+                headers: { "Content-Type": "application/json", "x-dq-points-cost": "0", "x-dq-points-record-id": "points-review-free" },
             }),
         );
 

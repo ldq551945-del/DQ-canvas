@@ -57,7 +57,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
     const enabledPlans = settings.entitlements.plans.filter((plan) => plan.enabled);
     const plansReady = settings.entitlements.enabled && enabledPlans.length >= 2 && enabledProducts > 0;
     const mailReady = Boolean(settings.mail.host.trim() && settings.mail.username.trim() && settings.mail.password.trim());
-    const encryptionReady = hasProductionSecret(process.env.VOZEB_PRO_ENCRYPTION_KEY);
+    const encryptionReady = hasProductionSecret(process.env.DQ_ENCRYPTION_KEY);
 
     const steps: AdminSetupStep[] = [
         {
@@ -109,7 +109,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
             facts: [
                 `真实渠道 ${paymentProviders.length} 个`,
                 paymentProviders.length ? paymentProviders.join(" / ") : "Stripe / 支付宝 / 微信 / PayPly 待配置",
-                hasPaymentProductionSecret(process.env.VOZEB_PRO_PAYMENT_WEBHOOK_SECRET) ? "通用回调密钥已设置" : "通用回调密钥待设置",
+                hasPaymentProductionSecret(process.env.DQ_PAYMENT_WEBHOOK_SECRET) ? "通用回调密钥已设置" : "通用回调密钥待设置",
             ],
         },
         {
@@ -118,7 +118,7 @@ function buildAdminSetupSummary(input: { settings: AuthSettings; userSummary: Pu
             eyebrow: "账号可信度",
             status: mailReady && encryptionReady ? "done" : mailReady || encryptionReady ? "attention" : "pending",
             statusLabel: mailReady && encryptionReady ? "已完成" : "待加固",
-            description: mailReady && encryptionReady ? "SMTP 和生产加密密钥已经配置。" : "配置 SMTP 发信能力，并使用生产级 VOZEB_PRO_ENCRYPTION_KEY 保存后台凭据。",
+            description: mailReady && encryptionReady ? "SMTP 和生产加密密钥已经配置。" : "配置 SMTP 发信能力，并使用生产级 DQ_ENCRYPTION_KEY 保存后台凭据。",
             href: "/admin?section=settings",
             actionLabel: "配置安全",
             accent: "rose",

@@ -4,7 +4,7 @@ import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemA
 
 describe("system AI billing helpers", () => {
     it("preserves a zero-cost consumption record so its quota can be refunded", () => {
-        const billing = readSystemAiBilling(new Headers({ "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "points-free-text" }));
+        const billing = readSystemAiBilling(new Headers({ "x-dq-points-cost": "0", "x-dq-points-record-id": "points-free-text" }));
 
         expect(billing).toEqual({ pointsCost: 0, pointsRecordId: "points-free-text" });
         expect(hasSystemAiCharge(billing)).toBe(true);
@@ -16,6 +16,6 @@ describe("system AI billing helpers", () => {
 
         expect(first).toBe(second);
         expect(first).toMatch(/^workbench-plan:[a-f0-9]{32}$/);
-        expect(systemAiBillingHeaders("planner", first)).toEqual({ "x-vozeb-pro-logical-model": "planner", "x-vozeb-pro-points-idempotency-key": first });
+        expect(systemAiBillingHeaders("planner", first)).toEqual({ "x-dq-logical-model": "planner", "x-dq-points-idempotency-key": first });
     });
 });

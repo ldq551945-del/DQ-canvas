@@ -33,7 +33,7 @@ function withLocalMediaParams(value: string, routes: string[], update: (params: 
     if (!url) return url;
     try {
         const absolute = /^[a-z][a-z\d+.-]*:/i.test(url);
-        const parsed = new URL(url, "http://vozeb.local");
+        const parsed = new URL(url, "http://dq.local");
         if (!routes.some((route) => parsed.pathname.startsWith(route))) return url;
         update(parsed.searchParams);
         return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;

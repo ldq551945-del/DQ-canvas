@@ -136,7 +136,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         <SectionTitle icon={<Globe2 className="size-4" />} title="基础信息" />
                         <div className="grid gap-4 md:grid-cols-2">
                             <LabeledControl label="网站标题">
-                                <Input value={settings.site.title} maxLength={40} placeholder="VOZEB PRO" onChange={(event) => updateSiteSetting("title", event.target.value)} />
+                                <Input value={settings.site.title} maxLength={40} placeholder="DQ-绘图" onChange={(event) => updateSiteSetting("title", event.target.value)} />
                             </LabeledControl>
                             <LabeledControl label="Logo URL">
                                 <div className="flex gap-2">
@@ -169,7 +169,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                                     <Input.TextArea value={settings.site.seoDescription} maxLength={180} rows={4} placeholder="用于搜索结果和社交分享摘要" onChange={(event) => updateSiteSetting("seoDescription", event.target.value)} />
                                 </LabeledControl>
                                 <LabeledControl label="SEO 关键词">
-                                    <Input value={settings.site.seoKeywords} maxLength={240} placeholder="VOZEB PRO,AI Agent,AI 绘图,AI 视频,画布,短剧" onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)} />
+                                    <Input value={settings.site.seoKeywords} maxLength={240} placeholder="DQ-绘图,AI Agent,AI 绘图,AI 视频,画布,短剧" onChange={(event) => updateSiteSetting("seoKeywords", event.target.value)} />
                                 </LabeledControl>
                             </div>
                         </div>
@@ -262,7 +262,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                         </div>
                         <div className="mt-5 space-y-4">
                             <LabeledControl label="版权所有">
-                                <Input value={settings.site.footerCopyright} maxLength={120} placeholder="© 2026 VOZEB PRO. All rights reserved." onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)} />
+                                <Input value={settings.site.footerCopyright} maxLength={120} placeholder="© 2026 DQ. All rights reserved." onChange={(event) => updateSiteSetting("footerCopyright", event.target.value)} />
                             </LabeledControl>
                             <div className="grid gap-4 md:grid-cols-2">
                                 <LabeledControl label="使用条款链接">
@@ -332,7 +332,7 @@ export function AdminSiteSection({ controller }: { controller: AdminDashboardCon
                             <div className="flex items-center gap-3">
                                 <SiteLogoPreview logoUrl={settings.site.logoUrl} />
                                 <div className="min-w-0">
-                                    <div className="truncate text-lg font-semibold">{settings.site.title || "VOZEB PRO"}</div>
+                                    <div className="truncate text-lg font-semibold">{settings.site.title || "DQ-绘图"}</div>
                                     <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">首页导航品牌</div>
                                 </div>
                             </div>
@@ -460,7 +460,7 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                                         </div>
                                         <div className="grid gap-3 lg:grid-cols-2">
                                             <LabeledControl label="邮箱账号">
-                                                <Input value={settings.mail.username} placeholder="csyqlz@gmail.com" onChange={(event) => updateMailSetting("username", event.target.value)} />
+                                                <Input value={settings.mail.username} placeholder="3275573660@qq.com" onChange={(event) => updateMailSetting("username", event.target.value)} />
                                             </LabeledControl>
                                             <LabeledControl label="授权码 / 密码">
                                                 <Input.Password value={settings.mail.password} placeholder="QQ 邮箱请填写 SMTP 授权码" onChange={(event) => updateMailSetting("password", event.target.value)} />
@@ -471,7 +471,7 @@ export function AdminSettingsSection({ controller }: { controller: AdminDashboar
                                                 <Input value={settings.mail.fromEmail} placeholder="默认使用邮箱账号" onChange={(event) => updateMailSetting("fromEmail", event.target.value)} />
                                             </LabeledControl>
                                             <LabeledControl label="发件名称">
-                                                <Input value={settings.mail.fromName} placeholder="VOZEB PRO" onChange={(event) => updateMailSetting("fromName", event.target.value)} />
+                                                <Input value={settings.mail.fromName} placeholder="DQ-绘图" onChange={(event) => updateMailSetting("fromName", event.target.value)} />
                                             </LabeledControl>
                                         </div>
                                         <LabeledControl label="测试收件邮箱">

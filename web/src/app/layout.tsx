@@ -88,7 +88,7 @@ export default async function RootLayout({
                     id="theme-script"
                     strategy="beforeInteractive"
                     dangerouslySetInnerHTML={{
-                        __html: `try{var s=JSON.parse(localStorage.getItem("vozeb-pro:theme_store")||"{}");var t=s.state&&s.state.theme==="dark"?"dark":"light";document.documentElement.classList.toggle("dark",t==="dark");document.documentElement.style.colorScheme=t}catch(e){}`,
+                        __html: `try{var s=JSON.parse(localStorage.getItem("dq:theme_store")||"{}");var t=s.state&&s.state.theme==="dark"?"dark":"light";document.documentElement.classList.toggle("dark",t==="dark");document.documentElement.style.colorScheme=t}catch(e){}`,
                     }}
                 />
                 <AntdRegistry>

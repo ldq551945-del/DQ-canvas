@@ -1,7 +1,7 @@
 import { basename, dirname, resolve } from "node:path";
 
 export function getServerDataDir() {
-    const configuredDir = process.env.VOZEB_PRO_DATA_DIR?.trim();
+    const configuredDir = process.env.DQ_DATA_DIR?.trim();
     if (configuredDir) return resolve(/*turbopackIgnore: true*/ configuredDir);
 
     const cwd = /*turbopackIgnore: true*/ process.cwd();

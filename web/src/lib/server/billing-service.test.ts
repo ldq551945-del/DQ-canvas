@@ -76,7 +76,7 @@ const baseUser = {
 } satisfies UserRecord;
 const pointsOrder = {
     id: "order-points",
-    orderNo: "VZ-POINTS",
+    orderNo: "DQ-POINTS",
     productId: "points-500",
     userId: baseUser.id,
     productKind: "points",
@@ -164,7 +164,7 @@ describe("billing payment completion", () => {
     });
 
     it("still applies plan products to the user and creates an assignment", async () => {
-        mocks.order = { ...pointsOrder, id: "order-plan", orderNo: "VZ-PLAN", productKind: "plan", planId: "creator", periodDays: 30, dailyPoints: 10 };
+        mocks.order = { ...pointsOrder, id: "order-plan", orderNo: "DQ-PLAN", productKind: "plan", planId: "creator", periodDays: 30, dailyPoints: 10 };
         const assignment = {
             id: "assignment-one",
             userId: baseUser.id,

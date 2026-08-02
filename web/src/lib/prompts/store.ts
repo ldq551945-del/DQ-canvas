@@ -62,7 +62,7 @@ type PromptListOptions = {
 
 const PROMPT_DATA_FILE = "prompts.json";
 const DEFAULT_COVER_URL = "";
-const LEGACY_PROMPT_SEED_SOURCE_PREFIX = "vozeb-pro/original-author-prompts";
+const LEGACY_PROMPT_SEED_SOURCE_PREFIX = "dq/original-author-prompts";
 const AWESOME_PROMPT_SEED_SOURCE_PREFIX = "tigerowo/awesome-gpt-image-2-prompts";
 const AWESOME_PROMPT_SEED_SOURCE = `${AWESOME_PROMPT_SEED_SOURCE_PREFIX}:60e9c65baecfd6d6d51ac4e4d87f146af834bb64:v3`;
 const MANAGED_PROMPT_SEED_SOURCE_PREFIXES = [LEGACY_PROMPT_SEED_SOURCE_PREFIX, AWESOME_PROMPT_SEED_SOURCE_PREFIX];

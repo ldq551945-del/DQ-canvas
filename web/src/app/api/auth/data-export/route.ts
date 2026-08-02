@@ -16,7 +16,7 @@ export async function GET() {
 
     try {
         const exportedAt = new Date();
-        const fileName = `vozeb-pro-personal-data-${exportedAt.toISOString().slice(0, 10)}.json`;
+        const fileName = `dq-personal-data-${exportedAt.toISOString().slice(0, 10)}.json`;
         const data = await buildUserDataExport(currentUser.id);
         return new NextResponse(JSON.stringify(data, null, 2), {
             headers: {

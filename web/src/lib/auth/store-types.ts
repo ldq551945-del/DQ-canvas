@@ -1,7 +1,7 @@
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
-import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
+import { DQ_COMMUNITY_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
@@ -327,15 +327,15 @@ export type SiteSocialSettings = Record<
 >;
 
 export const DEFAULT_SITE_SOCIALS: SiteSocialSettings = {
-    email: { enabled: true, label: "邮箱联系", url: "mailto:csyqlz@gmail.com" },
+    email: { enabled: true, label: "邮箱联系", url: "mailto:3275573660@qq.com" },
     telegram: { enabled: false, label: "Telegram", url: "" },
     x: { enabled: false, label: "X", url: "" },
     instagram: { enabled: false, label: "Instagram", url: "" },
 };
 
 export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [
-    { id: "vozeb-pro-home", label: "VOZEB PRO", url: "https://www.vozeb.com/", enabled: true },
-    { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: VOZEB_QQ_GROUP_URL, enabled: true },
+    { id: "dq-home", label: "DQ-绘图", url: "https://store.dqin-666zj.top/", enabled: true },
+    { id: "qq-dq-open-source", label: "DQ 开源交流 社区", url: DQ_COMMUNITY_URL, enabled: true },
     { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
 ];
 

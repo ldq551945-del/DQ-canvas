@@ -63,8 +63,8 @@ function stableMediaUrl(value: unknown) {
     const source = text(value, 2000);
     if (!source) return "";
     try {
-        const path = new URL(source, "http://vozeb.local").pathname;
-        return path.startsWith("/api/reference-assets/") || path.startsWith("/api/generation-log-assets/") ? `${path}${new URL(source, "http://vozeb.local").search}` : "";
+        const path = new URL(source, "http://dq.local").pathname;
+        return path.startsWith("/api/reference-assets/") || path.startsWith("/api/generation-log-assets/") ? `${path}${new URL(source, "http://dq.local").search}` : "";
     } catch {
         return "";
     }

@@ -458,7 +458,7 @@ export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
             const value = link as Partial<SiteFriendLink>;
             return {
                 id: normalizeText(value.id, `friend-${index + 1}`, 80),
-                label: normalizeText(value.url?.replace(/\/$/, "") === "https://www.vozeb.com" ? "VOZEB PRO" : value.label, "友情链接", 32),
+                label: normalizeText(value.url?.replace(/\/$/, "") === "https://store.dqin-666zj.top" ? "DQ-绘图" : value.label, "友情链接", 32),
                 url: normalizeLinkUrl(value.url, ""),
                 enabled: value.enabled !== false,
             };
@@ -523,9 +523,9 @@ export function normalizeText(value: unknown, fallback: string, maxLength: numbe
 }
 
 export function repairKnownMojibakeText(value: string) {
-    if (value.includes("VOZEB PRO") && value.includes("AI") && !value.includes("绘图") && value.includes(",")) return DEFAULT_SITE_SETTINGS.seoKeywords;
-    if (value.includes("VOZEB PRO") && value.includes("AI") && !value.includes("工作台")) return DEFAULT_SITE_SETTINGS.seoDescription;
-    if (value.includes("2026 VOZEB PRO") && !value.startsWith("©")) return "© 2026 VOZEB PRO. All rights reserved.";
+    if (value.includes("DQ-绘图") && value.includes("AI") && !value.includes("绘图") && value.includes(",")) return DEFAULT_SITE_SETTINGS.seoKeywords;
+    if (value.includes("DQ-绘图") && value.includes("AI") && !value.includes("工作台")) return DEFAULT_SITE_SETTINGS.seoDescription;
+    if (value.includes("2026 DQ") && !value.startsWith("©")) return "© 2026 DQ. All rights reserved.";
     if (value.startsWith("QQ ") && !value.includes("邮箱")) return "QQ 邮箱";
     return repairUtf8MojibakeText(value);
 }
@@ -737,13 +737,13 @@ export function normalizeCdkCode(value: string) {
 export function generateCdkPlainCode() {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     const chars = Array.from(randomBytes(20), (byte) => alphabet[byte % alphabet.length]).join("");
-    return `VZ-${chars.slice(0, 5)}-${chars.slice(5, 10)}-${chars.slice(10, 15)}-${chars.slice(15, 20)}`;
+    return `DQ-${chars.slice(0, 5)}-${chars.slice(5, 10)}-${chars.slice(10, 15)}-${chars.slice(15, 20)}`;
 }
 
 export function formatCdkCodeForDisplay(value: string) {
     const code = normalizeCdkCode(value);
     if (!code) return "";
-    if (code.startsWith("VZ") && code.length === 22) return `${code.slice(0, 2)}-${code.slice(2, 7)}-${code.slice(7, 12)}-${code.slice(12, 17)}-${code.slice(17, 22)}`;
+    if (code.startsWith("DQ") && code.length === 22) return `${code.slice(0, 2)}-${code.slice(2, 7)}-${code.slice(7, 12)}-${code.slice(12, 17)}-${code.slice(17, 22)}`;
     return code;
 }
 

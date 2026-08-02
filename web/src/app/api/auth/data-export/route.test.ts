@@ -13,7 +13,7 @@ describe("GET /api/auth/data-export", () => {
         vi.clearAllMocks();
         mocks.checkRateLimit.mockResolvedValue({ allowed: true, remaining: 2, resetAt: Date.now() + 1000 });
         mocks.rateLimitHeaders.mockReturnValue({ "Retry-After": "60" });
-        mocks.buildUserDataExport.mockResolvedValue({ format: "vozeb-pro-personal-data", version: 1 });
+        mocks.buildUserDataExport.mockResolvedValue({ format: "dq-personal-data", version: 1 });
     });
 
     it("requires an authenticated user", async () => {
@@ -32,7 +32,7 @@ describe("GET /api/auth/data-export", () => {
 
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toContain("application/json");
-        expect(response.headers.get("content-disposition")).toContain("vozeb-pro-personal-data-");
+        expect(response.headers.get("content-disposition")).toContain("dq-personal-data-");
         expect(response.headers.get("cache-control")).toBe("private, no-store");
         expect(response.headers.get("x-content-type-options")).toBe("nosniff");
         expect(mocks.buildUserDataExport).toHaveBeenCalledWith("user-one");

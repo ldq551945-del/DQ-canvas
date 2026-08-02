@@ -24,7 +24,7 @@ describe("directAgentPlan", () => {
     });
 
     it("保留零积分文本流水用于失败时撤销套餐次数", () => {
-        expect(readFunctionCallResult("{}", new Headers({ "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "free-agent-plan" }))).toMatchObject({ pointsCost: 0, pointsRecordId: "free-agent-plan" });
+        expect(readFunctionCallResult("{}", new Headers({ "x-dq-points-cost": "0", "x-dq-points-record-id": "free-agent-plan" }))).toMatchObject({ pointsCost: 0, pointsRecordId: "free-agent-plan" });
     });
 
     it("画布本轮选中图片会覆盖模型误选的历史编辑目标", () => {

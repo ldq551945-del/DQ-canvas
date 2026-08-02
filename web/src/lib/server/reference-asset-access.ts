@@ -49,7 +49,7 @@ function sign(token: string, purpose: string, expires: number, secret: string) {
 }
 
 function signingSecret() {
-    return process.env.VOZEB_PRO_REFERENCE_ASSET_SIGNING_KEY?.trim() || process.env.VOZEB_PRO_ENCRYPTION_KEY?.trim() || "";
+    return process.env.DQ_REFERENCE_ASSET_SIGNING_KEY?.trim() || process.env.DQ_ENCRYPTION_KEY?.trim() || "";
 }
 
 function normalizeOrigin(value: string) {

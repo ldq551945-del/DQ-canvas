@@ -2,7 +2,7 @@ export const REFERENCE_ASSET_SIGNATURE_PURPOSE = "provider-read";
 
 export function isReferenceAssetUrl(value: string) {
     try {
-        return new URL(value, "https://vozeb.invalid").pathname.startsWith("/api/reference-assets/");
+        return new URL(value, "https://dq.invalid").pathname.startsWith("/api/reference-assets/");
     } catch {
         return false;
     }
@@ -10,7 +10,7 @@ export function isReferenceAssetUrl(value: string) {
 
 export function hasProviderReadSignatureShape(value: string) {
     try {
-        const url = new URL(value, "https://vozeb.invalid");
+        const url = new URL(value, "https://dq.invalid");
         const expires = url.searchParams.get("expires") || "";
         return url.pathname.startsWith("/api/reference-assets/") && url.searchParams.get("purpose") === REFERENCE_ASSET_SIGNATURE_PURPOSE && /^\d+$/.test(expires) && Number(expires) > 0 && Boolean(url.searchParams.get("signature"));
     } catch {

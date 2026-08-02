@@ -46,14 +46,14 @@ describe("video task upstream reconciliation", () => {
     it("forwards the maintenance worker identity when polling the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
         const task = videoTask();
-        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: task.upstream.id, status: "processing" }));
 
         await expect(queryVideoTaskUpstream(task, "http://localhost", "", task.userId)).resolves.toMatchObject({ state: "pending" });
 
         const headers = new Headers((mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit).headers);
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
-        expect(headers.get("x-vozeb-pro-worker-user-id")).toBe(task.userId);
+        expect(headers.get("x-dq-worker-user-id")).toBe(task.userId);
         expect(headers.has("cookie")).toBe(false);
     });
 

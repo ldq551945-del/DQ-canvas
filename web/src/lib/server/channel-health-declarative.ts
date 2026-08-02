@@ -20,7 +20,7 @@ export async function testDeclarativeChannelProtocol(baseUrl: string, apiKey: st
     const resultField = advanced.resultField || operation?.resultField;
     if (!createPath || !requestTemplate) return { ok: false, kind, model, status: 0, protocolKey: protocol, protocol: definition.label, error: `${definition.label} 缺少 ${kind} 创建路径或请求模板` };
 
-    const prompt = kind === "text" ? "Reply exactly OK." : kind === "image" ? "A single blue circle icon on a white background." : kind === "video" ? "A calm 4 second shot of a blue circle logo on a white background." : "VOZEB PRO audio health check.";
+    const prompt = kind === "text" ? "Reply exactly OK." : kind === "image" ? "A single blue circle icon on a white background." : kind === "video" ? "A calm 4 second shot of a blue circle logo on a white background." : "DQ-绘图 audio health check.";
     const values = {
         model,
         prompt,
@@ -156,8 +156,8 @@ function failed(kind: ChannelHealthKind, model: string, status: number, payload:
 }
 
 function pointsInfo(headers: Headers) {
-    const pointsCost = numericHeader(headers, "x-vozeb-pro-points-cost");
-    const pointsRemaining = numericHeader(headers, "x-vozeb-pro-points-remaining");
+    const pointsCost = numericHeader(headers, "x-dq-points-cost");
+    const pointsRemaining = numericHeader(headers, "x-dq-points-remaining");
     return {
         ...(pointsCost !== undefined ? { pointsCost } : {}),
         ...(pointsRemaining !== undefined ? { pointsRemaining } : {}),

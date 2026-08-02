@@ -10,7 +10,7 @@ import { AuthForm } from "@/components/auth/auth-form";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { landingNavigationTools, navigationTools } from "@/constant/navigation-tools";
-import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
+import { DQ_COMMUNITY_URL } from "@/constant/community";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -64,21 +64,21 @@ const defaultSite: {
     friendLinks: SiteFriendLink[];
     socials: SiteSocialSettings;
 } = {
-    title: "VOZEB PRO",
+    title: "DQ-绘图",
     logoUrl: "/logo.svg",
     seoDescription: "面向 Agent、图片、视频、画布与短剧生产的一体化 AI 创作工作台",
-    footerCopyright: "© 2026 VOZEB PRO. All rights reserved.",
+    footerCopyright: "© 2026 DQ. All rights reserved.",
     termsUrl: "/terms",
     privacyUrl: "/privacy",
     homeShowcaseMode: "random",
     homeShowcaseItems: [],
     friendLinks: [
-        { id: "vozeb-pro-home", label: "VOZEB PRO", url: "https://www.vozeb.com/", enabled: true },
-        { id: "qq-vozeb-open-source", label: "VOZEB 开源交流 QQ 群", url: VOZEB_QQ_GROUP_URL, enabled: true },
+        { id: "dq-home", label: "DQ-绘图", url: "https://store.dqin-666zj.top/", enabled: true },
+        { id: "qq-dq-open-source", label: "DQ 开源交流 社区", url: DQ_COMMUNITY_URL, enabled: true },
         { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
     ],
     socials: {
-        email: { enabled: true, label: "邮箱联系", url: "mailto:csyqlz@gmail.com" },
+        email: { enabled: true, label: "邮箱联系", url: "mailto:3275573660@qq.com" },
         telegram: { enabled: false, label: "Telegram", url: "" },
         x: { enabled: false, label: "X", url: "" },
         instagram: { enabled: false, label: "Instagram", url: "" },
@@ -141,7 +141,7 @@ export default function HomePage() {
     const showcaseCards = homeShowcaseItems;
     const previewItems = promptShowcase.filter((item) => item.coverUrl);
     const hasVerifiedUser = sessionReady && Boolean(user);
-    const siteTitle = site.title || "VOZEB PRO";
+    const siteTitle = site.title || "DQ-绘图";
 
     const moveNavIndicator = useCallback((index: number) => {
         const item = navItemRefs.current[index];

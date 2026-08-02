@@ -1,1 +1,1 @@
-export const VOZEB_QQ_GROUP_URL = "https://qm.qq.com/q/9MVLTxuRd6";
+export const DQ_COMMUNITY_URL = "https://store.dqin-666zj.top/community";

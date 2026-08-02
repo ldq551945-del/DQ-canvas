@@ -5,11 +5,11 @@ import { POSTGRESQL_SCHEMA_SQL } from "@/lib/server/database/schema";
 import { encryptSecretValue } from "@/lib/server/secret-crypto";
 import { mapPostgresSettings, readPostgresAnnouncementsPage, readPostgresAuthSettings, readPostgresCdkListData, readPostgresPublicUserData, upsertPostgresSystemChannels } from "./store-repository";
 
-const originalEncryptionKey = process.env.VOZEB_PRO_ENCRYPTION_KEY;
+const originalEncryptionKey = process.env.DQ_ENCRYPTION_KEY;
 
 afterEach(() => {
-    if (originalEncryptionKey === undefined) delete process.env.VOZEB_PRO_ENCRYPTION_KEY;
-    else process.env.VOZEB_PRO_ENCRYPTION_KEY = originalEncryptionKey;
+    if (originalEncryptionKey === undefined) delete process.env.DQ_ENCRYPTION_KEY;
+    else process.env.DQ_ENCRYPTION_KEY = originalEncryptionKey;
 });
 
 function mockExecutor(rows: Record<string, unknown>[][]) {
@@ -28,14 +28,14 @@ describe("PostgreSQL auth read paths", () => {
     });
 
     it("decrypts system channel API keys on the settings fast path", async () => {
-        process.env.VOZEB_PRO_ENCRYPTION_KEY = "31".repeat(32);
+        process.env.DQ_ENCRYPTION_KEY = "31".repeat(32);
         const encryptedApiKey = encryptSecretValue("provider-secret");
         const { executor } = mockExecutor([[{ id: "default" }], [], [{ id: "channel-one", name: "主渠道", base_url: "https://api.example.com/v1", api_key_ciphertext: encryptedApiKey, api_format: "openai", models: [], enabled: true }]]);
 
         const settings = await readPostgresAuthSettings(executor);
 
         expect(settings.systemChannels[0].apiKey).toBe("provider-secret");
-        expect(settings.systemChannels[0].apiKey).not.toContain("vozeb-pro-secret:v1:");
+        expect(settings.systemChannels[0].apiKey).not.toContain("dq-secret:v1:");
     });
 
     it("round-trips channel health snapshots through PostgreSQL", async () => {

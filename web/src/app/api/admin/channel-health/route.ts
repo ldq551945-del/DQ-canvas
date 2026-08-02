@@ -65,8 +65,8 @@ const VIDEO_HEALTH_REFERENCE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhE
 const GLOBAL_AIOPC_VIDEO_CREATE_PATH = "/videos/videos";
 const SEEDANCE_VIDEO_CREATE_PATH = "/contents/generations/tasks";
 const VIDEO_HEALTH_PATHS = [GLOBAL_AIOPC_VIDEO_CREATE_PATH, "/videos", "/video/generations", "/videos/generations", SEEDANCE_VIDEO_CREATE_PATH];
-const globalCooldownStore = globalThis as typeof globalThis & { __vozebProChannelHealthCooldowns?: Map<string, number> };
-const healthCooldowns = (globalCooldownStore.__vozebProChannelHealthCooldowns ??= new Map<string, number>());
+const globalCooldownStore = globalThis as typeof globalThis & { __dqChannelHealthCooldowns?: Map<string, number> };
+const healthCooldowns = (globalCooldownStore.__dqChannelHealthCooldowns ??= new Map<string, number>());
 
 export async function POST(request: Request) {
     const currentUser = await getCurrentUser();
@@ -265,7 +265,7 @@ async function testImage(baseUrl: string, apiKey: string, model: string, globalP
                 editPath: "/images/edits",
                 requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","size":"{{size}}","response_format":"url"}',
                 resultField: "data[0].url / data[0].b64_json",
-                referenceRule: "图生图使用 /images/edits；VOZEB PRO 会按 multipart、image、images、image_url、input_image 等常见字段自动兼容。",
+                referenceRule: "图生图使用 /images/edits；DQ-绘图 会按 multipart、image、images、image_url、input_image 等常见字段自动兼容。",
                 supportsReferenceImage: true,
                 ...imageHealthReferenceConfig(baseUrl),
                 remoteUrl: findStringByKeys(payload, [
@@ -395,7 +395,7 @@ async function testAudio(baseUrl: string, apiKey: string, model: string): Promis
     const response = await fetch(apiUrl(baseUrl, "/audio/speech"), {
         method: "POST",
         headers: jsonHeaders(apiKey),
-        body: JSON.stringify({ model, input: "VOZEB PRO audio health check.", voice: "alloy", response_format: "mp3" }),
+        body: JSON.stringify({ model, input: "DQ-绘图 audio health check.", voice: "alloy", response_format: "mp3" }),
         cache: "no-store",
         signal: AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS),
     });
@@ -673,7 +673,7 @@ function videoHealthConfig(baseUrl: string, model: string, path: string): Partia
             resultField: "/videos/:task_id/content",
             statusField: "status",
             durationRange: "按上游模型限制",
-            referenceRule: "参考图使用 multipart 文件上传，由 VOZEB PRO 自动组装。",
+            referenceRule: "参考图使用 multipart 文件上传，由 DQ-绘图 自动组装。",
             supportsReferenceImage: true,
             supportsReferenceVideo: false,
             supportsReferenceAudio: false,
@@ -788,8 +788,8 @@ function failed(kind: HealthKind, model: string, status: number, payload: unknow
 }
 
 function pointsInfo(headers: Headers) {
-    const pointsCost = numericHeader(headers, "x-vozeb-pro-points-cost");
-    const pointsRemaining = numericHeader(headers, "x-vozeb-pro-points-remaining");
+    const pointsCost = numericHeader(headers, "x-dq-points-cost");
+    const pointsRemaining = numericHeader(headers, "x-dq-points-remaining");
     return {
         ...(pointsCost !== undefined ? { pointsCost } : {}),
         ...(pointsRemaining !== undefined ? { pointsRemaining } : {}),

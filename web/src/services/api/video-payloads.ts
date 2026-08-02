@@ -355,7 +355,7 @@ export async function publishReferenceImage(dataUrl: string) {
     const payload = (await response.json().catch(() => ({}))) as { upstreamUrl?: unknown; error?: unknown };
     if (!response.ok) throw new Error(typeof payload.error === "string" ? payload.error : "参考图临时上传失败");
     const url = typeof payload.upstreamUrl === "string" ? payload.upstreamUrl.trim() : "";
-    if (!url) throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
+    if (!url) throw new Error("站内参考素材签名不可用，请配置 DQ_ENCRYPTION_KEY");
     return url;
 }
 

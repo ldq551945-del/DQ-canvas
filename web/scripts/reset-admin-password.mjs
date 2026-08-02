@@ -20,7 +20,7 @@ if (args.help) {
     process.exit(0);
 }
 
-const dataDir = path.resolve(args.dataDir || process.env.VOZEB_PRO_DATA_DIR || path.join(webRoot, ".data"));
+const dataDir = path.resolve(args.dataDir || process.env.DQ_DATA_DIR || path.join(webRoot, ".data"));
 const authFile = path.join(dataDir, "auth.json");
 
 if (args.listAdmins) {
@@ -192,7 +192,7 @@ function listAdmins(db) {
 }
 
 function printHelp() {
-    console.log(`VOZEB PRO 管理员密码重置
+    console.log(`DQ-绘图 管理员密码重置
 
 用法：
   node scripts/reset-admin-password.mjs --username admin --password "NewPass123!"
@@ -202,7 +202,7 @@ function printHelp() {
   --email <邮箱>          按邮箱选择管理员
   --id <用户ID>           按用户 ID 选择管理员
   --password <新密码>     设置新密码，至少 8 位
-  --data-dir <目录>       指定数据目录，默认使用 VOZEB_PRO_DATA_DIR 或 web/.data
+  --data-dir <目录>       指定数据目录，默认使用 DQ_DATA_DIR 或 web/.data
   --list-admins           只列出管理员账号，不修改密码
   --help                  查看帮助
 

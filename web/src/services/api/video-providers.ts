@@ -159,7 +159,7 @@ export async function pollOpenAIVideoTask(config: AiConfig, task: VideoGeneratio
             const contentUrl = aiApiUrl(config, `/videos/${task.id}/content`);
             const content = await axios.get<Blob>(contentUrl, { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
-            return { status: "completed", result: { blob: content.data, remoteUrl: resolveOpenAiContentRemoteUrl(config, contentUrl, readHeader(statusResponse.headers, "x-vozeb-pro-upstream-url")) } };
+            return { status: "completed", result: { blob: content.data, remoteUrl: resolveOpenAiContentRemoteUrl(config, contentUrl, readHeader(statusResponse.headers, "x-dq-upstream-url")) } };
         }
         if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: videoStageError(video.error?.message || "视频生成失败") };
         return { status: "pending" };
@@ -238,7 +238,7 @@ export async function pollCompatibleVideoTask(config: AiConfig, task: VideoGener
             const status = readConfiguredTaskStatus(config, state) || readTaskStatus(state);
             const videoUrl = readConfiguredMediaUrl(config, state) || findMediaUrl(state);
             if (videoUrl && (!status || isCompletedStatus(status) || !isPendingStatus(status))) {
-                const resolvedUrl = resolveVideoMediaUrl(config, videoUrl, readHeader(response.headers, "x-vozeb-pro-upstream-url") || requestUrl);
+                const resolvedUrl = resolveVideoMediaUrl(config, videoUrl, readHeader(response.headers, "x-dq-upstream-url") || requestUrl);
                 return { status: "completed", result: await videoResultFromUrl(resolvedUrl, options) };
             }
             if (isCompletedStatus(status)) return { status: "failed", error: videoStageError("视频任务完成但没有返回视频地址") };
@@ -346,7 +346,7 @@ export async function pollSeedanceTask(config: AiConfig, task: VideoGenerationTa
         const response = await axios.get<ApiEnvelope<SeedanceTask>>(requestUrl, { headers: aiHeaders(config), signal: options?.signal });
         const state = unwrapSeedanceTask(response.data);
         if (state.status === "succeeded") {
-            const url = state.content?.video_url ? resolveVideoMediaUrl(config, state.content.video_url, readHeader(response.headers, "x-vozeb-pro-upstream-url") || requestUrl) : "";
+            const url = state.content?.video_url ? resolveVideoMediaUrl(config, state.content.video_url, readHeader(response.headers, "x-dq-upstream-url") || requestUrl) : "";
             if (!url) return { status: "failed", error: videoStageError("Seedance 任务成功但没有返回视频 URL") };
             return { status: "completed", result: await videoResultFromUrl(url, options) };
         }

@@ -60,7 +60,7 @@ export async function POST(request: Request) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = requestRuntimeCredential(request, user.id);
         const requestedParameters = resolveVideoGenerationParameters(body.config || {}, settings.generationDefaults);
-        const billingRequestId = clean(body.context?.clientRequestId) || clean(request.headers.get("x-vozeb-pro-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
+        const billingRequestId = clean(body.context?.clientRequestId) || clean(request.headers.get("x-dq-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
         let lastError: unknown;
         let capabilityError: unknown;
         let attempts: GenerationAttempt[] = [];
@@ -292,23 +292,23 @@ export async function createUpstream(
         try {
             data = parseVideoProviderJson(text);
         } catch (error) {
-            const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
-            const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
+            const pointsCost = billedPointsCost(response.headers.get("x-dq-points-cost"));
+            const pointsRecordId = response.headers.get("x-dq-points-record-id") || undefined;
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw error instanceof Error ? error : new Error("视频接口返回了无效 JSON");
         }
         const providerError = readProviderError(data);
         if (isProviderBusinessError(data)) {
-            const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
-            const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
+            const pointsCost = billedPointsCost(response.headers.get("x-dq-points-cost"));
+            const pointsRecordId = response.headers.get("x-dq-points-record-id") || undefined;
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw new SafeCandidateFailure(providerError || "视频接口请求失败");
         }
         const resultUrl = readVideoProviderUrl(data, channel.advancedConfig?.resultField);
         const id = readVideoProviderId(data) || (resultUrl ? `direct:${Date.now()}` : "");
         if (!id) {
-            const pointsCost = billedPointsCost(response.headers.get("x-vozeb-pro-points-cost"));
-            const pointsRecordId = response.headers.get("x-vozeb-pro-points-record-id") || undefined;
+            const pointsCost = billedPointsCost(response.headers.get("x-dq-points-cost"));
+            const pointsRecordId = response.headers.get("x-dq-points-record-id") || undefined;
             if (pointsCost !== undefined && pointsRecordId) await refundUserPoints(userId, generationModelId(channel), pointsCost, "video", videoUnits(raw, multipliers), undefined, pointsRecordId);
             throw new Error(providerError || "视频接口没有返回任务 ID");
         }
@@ -318,9 +318,9 @@ export async function createUpstream(
             model: channel.model,
             pollPath: path,
             resultUrl: resultUrl || undefined,
-            pointsCost: billedPointsCost(response.headers.get("x-vozeb-pro-points-cost")),
+            pointsCost: billedPointsCost(response.headers.get("x-dq-points-cost")),
             pointsUnits: videoUnits(raw, multipliers),
-            pointsRecordId: response.headers.get("x-vozeb-pro-points-record-id") || undefined,
+            pointsRecordId: response.headers.get("x-dq-points-record-id") || undefined,
         };
     }
     throw new SafeCandidateFailure(lastError || "没有可用的视频创建接口");

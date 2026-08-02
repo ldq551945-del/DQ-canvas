@@ -43,7 +43,7 @@ if (skippedCases.length) console.warn(`上游有 ${skippedCases.length} 个案�
 async function readCaseFile(fileName) {
     if (SOURCE_DIR) return readFile(path.join(SOURCE_DIR, "cases", fileName), "utf8");
     const url = `https://raw.githubusercontent.com/${REPOSITORY}/${COMMIT}/cases/${fileName}`;
-    const response = await fetch(url, { headers: { Accept: "text/markdown", "User-Agent": "VOZEB-PRO prompt sync" } });
+    const response = await fetch(url, { headers: { Accept: "text/markdown", "User-Agent": "DQ prompt sync" } });
     if (!response.ok) throw new Error(`读取 ${fileName} 失败：HTTP ${response.status}`);
     return response.text();
 }

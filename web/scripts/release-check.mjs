@@ -45,7 +45,7 @@ try {
     fail(`Standalone 产物不完整：${error instanceof Error ? error.message : String(error)}`);
 }
 
-console.log("\nVOZEB PRO 发布前检查通过。");
+console.log("\nDQ-绘图 发布前检查通过。");
 console.log("移动端发布前还需要人工打开：首页、画布、积分弹窗、图片工作台、视频工作台、管理员后台。");
 
 function run(command, args, cwd, label, options = {}) {

@@ -46,14 +46,14 @@ describe("text task runtime recovery", () => {
 
     it("preserves maintenance authorization for the internal system proxy", () => {
         const token = "m".repeat(32);
-        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
 
         const headers = taskHeaders({ ...openAiConfig("channel-one", "/api/ai/system/channel-one"), apiKey: "system" }, maintenanceWorkerContext("user-one"), "text-task:test:attempt:1");
 
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
-        expect(headers.get("x-vozeb-pro-worker-user-id")).toBe("user-one");
-        expect(headers.get("x-vozeb-pro-logical-model")).toBe("text-model");
-        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toBe("text-task:test:attempt:1");
+        expect(headers.get("x-dq-worker-user-id")).toBe("user-one");
+        expect(headers.get("x-dq-logical-model")).toBe("text-model");
+        expect(headers.get("x-dq-points-idempotency-key")).toBe("text-task:test:attempt:1");
     });
 
     it("completes through a live OpenAI-compatible fixture", async () => {
@@ -165,7 +165,7 @@ describe("text task runtime recovery", () => {
     });
 
     it("refunds a zero-point recorded charge when the upstream task fails", async () => {
-        const headers = { "x-vozeb-pro-points-cost": "0", "x-vozeb-pro-points-record-id": "record-zero" };
+        const headers = { "x-dq-points-cost": "0", "x-dq-points-record-id": "record-zero" };
         const fetchMock = vi
             .fn()
             .mockResolvedValueOnce(Response.json({ task_id: "upstream-zero", status: "queued" }, { headers }))

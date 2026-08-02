@@ -28,13 +28,13 @@ export async function importAdminBackup(file: File) {
 export function adminBackupFileName(contentDisposition: string | null, now = new Date()) {
     const extended = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     const regular = contentDisposition?.match(/filename="?([^";]+)"?/i)?.[1];
-    let name = extended || regular || `vozeb-pro-data-backup-${now.toISOString().slice(0, 10)}.json`;
+    let name = extended || regular || `dq-data-backup-${now.toISOString().slice(0, 10)}.json`;
     try {
         name = decodeURIComponent(name);
     } catch {
         // Keep the server-provided ASCII filename when percent-decoding fails.
     }
-    return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").slice(0, 180) || "vozeb-pro-data-backup.json";
+    return name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").slice(0, 180) || "dq-data-backup.json";
 }
 
 async function readBackupError(response: Response, fallback: string) {

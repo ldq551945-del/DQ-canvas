@@ -271,7 +271,7 @@ export function AdminExternalStorage() {
                                     <Input placeholder="media-bucket" />
                                 </Form.Item>
                                 <Form.Item label="对象路径前缀" name="prefix" className="!mb-5 xl:col-span-3" rules={[{ required: true, message: "请输入路径前缀" }]}>
-                                    <Input placeholder="vozeb-pro" />
+                                    <Input placeholder="dq" />
                                 </Form.Item>
                                 <Form.Item label="Path-style 模式" name="forcePathStyle" valuePropName="checked" className="!mb-5 xl:col-span-3">
                                     <Switch size="small" aria-label="切换 Path-style 模式" />

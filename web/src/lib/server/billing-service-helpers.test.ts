@@ -48,7 +48,7 @@ describe("billing product patch", () => {
 describe("billing order expiration metadata", () => {
     const order = {
         id: "order",
-        orderNo: "VZ-ORDER",
+        orderNo: "DQ-ORDER",
         productKind: "points",
         status: "closed",
         subject: "积分商品",

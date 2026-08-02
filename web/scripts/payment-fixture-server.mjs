@@ -71,8 +71,8 @@ function sendJson(response, status, value) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
-    const port = Number(process.env.VOZEB_PRO_PAYMENT_FIXTURE_PORT) || 4020;
-    const host = process.env.VOZEB_PRO_PAYMENT_FIXTURE_HOST || "127.0.0.1";
-    const fixture = createPaymentFixtureServer({ alipayPrivateKey: process.env.VOZEB_PRO_PAYMENT_FIXTURE_ALIPAY_PRIVATE_KEY });
+    const port = Number(process.env.DQ_PAYMENT_FIXTURE_PORT) || 4020;
+    const host = process.env.DQ_PAYMENT_FIXTURE_HOST || "127.0.0.1";
+    const fixture = createPaymentFixtureServer({ alipayPrivateKey: process.env.DQ_PAYMENT_FIXTURE_ALIPAY_PRIVATE_KEY });
     fixture.server.listen(port, host, () => console.log(`Payment fixture ready at http://${host}:${port}`));
 }

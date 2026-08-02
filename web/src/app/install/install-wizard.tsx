@@ -26,7 +26,7 @@ const steps = [
 export function InstallWizard({ install }: { install: InstallStatus }) {
     const [activeStep, setActiveStep] = useState<InstallStepId>("intro");
     const [currentInstall, setCurrentInstall] = useState(install);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const databaseReady = currentInstall.database.healthy && currentInstall.database.schemaReady;
     const schemaPending = currentInstall.database.healthy && !currentInstall.database.schemaReady;
     const runtimeReady = databaseReady && currentInstall.security.encryptionReady;
@@ -109,7 +109,7 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
 function IntroStep({ onNext }: { onNext: () => void }) {
     return (
         <section className="p-5 sm:p-8">
-            <StepHeader step="步骤 1 / 3" title="先确认安装流程" description="VOZEB PRO 面向服务器部署，商业数据会进入 PostgreSQL。安装向导会引导你生成配置、检查初始化状态，并创建第一个管理员账号。" />
+            <StepHeader step="步骤 1 / 3" title="先确认安装流程" description="DQ-绘图 面向服务器部署，商业数据会进入 PostgreSQL。安装向导会引导你生成配置、检查初始化状态，并创建第一个管理员账号。" />
 
             <div className="mt-7 overflow-hidden rounded-lg border border-slate-200/80 bg-white/75 shadow-sm">
                 <ProcessRow index="01" title="准备 PostgreSQL" text="本机使用 localhost；Docker 内置数据库使用 postgres；宝塔宿主机数据库使用 127.0.0.1；云数据库使用服务商连接地址。" />

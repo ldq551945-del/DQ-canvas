@@ -8,7 +8,7 @@ describe("media image urls", () => {
         expect(imagePreviewUrl("/api/reference-assets/permanent/file.png", 257)).toBe("/api/reference-assets/permanent/file.png?format=webp&width=320");
         expect(imagePreviewUrl("/api/public/works/publicwork123/media/asset-one", 640)).toBe("/api/public/works/publicwork123/media/asset-one?format=webp&width=640");
         expect(imagePreviewUrl("/api/public/prompt-images?path=images%2Fportrait_case1%2Foutput.jpg", 480)).toBe("/api/public/prompt-images?path=images%2Fportrait_case1%2Foutput.jpg&format=webp&width=480");
-        expect(imagePreviewUrl("/api/admin/object-storage/files/preview?key=vozeb-pro%2Ffile.png", 256)).toBe("/api/admin/object-storage/files/preview?key=vozeb-pro%2Ffile.png&format=webp&width=256");
+        expect(imagePreviewUrl("/api/admin/object-storage/files/preview?key=dq%2Ffile.png", 256)).toBe("/api/admin/object-storage/files/preview?key=dq%2Ffile.png&format=webp&width=256");
     });
 
     it("builds original-file downloads from a preview url", () => {

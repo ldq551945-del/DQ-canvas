@@ -76,7 +76,7 @@ export async function recordGenerationWebhook(input: { channelId: string; eventI
 }
 
 function webhookSecret() {
-    return process.env.VOZEB_PRO_GENERATION_WEBHOOK_SECRET?.trim() || "";
+    return process.env.DQ_GENERATION_WEBHOOK_SECRET?.trim() || "";
 }
 
 function required(value: unknown, label: string, max: number) {

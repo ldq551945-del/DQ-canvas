@@ -30,7 +30,7 @@ export async function GET() {
     const exportedAt = new Date().toISOString();
     const data = await readAdminBackupData();
     const backup = {
-        app: "VOZEB PRO",
+        app: "DQ-绘图",
         version: 1,
         exportedAt,
         files: {
@@ -44,7 +44,7 @@ export async function GET() {
     return new NextResponse(JSON.stringify(backup, null, 2), {
         headers: {
             "Content-Type": "application/json; charset=utf-8",
-            "Content-Disposition": `attachment; filename="vozeb-pro-data-backup-${exportedAt.slice(0, 10)}.json"`,
+            "Content-Disposition": `attachment; filename="dq-data-backup-${exportedAt.slice(0, 10)}.json"`,
             "Cache-Control": "no-store",
         },
     });

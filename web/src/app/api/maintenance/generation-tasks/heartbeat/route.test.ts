@@ -55,7 +55,7 @@ function request(workerId = "") {
         method: "POST",
         headers: {
             authorization: "Bearer test-token",
-            ...(workerId ? { "x-vozeb-pro-worker-id": workerId } : {}),
+            ...(workerId ? { "x-dq-worker-id": workerId } : {}),
         },
     });
 }

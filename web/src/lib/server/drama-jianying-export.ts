@@ -16,7 +16,7 @@ export async function exportDramaEpisodeAsJianying(input: { project: DramaProjec
     if (!clips.length) throw new DramaJianyingExportError("本集还没有可导出的视频", 422);
     const draftPath = normalizeDraftPath(input.draftPath);
     const draftName = buildJianyingDraftName(input.project.title, input.episode.title);
-    const root = await mkdtemp(join(tmpdir(), "vozeb-jianying-"));
+    const root = await mkdtemp(join(tmpdir(), "dq-jianying-"));
     try {
         const draftRoot = join(root, "drafts");
         await mkdir(draftRoot, { recursive: true });

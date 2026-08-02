@@ -10,17 +10,17 @@ import type { AuthDatabase, EntitlementPlan, StoredUser } from "@/lib/auth/store
 
 import { consumePoints, creditPermanentPoints, getPointsWalletSnapshot, refundPoints } from "./points-wallet-service";
 
-const previousProvider = process.env.VOZEB_PRO_DATABASE_PROVIDER;
-const previousDataDir = process.env.VOZEB_PRO_DATA_DIR;
+const previousProvider = process.env.DQ_DATABASE_PROVIDER;
+const previousDataDir = process.env.DQ_DATA_DIR;
 let dataDir = "";
 
 beforeAll(() => {
-    process.env.VOZEB_PRO_DATABASE_PROVIDER = "file";
+    process.env.DQ_DATABASE_PROVIDER = "file";
 });
 
 beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "vozeb-points-wallet-"));
-    process.env.VOZEB_PRO_DATA_DIR = dataDir;
+    dataDir = await mkdtemp(join(tmpdir(), "dq-points-wallet-"));
+    process.env.DQ_DATA_DIR = dataDir;
 });
 
 afterEach(async () => {
@@ -28,10 +28,10 @@ afterEach(async () => {
 });
 
 afterAll(() => {
-    if (previousProvider === undefined) delete process.env.VOZEB_PRO_DATABASE_PROVIDER;
-    else process.env.VOZEB_PRO_DATABASE_PROVIDER = previousProvider;
-    if (previousDataDir === undefined) delete process.env.VOZEB_PRO_DATA_DIR;
-    else process.env.VOZEB_PRO_DATA_DIR = previousDataDir;
+    if (previousProvider === undefined) delete process.env.DQ_DATABASE_PROVIDER;
+    else process.env.DQ_DATABASE_PROVIDER = previousProvider;
+    if (previousDataDir === undefined) delete process.env.DQ_DATA_DIR;
+    else process.env.DQ_DATA_DIR = previousDataDir;
 });
 
 describe("points wallet service", () => {

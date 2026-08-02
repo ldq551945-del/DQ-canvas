@@ -180,7 +180,7 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
 
     if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
     const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
-    const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+    const resultBaseUrl = response.headers.get("x-dq-upstream-url") || url;
     const result = await parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
     if (allowProtocolFallback && responseFormat === "url" && shouldRetryInternalImageUrlAsBase64(result)) {
         await refundChargedImageResponse(task, response.headers);
@@ -218,7 +218,7 @@ async function runGlobalAiOpcImageTask(task: ImageTask, origin: string, publicOr
     });
     if (!response.ok) throw imageSubmissionResponseError(response.status, await readFetchError(response, "图片生成失败"));
     const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
-    const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+    const resultBaseUrl = response.headers.get("x-dq-upstream-url") || url;
     return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
 }
 
@@ -257,7 +257,7 @@ export async function runOpenAiJsonImageEditTask(
             throw imageSubmissionResponseError(response.status, message);
         }
         const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
-        const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+        const resultBaseUrl = response.headers.get("x-dq-upstream-url") || url;
         const result = await parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
         if (allowProtocolFallback && responseFormat === "url" && shouldRetryInternalImageUrlAsBase64(result)) {
             await refundChargedImageResponse(task, response.headers);
@@ -296,7 +296,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
             throw imageSubmissionResponseError(response.status, message);
         }
         const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
-        const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+        const resultBaseUrl = response.headers.get("x-dq-upstream-url") || url;
         return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
     }
 
@@ -321,7 +321,7 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
         throw imageSubmissionResponseError(response.status, message);
     }
     const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
-    const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+    const resultBaseUrl = response.headers.get("x-dq-upstream-url") || url;
     return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
 }
 
@@ -341,7 +341,7 @@ export async function runOpenAiResponsesImageTask(task: ImageTask, origin: strin
             throw imageSubmissionResponseError(response.status, lastError);
         }
         const payload = await parseImageSubmissionJson<ImageApiResponse>(response);
-        const resultBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+        const resultBaseUrl = response.headers.get("x-dq-upstream-url") || url;
         return parseChargedImageResponse(task, response, () => parseImagePayloadOrPoll(config, payload, resultBaseUrl, cookie, url, singleStep));
     }
 

@@ -308,7 +308,7 @@ export const useConfigStore = create<ConfigStore>()((set) => ({
     updateConfig: (key, value) => set((state) => ({ config: enforceSystemClientConfig({ ...state.config, [key]: value }) })),
     isAiConfigReady: (config, model) => isAiConfigReady(config, model),
     openConfigDialog: (shouldPromptContinue = false) => {
-        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("vozeb-pro-system-config-missing", { detail: { shouldPromptContinue } }));
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("dq-system-config-missing", { detail: { shouldPromptContinue } }));
         set({ isConfigOpen: false, shouldPromptContinue: false });
     },
     setConfigDialogOpen: (isOpen) => set({ isConfigOpen: isOpen, shouldPromptContinue: false }),

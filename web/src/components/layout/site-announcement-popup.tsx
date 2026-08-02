@@ -73,5 +73,5 @@ export function SiteAnnouncementPopup() {
 }
 
 function dismissKey(id: string, context: string) {
-    return `vozeb-pro:announcement-dismissed:${context}:${id}`;
+    return `dq:announcement-dismissed:${context}:${id}`;
 }

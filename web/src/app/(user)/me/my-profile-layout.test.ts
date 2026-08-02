@@ -29,6 +29,6 @@ describe("personal creator page layout", () => {
         const actions = await readFile(resolve(process.cwd(), "src/components/layout/user-status-actions.tsx"), "utf8");
 
         expect(actions).toContain("ID：${user.accountId}");
-        expect(actions).not.toContain("VOZEB 创作账户");
+        expect(actions).not.toContain("DQ 创作账户");
     });
 });

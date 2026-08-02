@@ -26,7 +26,7 @@ describe("admin channel config", () => {
     });
 
     it("never treats stored ciphertext as a usable provider credential", () => {
-        const ciphertext = "vozeb-pro-secret:v1:iv.tag.payload";
+        const ciphertext = "dq-secret:v1:iv.tag.payload";
         const encryptedSettings = { systemChannels: [{ ...savedChannel, apiKey: ciphertext }] } as AuthSettings;
 
         expect(isUsableAdminChannelApiKey(ciphertext)).toBe(false);

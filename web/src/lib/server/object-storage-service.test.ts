@@ -53,7 +53,7 @@ const config = {
     endpoint: "https://oss.example.com",
     region: "auto",
     bucket: "media",
-    prefix: "vozeb-pro",
+    prefix: "dq",
     accessKeyId: "access",
     secretAccessKey: "secret",
     forcePathStyle: false,
@@ -99,7 +99,7 @@ describe("object storage media service", () => {
     });
 
     it("uploads and registers object media, rolling the object back when registration fails", async () => {
-        const objectKey = `vozeb-pro/media/reference/${registration.storageKey}`;
+        const objectKey = `dq/media/reference/${registration.storageKey}`;
         await persistExternalMediaIfEnabled({ registration, bytes: Buffer.from("data") });
         expect(mocks.putBytes).toHaveBeenCalledWith(config, expect.objectContaining({ key: objectKey, contentType: "image/png" }));
         expect(mocks.register).toHaveBeenCalledWith(expect.objectContaining({ storageProvider: "object", externalObjectKey: objectKey }));
@@ -111,7 +111,7 @@ describe("object storage media service", () => {
 
     it("continues signing existing object media after the write switch is disabled", async () => {
         mocks.config.mockResolvedValue({ ...config, enabled: false });
-        const objectRegistration = { ...registration, originalName: "生成结果", storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/file.png" };
+        const objectRegistration = { ...registration, originalName: "生成结果", storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "dq/media/reference/file.png" };
 
         const url = await createExternalMediaReadUrl(new Request("http://localhost/media?download=original"), objectRegistration);
 
@@ -121,28 +121,28 @@ describe("object storage media service", () => {
     });
 
     it("uses a bounded WebP object variant for image previews", async () => {
-        const objectRegistration = { ...registration, storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/file.png" };
+        const objectRegistration = { ...registration, storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "dq/media/reference/file.png" };
 
         await createExternalMediaReadUrl(new Request("http://localhost/media?format=webp&width=320"), objectRegistration);
 
-        expect(mocks.objectExists).toHaveBeenCalledWith(config, "vozeb-pro/media/reference/file.png.vozeb-preview/webp-320.webp");
+        expect(mocks.objectExists).toHaveBeenCalledWith(config, "dq/media/reference/file.png.dq-preview/webp-320.webp");
         expect(mocks.getBytes).not.toHaveBeenCalled();
         expect(mocks.signRead).toHaveBeenCalledWith(config, expect.objectContaining({ contentType: "image/webp", expiresIn: 120 }));
     });
 
     it("serves administrator object previews as bounded WebP variants only", async () => {
-        const imageKey = "vozeb-pro/media/reference/file.png";
+        const imageKey = "dq/media/reference/file.png";
 
         await expect(createExternalStorageImagePreviewUrl(imageKey, "500")).resolves.toBe("https://oss.example.com/signed");
 
-        expect(mocks.objectExists).toHaveBeenCalledWith(config, `${imageKey}.vozeb-preview/webp-640.webp`);
-        expect(mocks.signRead).toHaveBeenCalledWith(config, expect.objectContaining({ key: `${imageKey}.vozeb-preview/webp-640.webp`, contentType: "image/webp", contentDisposition: expect.stringContaining("file.webp") }));
+        expect(mocks.objectExists).toHaveBeenCalledWith(config, `${imageKey}.dq-preview/webp-640.webp`);
+        expect(mocks.signRead).toHaveBeenCalledWith(config, expect.objectContaining({ key: `${imageKey}.dq-preview/webp-640.webp`, contentType: "image/webp", contentDisposition: expect.stringContaining("file.webp") }));
         await expect(createExternalStorageImagePreviewUrl("outside-prefix/file.png", 256)).resolves.toBeNull();
-        await expect(createExternalStorageImagePreviewUrl("vozeb-pro/files/archive.zip", 256)).resolves.toBeNull();
+        await expect(createExternalStorageImagePreviewUrl("dq/files/archive.zip", 256)).resolves.toBeNull();
     });
 
     it("keeps streaming media urls valid long enough for playback and seeking", async () => {
-        const videoRegistration = { ...registration, type: "video" as const, mimeType: "video/mp4", storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "vozeb-pro/media/reference/video.mp4" };
+        const videoRegistration = { ...registration, type: "video" as const, mimeType: "video/mp4", storageProvider: "object" as const, externalStorageId: "default", externalObjectKey: "dq/media/reference/video.mp4" };
 
         await createExternalMediaReadUrl(new Request("http://localhost/media"), videoRegistration);
 
@@ -150,8 +150,8 @@ describe("object storage media service", () => {
     });
 
     it("blocks deletion of referenced objects and deletes unregistered objects", async () => {
-        const protectedKey = "vozeb-pro/media/reference/protected.png";
-        const freeKey = "vozeb-pro/media/reference/free.png";
+        const protectedKey = "dq/media/reference/protected.png";
+        const freeKey = "dq/media/reference/free.png";
         mocks.listByObjectKeys.mockResolvedValue([{ ...registration, storageProvider: "object", externalObjectKey: protectedKey }]);
         mocks.references.mockResolvedValue(new Map([[registration.storageKey, 2]]));
 
@@ -163,8 +163,8 @@ describe("object storage media service", () => {
     });
 
     it("classifies attachments and fills a filtered page across object cursors", async () => {
-        const attachmentKey = "vozeb-pro/files/archive.zip";
-        const imageKey = "vozeb-pro/media/reference/permanent/2026/07/24/images/drama.png";
+        const attachmentKey = "dq/files/archive.zip";
+        const imageKey = "dq/media/reference/permanent/2026/07/24/images/drama.png";
         mocks.listObjects.mockResolvedValueOnce({ items: [{ key: attachmentKey, bytes: 8 }], nextCursor: "next" }).mockResolvedValueOnce({ items: [{ key: imageKey, bytes: 4 }], nextCursor: undefined });
         mocks.listByObjectKeys.mockImplementation(async (keys: string[]) => (keys.includes(imageKey) ? [{ ...registration, source: "drama-render", storageProvider: "object", externalObjectKey: imageKey }] : []));
 

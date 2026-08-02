@@ -2,7 +2,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 
 import { DEFAULT_SITE_SETTINGS, getAuthSettings, type SiteSettings } from "@/lib/auth/store";
 
-export const SITE_SETTINGS_CACHE_TAG = "vozeb-site-settings";
+export const SITE_SETTINGS_CACHE_TAG = "dq-site-settings";
 
 const readCachedSiteSettings = unstable_cache(
     async (): Promise<SiteSettings> => {

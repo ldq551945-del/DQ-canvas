@@ -15,7 +15,7 @@ import { deleteObjects, getObjectBytes, listObjects, objectExists, putObjectByte
 import { assertObjectStorageConfigured, getObjectStorageRuntimeConfig, type ObjectStorageRuntimeConfig } from "@/lib/server/object-storage-config";
 
 const MAX_INPUT_PIXELS = 100_000_000;
-const PREVIEW_MARKER = ".vozeb-preview";
+const PREVIEW_MARKER = ".dq-preview";
 const IMAGE_PREVIEW_READ_URL_TTL_SECONDS = 120;
 const IMAGE_ORIGINAL_READ_URL_TTL_SECONDS = 600;
 const STREAMING_MEDIA_READ_URL_TTL_SECONDS = 3600;

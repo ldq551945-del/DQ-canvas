@@ -481,8 +481,8 @@ export function CanvasAssistantPanel({
                     ) : (
                         <div className="flex h-full flex-col items-center justify-center px-1 text-center">
                             <div className="relative font-serif text-4xl font-bold italic tracking-normal" style={{ color: theme.node.text }}>
-                                <span>VOZEB PRO Canvas</span>
-                                <DiaTextReveal className="absolute inset-0" colors={["#A97CF8", "#F38CB8", "#FDCC92"]} textColor="transparent" duration={1.8} startOnView={false} text="VOZEB PRO Canvas" />
+                                <span>DQ-绘图 Canvas</span>
+                                <DiaTextReveal className="absolute inset-0" colors={["#A97CF8", "#F38CB8", "#FDCC92"]} textColor="transparent" duration={1.8} startOnView={false} text="DQ-绘图 Canvas" />
                             </div>
                             <div className="mt-3 font-serif text-base italic tracking-wide opacity-60">One canvas, many ideas</div>
                         </div>

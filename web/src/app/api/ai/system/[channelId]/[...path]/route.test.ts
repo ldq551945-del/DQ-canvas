@@ -177,8 +177,8 @@ describe("GlobalAiOpc native text proxy", () => {
                 "content-type": "application/json",
                 "idempotency-key": "upstream-request-one",
                 "x-client-request-id": "client-request-one",
-                "x-vozeb-pro-logical-model": "writer-pro",
-                "x-vozeb-pro-points-idempotency-key": "text-task:one:attempt:1",
+                "x-dq-logical-model": "writer-pro",
+                "x-dq-points-idempotency-key": "text-task:one:attempt:1",
             },
             body: JSON.stringify({ model: "vendor-shared", messages: [{ role: "user", content: "hello" }] }),
         });
@@ -336,8 +336,8 @@ describe("Stable Diffusion proxy", () => {
                 method: "POST",
                 headers: {
                     "content-type": "application/json",
-                    "x-vozeb-pro-logical-model": "image-local",
-                    "x-vozeb-pro-upstream-model": "sdxl",
+                    "x-dq-logical-model": "image-local",
+                    "x-dq-upstream-model": "sdxl",
                 },
                 body: JSON.stringify({ prompt: "test", width: 1024, height: 1024 }),
             }),
@@ -391,8 +391,8 @@ describe("custom protocol model routing", () => {
                 method: "POST",
                 headers: {
                     "content-type": "application/json",
-                    "x-vozeb-pro-logical-model": "image-tool",
-                    "x-vozeb-pro-upstream-model": "engine-one",
+                    "x-dq-logical-model": "image-tool",
+                    "x-dq-upstream-model": "engine-one",
                 },
                 body: JSON.stringify({ engine: "engine-one", prompt: "test" }),
             }),

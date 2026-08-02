@@ -49,7 +49,7 @@ export function getAntThemeConfig(dark: boolean): ThemeConfig {
 
     return {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-        cssVar: { key: dark ? "vozeb-pro-dark" : "vozeb-pro-light" },
+        cssVar: { key: dark ? "dq-dark" : "dq-light" },
         token: {
             colorPrimary: color.primary,
             colorInfo: color.primary,

@@ -3,14 +3,14 @@ import { ArrowRight, CheckCircle2, ExternalLink, ShieldCheck, UsersRound } from 
 import { Panel, PanelHeader } from "@/components/admin/admin-panel";
 import { GitHubLink } from "@/components/layout/github-link";
 import { VersionReleaseModal } from "@/components/layout/version-release-modal";
-import { VOZEB_QQ_GROUP_URL } from "@/constant/community";
+import { DQ_COMMUNITY_URL } from "@/constant/community";
 import { APP_VERSION } from "@/constant/env";
 
 export function UpdateCenterPanel() {
     const releaseLinks = [
-        { label: "Release", href: "https://github.com/csyqlz/VOZEB-PRO/releases", description: "查看正式版本包和升级说明" },
-        { label: "Issues", href: "https://github.com/csyqlz/VOZEB-PRO/issues", description: "提交问题、部署异常和功能建议" },
-        { label: "Docs", href: "https://github.com/csyqlz/VOZEB-PRO", description: "查看开源仓库与部署入口" },
+        { label: "Release", href: "https://github.com/ldq551945-del/DQ-canvas/releases", description: "查看正式版本包和升级说明" },
+        { label: "Issues", href: "https://github.com/ldq551945-del/DQ-canvas/issues", description: "提交问题、部署异常和功能建议" },
+        { label: "Docs", href: "https://github.com/ldq551945-del/DQ-canvas", description: "查看开源仓库与部署入口" },
     ];
     const upgradeChecks = ["备份 PostgreSQL 数据库", "确认 .env / Docker 环境变量", "阅读 CHANGELOG 破坏性变更", "保留当前版本回滚方式"];
     return (
@@ -21,7 +21,7 @@ export function UpdateCenterPanel() {
                     <div className="overflow-hidden rounded-3xl border border-stone-200/80 bg-stone-950 text-white shadow-sm shadow-stone-950/10 dark:border-stone-800 dark:bg-white dark:text-stone-950">
                         <div className="grid gap-3 p-4 sm:gap-6 sm:p-6 lg:grid-cols-[minmax(0,1fr)_220px]">
                             <div className="min-w-0">
-                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55 dark:text-stone-500">VOZEB PRO Update</div>
+                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-white/55 dark:text-stone-500">DQ-绘图 Update</div>
                                 <h3 className="mt-2 text-2xl font-semibold tracking-normal sm:mt-4 sm:text-3xl">可升级，也可回滚。</h3>
                                 <div className="mt-2 max-w-2xl text-xs leading-5 text-white/68 sm:mt-3 sm:text-sm sm:leading-6 dark:text-stone-600">
                                     商业化部署升级前先确认数据库备份、环境变量和变更日志；服务器安装用户可以在这里集中完成版本检查与资料跳转。
@@ -29,7 +29,7 @@ export function UpdateCenterPanel() {
                                 <div className="mt-3 grid grid-cols-2 gap-2 sm:mt-5 sm:flex sm:flex-wrap">
                                     <VersionReleaseModal className="admin-update-primary-button inline-flex h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold transition sm:h-10 sm:rounded-xl sm:px-4 sm:text-sm" label="查看更新日志" />
                                     <a
-                                        href="https://github.com/csyqlz/VOZEB-PRO/releases"
+                                        href="https://github.com/ldq551945-del/DQ-canvas/releases"
                                         target="_blank"
                                         rel="noreferrer"
                                         className="admin-update-secondary-link inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition sm:h-10 sm:gap-2 sm:rounded-xl sm:px-4 sm:text-sm"
@@ -38,13 +38,13 @@ export function UpdateCenterPanel() {
                                         打开 Release
                                     </a>
                                     <a
-                                        href={VOZEB_QQ_GROUP_URL}
+                                        href={DQ_COMMUNITY_URL}
                                         target="_blank"
                                         rel="noreferrer"
                                         className="admin-update-secondary-link col-span-2 inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition sm:col-auto sm:h-10 sm:gap-2 sm:rounded-xl sm:px-4 sm:text-sm"
                                     >
                                         <UsersRound className="size-4" />
-                                        加入 QQ 群
+                                        加入 社区
                                     </a>
                                 </div>
                             </div>

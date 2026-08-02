@@ -48,7 +48,7 @@ export default function CanvasPage() {
         if (creating) return;
         setCreating(true);
         try {
-            enterProject(await createProject(`VOZEB PRO 画布 ${projects.length + 1}`));
+            enterProject(await createProject(`DQ-绘图 画布 ${projects.length + 1}`));
         } catch (error) {
             message.error(error instanceof Error ? error.message : "画布创建失败");
         } finally {
@@ -107,7 +107,7 @@ export default function CanvasPage() {
         autoOpenRef.current = true;
         void (async () => {
             try {
-                const id = mode === "new" ? await createProject(`VOZEB PRO 画布 ${projects.length + 1}`) : projects[0]?.id || (await createProject(`VOZEB PRO 画布 ${projects.length + 1}`));
+                const id = mode === "new" ? await createProject(`DQ-绘图 画布 ${projects.length + 1}`) : projects[0]?.id || (await createProject(`DQ-绘图 画布 ${projects.length + 1}`));
                 enterProject(id);
             } catch (error) {
                 autoOpenRef.current = false;

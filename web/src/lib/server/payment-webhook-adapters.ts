@@ -36,8 +36,8 @@ const customWebhookAdapter: PaymentWebhookAdapter = {
         return {
             eventId,
             eventType,
-            orderId: normalizeOptionalId(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_ORDER_ID_FIELD`, ["orderId", "data.orderId", "metadata.orderId", "metadata.vozebProOrderId"])),
-            orderNo: normalizeOptionalId(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_ORDER_NO_FIELD`, ["orderNo", "outTradeNo", "out_trade_no", "data.orderNo", "data.outTradeNo", "metadata.orderNo", "metadata.vozebProOrderNo"])),
+            orderId: normalizeOptionalId(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_ORDER_ID_FIELD`, ["orderId", "data.orderId", "metadata.orderId", "metadata.dqOrderId"])),
+            orderNo: normalizeOptionalId(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_ORDER_NO_FIELD`, ["orderNo", "outTradeNo", "out_trade_no", "data.orderNo", "data.outTradeNo", "metadata.orderNo", "metadata.dqOrderNo"])),
             status: normalizePaymentStatus(readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_STATUS_FIELD`, ["status", "tradeStatus", "trade_status", "data.status", "data.tradeStatus"]), provider, paymentConfig),
             providerTradeId: normalizeOptionalText(
                 readConfiguredPath(paymentConfig, payload, `${fieldPrefix}_WEBHOOK_TRADE_ID_FIELD`, ["providerTradeId", "tradeId", "trade_no", "transactionId", "data.providerTradeId", "data.tradeId", "data.transactionId"]),
@@ -65,8 +65,8 @@ const stripeWebhookAdapter: PaymentWebhookAdapter = {
         const eventId = normalizeText(readPath(event, "id"), deterministicEventId(provider, rawBody), 160);
         const eventType = normalizeText(readPath(event, "type"), "stripe.event", 120);
         const object = readPath(event, "data.object");
-        const orderId = normalizeOptionalId(readPath(object, "metadata.orderId") || readPath(object, "metadata.vozebProOrderId") || readPath(object, "client_reference_id"));
-        const orderNo = normalizeOptionalId(readPath(object, "metadata.orderNo") || readPath(object, "metadata.vozebProOrderNo"));
+        const orderId = normalizeOptionalId(readPath(object, "metadata.orderId") || readPath(object, "metadata.dqOrderId") || readPath(object, "client_reference_id"));
+        const orderNo = normalizeOptionalId(readPath(object, "metadata.orderNo") || readPath(object, "metadata.dqOrderNo"));
         const amountCents = normalizeOptionalInteger(readPath(object, "amount_total") || readPath(object, "amount_received") || readPath(object, "amount"));
         const paidAt = normalizeStripePaidAt(readPath(object, "created"));
         const providerTradeId = normalizeOptionalText(readPath(object, "payment_intent") || readPath(object, "id"), 160);
@@ -158,9 +158,9 @@ export function resolveWebhookAdapter(provider: string) {
 export function verifyCustomSignature(provider: string, rawBody: string, headers: Headers, paymentConfig: PaymentRuntimeConfig) {
     const secret = webhookSecret(provider, paymentConfig);
     if (!secret) throw new BillingInputError("支付回调密钥未配置", 500);
-    const signature = normalizeSignatureHeader(headers.get(getPaymentRuntimeEnv(paymentConfig, `${providerEnvPrefix(provider)}_WEBHOOK_SIGNATURE_HEADER`) || "x-vozeb-pro-signature") || headers.get("x-payment-signature") || headers.get("x-signature"));
+    const signature = normalizeSignatureHeader(headers.get(getPaymentRuntimeEnv(paymentConfig, `${providerEnvPrefix(provider)}_WEBHOOK_SIGNATURE_HEADER`) || "x-dq-signature") || headers.get("x-payment-signature") || headers.get("x-signature"));
     if (!signature) return false;
-    const timestamp = headers.get("x-vozeb-pro-timestamp") || headers.get("x-payment-timestamp") || "";
+    const timestamp = headers.get("x-dq-timestamp") || headers.get("x-payment-timestamp") || "";
     const signedPayload = timestamp ? `${timestamp}.${rawBody}` : rawBody;
     const expected = createHmac("sha256", secret).update(signedPayload).digest("hex");
     if (!safeEqual(signature, expected)) return false;
@@ -172,7 +172,7 @@ export function verifyCustomSignature(provider: string, rawBody: string, headers
 }
 
 export function verifyStripeSignature(rawBody: string, headers: Headers, paymentConfig: PaymentRuntimeConfig) {
-    const secret = getPaymentRuntimeValue(paymentConfig, "VOZEB_PRO_STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET");
+    const secret = getPaymentRuntimeValue(paymentConfig, "DQ_STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOK_SECRET");
     if (!secret) throw new BillingInputError("Stripe 回调密钥未配置", 500);
     const header = headers.get("stripe-signature") || "";
     const parts = Object.fromEntries(
@@ -193,7 +193,7 @@ export function verifyStripeSignature(rawBody: string, headers: Headers, payment
 export function verifyAlipaySignature(payload: Record<string, string>, paymentConfig: PaymentRuntimeConfig) {
     const sign = payload.sign || "";
     if (!sign) return false;
-    const appId = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_APP_ID");
+    const appId = getPaymentRuntimeEnv(paymentConfig, "DQ_ALIPAY_APP_ID");
     if (appId && payload.app_id !== appId) return false;
     if (normalizeText(payload.sign_type, "RSA2", 20).toUpperCase() !== "RSA2") return false;
     const content = Object.keys(payload)
@@ -201,7 +201,7 @@ export function verifyAlipaySignature(payload: Record<string, string>, paymentCo
         .sort()
         .map((key) => `${key}=${payload[key]}`)
         .join("&");
-    return verifyRsaSha256(content, sign, loadPaymentPublicKey(paymentConfig, "VOZEB_PRO_ALIPAY_PUBLIC_KEY", "VOZEB_PRO_ALIPAY_PUBLIC_KEY_PATH"));
+    return verifyRsaSha256(content, sign, loadPaymentPublicKey(paymentConfig, "DQ_ALIPAY_PUBLIC_KEY", "DQ_ALIPAY_PUBLIC_KEY_PATH"));
 }
 
 export function verifyWechatSignature(rawBody: string, headers: Headers, paymentConfig: PaymentRuntimeConfig) {
@@ -210,7 +210,7 @@ export function verifyWechatSignature(rawBody: string, headers: Headers, payment
     const signature = headers.get("wechatpay-signature") || "";
     const serial = headers.get("wechatpay-serial") || "";
     if (!timestamp || !nonce || !signature || !serial) return false;
-    const expectedSerial = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERT_SERIAL_NO");
+    const expectedSerial = getPaymentRuntimeEnv(paymentConfig, "DQ_WECHAT_PAY_PLATFORM_CERT_SERIAL_NO");
     if (expectedSerial && serial !== expectedSerial) return false;
     const timestampMs = Number(timestamp) * 1000;
     if (!Number.isFinite(timestampMs) || Math.abs(Date.now() - timestampMs) > wechatToleranceMs(paymentConfig)) return false;
@@ -226,7 +226,7 @@ export function decryptWechatResource(envelope: unknown, paymentConfig: PaymentR
     const ciphertext = normalizeText(readPath(resource, "ciphertext"), "", 20_000);
     const nonce = normalizeText(readPath(resource, "nonce"), "", 120);
     const associatedData = normalizeText(readPath(resource, "associated_data"), "", 2000);
-    const key = Buffer.from(requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_API_V3_KEY"), "utf8");
+    const key = Buffer.from(requiredConfig(paymentConfig, "DQ_WECHAT_PAY_API_V3_KEY"), "utf8");
     if (key.length !== 32) throw new BillingInputError("微信支付 API v3 key 必须是 32 字节", 500);
     const encrypted = Buffer.from(ciphertext, "base64");
     if (encrypted.length <= 16) throw new BillingInputError("微信支付回调密文无效", 400);
@@ -242,7 +242,7 @@ export function decryptWechatResource(envelope: unknown, paymentConfig: PaymentR
 }
 
 function loadWechatPlatformPublicKey(paymentConfig: PaymentRuntimeConfig) {
-    return loadPaymentPublicKey(paymentConfig, "VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY", "VOZEB_PRO_WECHAT_PAY_PLATFORM_PUBLIC_KEY_PATH", "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE", "VOZEB_PRO_WECHAT_PAY_PLATFORM_CERTIFICATE_PATH");
+    return loadPaymentPublicKey(paymentConfig, "DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY", "DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY_PATH", "DQ_WECHAT_PAY_PLATFORM_CERTIFICATE", "DQ_WECHAT_PAY_PLATFORM_CERTIFICATE_PATH");
 }
 
 function requiredConfig(paymentConfig: PaymentRuntimeConfig, name: string) {
@@ -252,8 +252,8 @@ function requiredConfig(paymentConfig: PaymentRuntimeConfig, name: string) {
 }
 
 function webhookSecret(provider: string, paymentConfig: PaymentRuntimeConfig) {
-    const envKey = `VOZEB_PRO_${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_WEBHOOK_SECRET`;
-    return getPaymentRuntimeEnv(paymentConfig, envKey) || getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYMENT_WEBHOOK_SECRET");
+    const envKey = `DQ_${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_WEBHOOK_SECRET`;
+    return getPaymentRuntimeEnv(paymentConfig, envKey) || getPaymentRuntimeEnv(paymentConfig, "DQ_PAYMENT_WEBHOOK_SECRET");
 }
 
 export function parseFallbackEvent(rawBody: string) {
@@ -330,7 +330,7 @@ export function normalizeProvider(value: unknown) {
 }
 
 function providerEnvPrefix(provider: string) {
-    return `VOZEB_PRO_${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+    return `DQ_${provider.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
 }
 
 function normalizeOptionalId(value: unknown) {
@@ -405,16 +405,16 @@ function safeEqual(left: string, right: string) {
 }
 
 export function deterministicEventId(provider: string, rawBody: string) {
-    return `${provider}_${createHmac("sha256", "vozeb-pro-webhook-event").update(rawBody).digest("hex").slice(0, 32)}`;
+    return `${provider}_${createHmac("sha256", "dq-webhook-event").update(rawBody).digest("hex").slice(0, 32)}`;
 }
 
 function stripeToleranceMs(paymentConfig: PaymentRuntimeConfig) {
-    const seconds = Number(getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_STRIPE_WEBHOOK_TOLERANCE_SECONDS") || 300);
+    const seconds = Number(getPaymentRuntimeEnv(paymentConfig, "DQ_STRIPE_WEBHOOK_TOLERANCE_SECONDS") || 300);
     return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 300_000;
 }
 
 function wechatToleranceMs(paymentConfig: PaymentRuntimeConfig) {
-    const seconds = Number(getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_WEBHOOK_TOLERANCE_SECONDS") || 300);
+    const seconds = Number(getPaymentRuntimeEnv(paymentConfig, "DQ_WECHAT_PAY_WEBHOOK_TOLERANCE_SECONDS") || 300);
     return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 300_000;
 }
 

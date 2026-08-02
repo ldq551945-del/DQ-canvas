@@ -30,10 +30,10 @@ function createManualCheckout(provider: string, order: BillingOrderRecord): Paym
 }
 
 async function createStripeCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    const secretKey = requiredConfig(paymentConfig, "VOZEB_PRO_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
+    const secretKey = requiredConfig(paymentConfig, "DQ_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
     const origin = resolveOrigin(options.origin);
-    const successUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_STRIPE_SUCCESS_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}&session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_STRIPE_CANCEL_URL") || `${origin}/billing/cancel?orderId=${encodeURIComponent(order.id)}`;
+    const successUrl = getPaymentRuntimeEnv(paymentConfig, "DQ_STRIPE_SUCCESS_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}&session_id={CHECKOUT_SESSION_ID}`;
+    const cancelUrl = getPaymentRuntimeEnv(paymentConfig, "DQ_STRIPE_CANCEL_URL") || `${origin}/billing/cancel?orderId=${encodeURIComponent(order.id)}`;
     const params = new URLSearchParams();
     params.set("mode", "payment");
     params.set("client_reference_id", order.id);
@@ -45,12 +45,12 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
     params.set("line_items[0][price_data][product_data][name]", order.subject);
     params.set("metadata[orderId]", order.id);
     params.set("metadata[orderNo]", order.orderNo);
-    params.set("metadata[vozebProOrderId]", order.id);
-    params.set("metadata[vozebProOrderNo]", order.orderNo);
+    params.set("metadata[dqOrderId]", order.id);
+    params.set("metadata[dqOrderNo]", order.orderNo);
     params.set("payment_intent_data[metadata][orderId]", order.id);
     params.set("payment_intent_data[metadata][orderNo]", order.orderNo);
-    params.set("payment_intent_data[metadata][vozebProOrderId]", order.id);
-    params.set("payment_intent_data[metadata][vozebProOrderNo]", order.orderNo);
+    params.set("payment_intent_data[metadata][dqOrderId]", order.id);
+    params.set("payment_intent_data[metadata][dqOrderNo]", order.orderNo);
     for (const method of stripePaymentMethods(paymentConfig)) params.append("payment_method_types[]", method);
 
     const response = await fetch(`${stripeApiBase(paymentConfig)}/v1/checkout/sessions`, {
@@ -58,7 +58,7 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
         headers: {
             authorization: `Bearer ${secretKey}`,
             "content-type": "application/x-www-form-urlencoded",
-            "Idempotency-Key": `vozeb-pro-checkout-${order.id}`,
+            "Idempotency-Key": `dq-checkout-${order.id}`,
         },
         body: params,
     });
@@ -82,11 +82,11 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
 
 async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
     if (order.currency.toUpperCase() !== "CNY") throw new BillingInputError("支付宝仅支持人民币 CNY 订单", 400);
-    const appId = requiredConfig(paymentConfig, "VOZEB_PRO_ALIPAY_APP_ID");
-    const privateKey = loadPrivateKey(paymentConfig, "VOZEB_PRO_ALIPAY_PRIVATE_KEY", "VOZEB_PRO_ALIPAY_PRIVATE_KEY_PATH");
+    const appId = requiredConfig(paymentConfig, "DQ_ALIPAY_APP_ID");
+    const privateKey = loadPrivateKey(paymentConfig, "DQ_ALIPAY_PRIVATE_KEY", "DQ_ALIPAY_PRIVATE_KEY_PATH");
     const origin = resolveOrigin(options.origin);
-    const gateway = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_GATEWAY_URL") || "https://openapi.alipay.com/gateway.do";
-    const modeValue = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_MODE") || DEFAULT_ALIPAY_PAYMENT_MODE;
+    const gateway = getPaymentRuntimeEnv(paymentConfig, "DQ_ALIPAY_GATEWAY_URL") || "https://openapi.alipay.com/gateway.do";
+    const modeValue = getPaymentRuntimeEnv(paymentConfig, "DQ_ALIPAY_MODE") || DEFAULT_ALIPAY_PAYMENT_MODE;
     if (!isAlipayPaymentMode(modeValue)) throw new BillingInputError("支付宝接入方式配置无效", 500);
     const params: Record<string, string> = {
         app_id: appId,
@@ -95,7 +95,7 @@ async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePa
         sign_type: "RSA2",
         timestamp: alipayTimestamp(),
         version: "1.0",
-        notify_url: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/alipay`,
+        notify_url: getPaymentRuntimeEnv(paymentConfig, "DQ_ALIPAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/alipay`,
         biz_content: JSON.stringify({
             out_trade_no: order.orderNo,
             total_amount: centsToDecimal(order.amountCents),
@@ -104,7 +104,7 @@ async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePa
             passback_params: order.id,
         }),
     };
-    if (modeValue === "official") params.return_url = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_RETURN_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}`;
+    if (modeValue === "official") params.return_url = getPaymentRuntimeEnv(paymentConfig, "DQ_ALIPAY_RETURN_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}`;
     params.sign = signAlipayParams(params, privateKey);
     if (modeValue === "face_to_face") return createAlipayFaceToFaceCheckout(gateway, params, order, paymentConfig);
     return {
@@ -137,7 +137,7 @@ async function createAlipayFaceToFaceCheckout(gateway: string, params: Record<st
     if (resultCode !== "10000") throw new BillingInputError(readAlipayPrecreateError(payload), 400);
     const responseSign = normalizeText(payload.sign, "", 2000);
     const signContent = extractJsonObjectValue(rawBody, "alipay_trade_precreate_response");
-    const publicKey = loadPaymentPublicKey(paymentConfig, "VOZEB_PRO_ALIPAY_PUBLIC_KEY", "VOZEB_PRO_ALIPAY_PUBLIC_KEY_PATH");
+    const publicKey = loadPaymentPublicKey(paymentConfig, "DQ_ALIPAY_PUBLIC_KEY", "DQ_ALIPAY_PUBLIC_KEY_PATH");
     if (!responseSign || !signContent || !verifyRsaSha256(signContent, responseSign, publicKey)) throw new BillingInputError("支付宝当面付响应验签失败", 502);
     const responseOrderNo = normalizeText(resultObject.out_trade_no, "", 160);
     if (!responseOrderNo || responseOrderNo !== order.orderNo) throw new BillingInputError("支付宝当面付返回的订单号不匹配", 502);
@@ -193,10 +193,10 @@ function extractJsonObjectValue(rawBody: string, key: string) {
 }
 
 async function createWechatNativeCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    const appid = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_APP_ID");
-    const mchid = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_MCH_ID");
-    const serialNo = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_CERT_SERIAL_NO");
-    const privateKey = loadPrivateKey(paymentConfig, "VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY", "VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY_PATH");
+    const appid = requiredConfig(paymentConfig, "DQ_WECHAT_PAY_APP_ID");
+    const mchid = requiredConfig(paymentConfig, "DQ_WECHAT_PAY_MCH_ID");
+    const serialNo = requiredConfig(paymentConfig, "DQ_WECHAT_PAY_CERT_SERIAL_NO");
+    const privateKey = loadPrivateKey(paymentConfig, "DQ_WECHAT_PAY_PRIVATE_KEY", "DQ_WECHAT_PAY_PRIVATE_KEY_PATH");
     const origin = resolveOrigin(options.origin);
     const body = JSON.stringify({
         appid,
@@ -204,13 +204,13 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
         description: order.subject.slice(0, 127),
         out_trade_no: order.orderNo,
         time_expire: order.expiresAt,
-        notify_url: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/wechat`,
+        notify_url: getPaymentRuntimeEnv(paymentConfig, "DQ_WECHAT_PAY_NOTIFY_URL") || `${origin}/api/billing/webhooks/wechat`,
         amount: {
             total: order.amountCents,
             currency: order.currency,
         },
     });
-    const apiBase = (getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
+    const apiBase = (getPaymentRuntimeEnv(paymentConfig, "DQ_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
     const path = "/v3/pay/transactions/native";
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = randomBytes(16).toString("hex");
@@ -240,14 +240,14 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
 }
 
 async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    const checkoutUrl = requiredConfig(paymentConfig, "VOZEB_PRO_PAYPLY_CHECKOUT_URL", "PAYPLY_CHECKOUT_URL");
-    const apiKey = requiredConfig(paymentConfig, "VOZEB_PRO_PAYPLY_API_KEY", "PAYPLY_API_KEY");
+    const checkoutUrl = requiredConfig(paymentConfig, "DQ_PAYPLY_CHECKOUT_URL", "PAYPLY_CHECKOUT_URL");
+    const apiKey = requiredConfig(paymentConfig, "DQ_PAYPLY_API_KEY", "PAYPLY_API_KEY");
     const origin = resolveOrigin(options.origin);
-    const notifyUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_NOTIFY_URL") || `${origin}/api/billing/webhooks/payply`;
-    const returnUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_RETURN_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}`;
-    const cancelUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_CANCEL_URL") || `${origin}/billing/cancel?orderId=${encodeURIComponent(order.id)}`;
+    const notifyUrl = getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_NOTIFY_URL") || `${origin}/api/billing/webhooks/payply`;
+    const returnUrl = getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_RETURN_URL") || `${origin}/billing/success?orderId=${encodeURIComponent(order.id)}`;
+    const cancelUrl = getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_CANCEL_URL") || `${origin}/billing/cancel?orderId=${encodeURIComponent(order.id)}`;
     const body = buildPayplyCheckoutPayload(paymentConfig, order, {
-        merchantId: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_MERCHANT_ID") || undefined,
+        merchantId: getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_MERCHANT_ID") || undefined,
         orderId: order.id,
         orderNo: order.orderNo,
         subject: order.subject,
@@ -258,8 +258,8 @@ async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePa
         returnUrl,
         cancelUrl,
         metadata: {
-            vozebProOrderId: order.id,
-            vozebProOrderNo: order.orderNo,
+            dqOrderId: order.id,
+            dqOrderNo: order.orderNo,
             productId: order.productId || "",
             userId: order.userId || "",
         },
@@ -271,11 +271,11 @@ async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePa
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readPayplyError(payload), response.status >= 500 ? 502 : 400);
 
-    const forcedKind = normalizeCheckoutKind(getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_RESULT_KIND"));
-    const formHtml = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_FORM_FIELD", ["formHtml", "html", "data.formHtml", "data.html", "result.formHtml"]), 40_000);
-    const qrContent = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_QR_FIELD", ["qrContent", "qrCode", "qrcode", "codeUrl", "code_url", "data.qrContent", "data.qrCode", "data.codeUrl", "result.qrContent"]), 4000);
+    const forcedKind = normalizeCheckoutKind(getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_RESULT_KIND"));
+    const formHtml = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_FORM_FIELD", ["formHtml", "html", "data.formHtml", "data.html", "result.formHtml"]), 40_000);
+    const qrContent = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_QR_FIELD", ["qrContent", "qrCode", "qrcode", "codeUrl", "code_url", "data.qrContent", "data.qrCode", "data.codeUrl", "result.qrContent"]), 4000);
     const url = normalizeOptionalText(
-        readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_URL_FIELD", ["url", "paymentUrl", "payment_url", "checkoutUrl", "checkout_url", "payUrl", "pay_url", "data.url", "data.paymentUrl", "data.payUrl", "result.url"]),
+        readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_URL_FIELD", ["url", "paymentUrl", "payment_url", "checkoutUrl", "checkout_url", "payUrl", "pay_url", "data.url", "data.paymentUrl", "data.payUrl", "result.url"]),
         2000,
     );
     const kind = forcedKind || (formHtml ? "form" : qrContent ? "qr" : url ? "redirect" : undefined);
@@ -289,13 +289,12 @@ async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePa
         formHtml,
         qrContent,
         providerOrderId:
-            normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_PROVIDER_ORDER_ID_FIELD", ["providerOrderId", "tradeId", "trade_no", "id", "data.providerOrderId", "data.tradeId", "data.id", "result.id"]), 160) ||
-            order.orderNo,
+            normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_PROVIDER_ORDER_ID_FIELD", ["providerOrderId", "tradeId", "trade_no", "id", "data.providerOrderId", "data.tradeId", "data.id", "result.id"]), 160) || order.orderNo,
         providerPaymentId: normalizeOptionalText(
-            readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_PROVIDER_PAYMENT_ID_FIELD", ["providerPaymentId", "paymentId", "payment_id", "transactionId", "data.providerPaymentId", "data.paymentId", "data.transactionId"]),
+            readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_PROVIDER_PAYMENT_ID_FIELD", ["providerPaymentId", "paymentId", "payment_id", "transactionId", "data.providerPaymentId", "data.paymentId", "data.transactionId"]),
             160,
         ),
-        expiresAt: normalizeOptionalIso(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_EXPIRES_AT_FIELD", ["expiresAt", "expireAt", "expiredAt", "data.expiresAt", "data.expireAt"])) || order.expiresAt,
+        expiresAt: normalizeOptionalIso(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_EXPIRES_AT_FIELD", ["expiresAt", "expireAt", "expiredAt", "data.expiresAt", "data.expireAt"])) || order.expiresAt,
     };
 }
 
@@ -317,7 +316,7 @@ function buildAutoSubmitForm(action: string, params: Record<string, string>) {
     const inputs = Object.entries(params)
         .map(([key, value]) => `<input type="hidden" name="${escapeHtml(key)}" value="${escapeHtml(value)}" />`)
         .join("");
-    return `<!doctype html><html><head><meta charset="utf-8" /></head><body><form id="vozeb-pro-alipay-form" method="post" action="${escapeHtml(action)}">${inputs}</form><script>document.getElementById("vozeb-pro-alipay-form").submit();</script></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8" /></head><body><form id="dq-alipay-form" method="post" action="${escapeHtml(action)}">${inputs}</form><script>document.getElementById("dq-alipay-form").submit();</script></body></html>`;
 }
 
 export function checkoutMetadata(checkout: PaymentCheckoutResult): JsonValue {
@@ -392,11 +391,11 @@ function normalizePrivateKey(value: string) {
 }
 
 function stripeApiBase(config: PaymentRuntimeConfig) {
-    return (getPaymentRuntimeEnv(config, "VOZEB_PRO_STRIPE_API_BASE") || "https://api.stripe.com").replace(/\/+$/, "");
+    return (getPaymentRuntimeEnv(config, "DQ_STRIPE_API_BASE") || "https://api.stripe.com").replace(/\/+$/, "");
 }
 
 function stripePaymentMethods(config: PaymentRuntimeConfig) {
-    return getPaymentRuntimeEnv(config, "VOZEB_PRO_STRIPE_PAYMENT_METHOD_TYPES")
+    return getPaymentRuntimeEnv(config, "DQ_STRIPE_PAYMENT_METHOD_TYPES")
         .split(",")
         .map((item) => item.trim())
         .filter(Boolean);
@@ -422,7 +421,7 @@ function readPayplyError(payload: Record<string, unknown>) {
 }
 
 function buildPayplyCheckoutPayload(config: PaymentRuntimeConfig, order: BillingOrderRecord, defaultPayload: Record<string, unknown>) {
-    const template = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_REQUEST_TEMPLATE") || getPaymentRuntimeEnv(config, "PAYPLY_REQUEST_TEMPLATE");
+    const template = getPaymentRuntimeEnv(config, "DQ_PAYPLY_REQUEST_TEMPLATE") || getPaymentRuntimeEnv(config, "PAYPLY_REQUEST_TEMPLATE");
     if (!template) return defaultPayload;
     const rendered = renderPayplyTemplate(template, {
         orderId: order.id,
@@ -451,12 +450,12 @@ function renderPayplyTemplate(template: string, values: Record<string, string>) 
 }
 
 function payplyRequestMethod(config: PaymentRuntimeConfig) {
-    const method = (getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_REQUEST_METHOD") || getPaymentRuntimeEnv(config, "PAYPLY_REQUEST_METHOD") || "POST").toUpperCase();
+    const method = (getPaymentRuntimeEnv(config, "DQ_PAYPLY_REQUEST_METHOD") || getPaymentRuntimeEnv(config, "PAYPLY_REQUEST_METHOD") || "POST").toUpperCase();
     return method === "GET" ? "GET" : "POST";
 }
 
 function payplyContentType(config: PaymentRuntimeConfig) {
-    const contentType = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_CONTENT_TYPE") || getPaymentRuntimeEnv(config, "PAYPLY_CONTENT_TYPE") || "application/json";
+    const contentType = getPaymentRuntimeEnv(config, "DQ_PAYPLY_CONTENT_TYPE") || getPaymentRuntimeEnv(config, "PAYPLY_CONTENT_TYPE") || "application/json";
     return contentType === "application/x-www-form-urlencoded" ? contentType : "application/json";
 }
 
@@ -488,7 +487,7 @@ function flattenPayplyBody(body: Record<string, unknown>) {
 }
 
 function payplyHeaders(config: PaymentRuntimeConfig, apiKey: string, contentType: string) {
-    const customHeader = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_API_KEY_HEADER");
+    const customHeader = getPaymentRuntimeEnv(config, "DQ_PAYPLY_API_KEY_HEADER");
     const headers: Record<string, string> = {
         "content-type": contentType,
     };
@@ -505,7 +504,7 @@ function payplyHeaders(config: PaymentRuntimeConfig, apiKey: string, contentType
 }
 
 function parsePayplyExtraHeaders(config: PaymentRuntimeConfig): Record<string, string> {
-    const text = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_EXTRA_HEADERS") || getPaymentRuntimeEnv(config, "PAYPLY_EXTRA_HEADERS");
+    const text = getPaymentRuntimeEnv(config, "DQ_PAYPLY_EXTRA_HEADERS") || getPaymentRuntimeEnv(config, "PAYPLY_EXTRA_HEADERS");
     if (!text) return {};
     try {
         const value = JSON.parse(text) as unknown;

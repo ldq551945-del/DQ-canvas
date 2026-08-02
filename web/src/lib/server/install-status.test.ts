@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     provider: "postgres" as "file" | "postgres",
-    connectionString: "postgres://vozeb:test@localhost:5432/vozeb",
+    connectionString: "postgres://dq:test@localhost:5432/dq",
     ensurePostgresSchema: vi.fn(),
     initializePostgresSchema: vi.fn(),
     postgresQuery: vi.fn(),
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/store", () => ({
-    DEFAULT_SITE_SETTINGS: { title: "VOZEB PRO", logoUrl: "/logo.svg" },
+    DEFAULT_SITE_SETTINGS: { title: "DQ-绘图", logoUrl: "/logo.svg" },
     getPublicUserSummary: mocks.getPublicUserSummary,
 }));
 
@@ -33,7 +33,7 @@ describe("install status cache", () => {
     beforeEach(() => {
         invalidateInstallStatusCache();
         mocks.provider = "postgres";
-        mocks.connectionString = "postgres://vozeb:test@localhost:5432/vozeb";
+        mocks.connectionString = "postgres://dq:test@localhost:5432/dq";
         mocks.ensurePostgresSchema.mockReset().mockResolvedValue(undefined);
         mocks.initializePostgresSchema.mockReset().mockResolvedValue(undefined);
         mocks.postgresQuery.mockReset();

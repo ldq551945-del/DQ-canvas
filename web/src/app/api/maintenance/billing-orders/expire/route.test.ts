@@ -11,12 +11,12 @@ const token = "maintenance-token-at-least-thirty-two-characters";
 describe("billing order expiration maintenance route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        process.env.VOZEB_PRO_MAINTENANCE_TOKEN = token;
+        process.env.DQ_MAINTENANCE_TOKEN = token;
         mocks.expirePendingBillingOrders.mockResolvedValue([]);
     });
 
     afterEach(() => {
-        delete process.env.VOZEB_PRO_MAINTENANCE_TOKEN;
+        delete process.env.DQ_MAINTENANCE_TOKEN;
     });
 
     it("rejects requests without the configured bearer token", async () => {

@@ -61,7 +61,7 @@ export function CreativeMessages({
     onLoadOlder?: () => void;
 }) {
     const endRef = useRef<HTMLDivElement>(null);
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const user = usePublicSessionStore((state) => state.payload?.user || null);
     const avatarUrl = user?.avatarUrl?.trim();
     const avatarFallback = userAvatarFallback(user?.displayName || user?.username || "用户");

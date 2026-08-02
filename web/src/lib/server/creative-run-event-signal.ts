@@ -2,12 +2,12 @@ import { getDatabaseProvider, getPostgresConnectionString, subscribePostgresNoti
 
 type RunEventListener = () => void;
 
-const CREATIVE_RUN_NOTIFY_CHANNEL = "vozeb_pro_run_events";
+const CREATIVE_RUN_NOTIFY_CHANNEL = "dq_run_events";
 const globalSignals = globalThis as typeof globalThis & {
-    __vozebProCreativeRunSignals?: Map<string, Set<RunEventListener>>;
-    __vozebProCreativeRunSignalBridge?: Promise<unknown>;
+    __dqCreativeRunSignals?: Map<string, Set<RunEventListener>>;
+    __dqCreativeRunSignalBridge?: Promise<unknown>;
 };
-const listeners = (globalSignals.__vozebProCreativeRunSignals ??= new Map<string, Set<RunEventListener>>());
+const listeners = (globalSignals.__dqCreativeRunSignals ??= new Map<string, Set<RunEventListener>>());
 
 export function notifyCreativeRunEvent(runId: string) {
     for (const listener of [...(listeners.get(runId) || [])]) listener();
@@ -39,12 +39,12 @@ export function waitForCreativeRunEvent(runId: string, timeoutMs: number, signal
 }
 
 function ensurePostgresEventBridge() {
-    if (getDatabaseProvider() !== "postgres" || !getPostgresConnectionString() || globalSignals.__vozebProCreativeRunSignalBridge) return;
-    globalSignals.__vozebProCreativeRunSignalBridge = subscribePostgresNotification(CREATIVE_RUN_NOTIFY_CHANNEL, (runId) => {
+    if (getDatabaseProvider() !== "postgres" || !getPostgresConnectionString() || globalSignals.__dqCreativeRunSignalBridge) return;
+    globalSignals.__dqCreativeRunSignalBridge = subscribePostgresNotification(CREATIVE_RUN_NOTIFY_CHANNEL, (runId) => {
         const id = runId.trim();
         if (id && id.length <= 160) notifyCreativeRunEvent(id);
     }).catch((error) => {
-        globalSignals.__vozebProCreativeRunSignalBridge = undefined;
+        globalSignals.__dqCreativeRunSignalBridge = undefined;
         console.warn("Creative run PostgreSQL notification bridge unavailable", { error: error instanceof Error ? error.message : String(error) });
     });
 }

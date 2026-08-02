@@ -20,7 +20,7 @@ export async function createPublicPromptImage(pathValue: string | null, widthVal
     const width = normalizeImagePreviewWidth(widthValue, 640);
     return getOrCreateCachedImageVariant(`prompt:${COMMIT}:${imagePath}:${width}`, async () => {
         const response = await fetch(`https://raw.githubusercontent.com/${REPOSITORY}/${COMMIT}/${imagePath}`, {
-            headers: { Accept: "image/avif,image/webp,image/png,image/jpeg", "User-Agent": "VOZEB-PRO prompt image proxy" },
+            headers: { Accept: "image/avif,image/webp,image/png,image/jpeg", "User-Agent": "DQ prompt image proxy" },
             cache: "force-cache",
         });
         if (!response.ok || !response.body || !response.headers.get("content-type")?.toLowerCase().startsWith("image/")) throw new Error(`上游提示词图片不可用：HTTP ${response.status}`);

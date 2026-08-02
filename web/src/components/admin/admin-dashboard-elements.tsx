@@ -324,7 +324,7 @@ export function cdkStatusTone(code: PublicCdkCode) {
 
 export function formatCreatedCdkExport(codes: CreatedCdkCode[]) {
     const lines = [
-        "VOZEB PRO CDK 导出",
+        "DQ-绘图 CDK 导出",
         `导出时间：${new Date().toLocaleString("zh-CN", { hour12: false })}`,
         `数量：${codes.length}`,
         "",

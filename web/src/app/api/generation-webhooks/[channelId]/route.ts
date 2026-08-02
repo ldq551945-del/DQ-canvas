@@ -18,13 +18,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ cha
     if (!isGenerationWebhookConfigured()) return NextResponse.json({ code: 503, data: null, msg: "生成回调验签密钥未配置" }, { status: 503 });
     try {
         const rawBody = await readRequestBodyText(request, 1024 * 1024);
-        const signature = request.headers.get("x-vozeb-pro-signature") || request.headers.get("x-signature") || "";
+        const signature = request.headers.get("x-dq-signature") || request.headers.get("x-signature") || "";
         if (!verifyGenerationWebhookSignature(rawBody, signature)) return NextResponse.json({ code: 401, data: null, msg: "生成回调验签失败" }, { status: 401 });
         const payload = JSON.parse(rawBody) as unknown;
         const channelId = (await params).channelId.trim();
         const channel = (await getAuthSettings()).systemChannels.find((item) => item.id === channelId && item.enabled);
         if (!channel) return NextResponse.json({ code: 404, data: null, msg: "生成回调渠道不存在" }, { status: 404 });
-        const eventId = request.headers.get("x-vozeb-pro-event-id")?.trim() || readProviderString(payload, "event.id", EVENT_KEYS);
+        const eventId = request.headers.get("x-dq-event-id")?.trim() || readProviderString(payload, "event.id", EVENT_KEYS);
         const upstreamTaskId = readProviderString(payload, undefined, ID_KEYS);
         const result = await recordGenerationWebhook({
             channelId,

@@ -24,7 +24,7 @@ const storedSettings = {
     endpoint: "https://oss.example.com",
     region: "cn-test-1",
     bucket: "media",
-    prefix: "vozeb-pro",
+    prefix: "dq",
     accessKeyIdCiphertext: "encrypted:old-access",
     secretAccessKeyCiphertext: "encrypted:old-secret",
     forcePathStyle: false,
@@ -72,9 +72,9 @@ describe("object storage configuration", () => {
     });
 
     it("rejects unsafe endpoints and incomplete enabled configurations", async () => {
-        await expect(saveObjectStorageAdminSettings({ enabled: false, endpoint: "ftp://oss.example.com", region: "auto", bucket: "media", prefix: "vozeb-pro", forcePathStyle: false })).rejects.toThrow("Endpoint");
+        await expect(saveObjectStorageAdminSettings({ enabled: false, endpoint: "ftp://oss.example.com", region: "auto", bucket: "media", prefix: "dq", forcePathStyle: false })).rejects.toThrow("Endpoint");
         mocks.read.mockResolvedValue({ ...storedSettings, accessKeyIdCiphertext: "", secretAccessKeyCiphertext: "" });
-        await expect(saveObjectStorageAdminSettings({ enabled: true, endpoint: "", region: "auto", bucket: "media", prefix: "vozeb-pro", forcePathStyle: false })).rejects.toThrow("Access Key");
+        await expect(saveObjectStorageAdminSettings({ enabled: true, endpoint: "", region: "auto", bucket: "media", prefix: "dq", forcePathStyle: false })).rejects.toThrow("Access Key");
     });
 
     it("does not let an old in-flight read overwrite the cache after a switch change", async () => {

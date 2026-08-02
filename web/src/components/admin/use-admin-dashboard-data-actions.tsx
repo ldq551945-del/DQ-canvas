@@ -673,7 +673,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
     const exportCreatedCdkCodes = (codes = createdCdkActionCodes) => {
         if (!codes.length) return;
         const text = formatCreatedCdkExport(codes);
-        downloadTextFile(`vozeb-pro-cdk-${dayjs().format("YYYYMMDD-HHmmss")}.txt`, text);
+        downloadTextFile(`dq-cdk-${dayjs().format("YYYYMMDD-HHmmss")}.txt`, text);
         message.success(`已导出 ${codes.length} 个 CDK`);
     };
 

@@ -5,24 +5,24 @@ const MIN_TOKEN_LENGTH = 32;
 
 export function generationRuntimeEnvironment({ environment = process.env, allowEphemeralToken = false } = {}) {
     const source = { ...environment };
-    const configuredToken = source.VOZEB_PRO_MAINTENANCE_TOKEN?.trim() || "";
+    const configuredToken = source.DQ_MAINTENANCE_TOKEN?.trim() || "";
     if (configuredToken.length < MIN_TOKEN_LENGTH && !allowEphemeralToken) {
-        throw new Error("VOZEB_PRO_MAINTENANCE_TOKEN must contain at least 32 characters");
+        throw new Error("DQ_MAINTENANCE_TOKEN must contain at least 32 characters");
     }
 
     const port = validPort(source.PORT) || 3000;
     return {
         environment: {
             ...source,
-            VOZEB_PRO_MAINTENANCE_TOKEN: configuredToken.length >= MIN_TOKEN_LENGTH ? configuredToken : randomBytes(32).toString("hex"),
-            VOZEB_PRO_WORKER_API_ORIGIN: resolveGenerationWorkerOrigin({ environment: source, fallbackOrigin: `http://127.0.0.1:${port}` }),
+            DQ_MAINTENANCE_TOKEN: configuredToken.length >= MIN_TOKEN_LENGTH ? configuredToken : randomBytes(32).toString("hex"),
+            DQ_WORKER_API_ORIGIN: resolveGenerationWorkerOrigin({ environment: source, fallbackOrigin: `http://127.0.0.1:${port}` }),
         },
         ephemeralToken: configuredToken.length < MIN_TOKEN_LENGTH,
     };
 }
 
 export function resolveGenerationWorkerOrigin({ environment = process.env, fallbackOrigin = "http://127.0.0.1:3000" } = {}) {
-    const raw = environment.VOZEB_PRO_WORKER_API_ORIGIN?.trim() || environment.VOZEB_PRO_INTERNAL_ORIGIN?.trim() || environment.NEXT_PUBLIC_SITE_URL?.trim() || fallbackOrigin;
+    const raw = environment.DQ_WORKER_API_ORIGIN?.trim() || environment.DQ_INTERNAL_ORIGIN?.trim() || environment.NEXT_PUBLIC_SITE_URL?.trim() || fallbackOrigin;
     const value = /^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
     const url = new URL(value);
     if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Generation worker origin must use HTTP or HTTPS");

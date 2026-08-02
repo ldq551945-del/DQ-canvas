@@ -54,12 +54,12 @@ describe("admin channel API key route", () => {
     });
 
     it("does not reveal an encrypted storage value", async () => {
-        mocks.getAuthSettings.mockResolvedValueOnce({ systemChannels: [{ ...savedChannel, apiKey: "vozeb-pro-secret:v1:iv.tag.payload" }] });
+        mocks.getAuthSettings.mockResolvedValueOnce({ systemChannels: [{ ...savedChannel, apiKey: "dq-secret:v1:iv.tag.payload" }] });
 
         const response = await GET(request(), context("saved"));
 
         expect(response.status).toBe(404);
-        expect(JSON.stringify(await response.json())).not.toContain("vozeb-pro-secret:v1:");
+        expect(JSON.stringify(await response.json())).not.toContain("dq-secret:v1:");
         expect(mocks.safeRecordAuditLog).not.toHaveBeenCalled();
     });
 });

@@ -22,7 +22,7 @@ const REFERRAL_CODE_CHARACTERS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const REFERRAL_CODE_LENGTH = 8;
 const REGISTRATION_NETWORK_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const REGISTRATION_NETWORK_REVIEW_COUNT = 3;
-export const REFERRAL_COOKIE_NAME = "vozeb_referral";
+export const REFERRAL_COOKIE_NAME = "dq_referral";
 
 export type ReferralProgramInput = {
     enabled?: unknown;
@@ -503,7 +503,7 @@ function generateReferralCode() {
 
 function hashReferralRiskValue(kind: string, value: unknown) {
     const text = typeof value === "string" ? value.trim() : "";
-    const secret = process.env.VOZEB_PRO_ENCRYPTION_KEY?.trim() || "";
+    const secret = process.env.DQ_ENCRYPTION_KEY?.trim() || "";
     if (!text || !secret) return undefined;
     return createHmac("sha256", secret).update(`${kind}\0${text}`).digest("hex");
 }

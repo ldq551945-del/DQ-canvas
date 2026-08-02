@@ -36,8 +36,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         const handleMissingConfig = () => {
             message.warning("请联系管理员在后台配置可用模型渠道");
         };
-        window.addEventListener("vozeb-pro-system-config-missing", handleMissingConfig);
-        return () => window.removeEventListener("vozeb-pro-system-config-missing", handleMissingConfig);
+        window.addEventListener("dq-system-config-missing", handleMissingConfig);
+        return () => window.removeEventListener("dq-system-config-missing", handleMissingConfig);
     }, [message]);
 
     return (

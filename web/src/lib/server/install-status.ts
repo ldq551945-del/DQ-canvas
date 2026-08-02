@@ -25,7 +25,7 @@ export type InstallStatus = {
 const READY_CACHE_TTL_MS = 15_000;
 const UNHEALTHY_CACHE_TTL_MS = 2_000;
 const globalForInstallStatus = globalThis as typeof globalThis & {
-    __vozebProInstallStatusCache?: {
+    __dqInstallStatusCache?: {
         key: string;
         value?: InstallStatus;
         expiresAt: number;
@@ -38,27 +38,27 @@ export async function getInstallStatus(): Promise<InstallStatus> {
     const encryption = getEncryptionKeyStatus();
     const key = `${provider}:${provider === "postgres" ? getPostgresConnectionString() : ""}:${encryption.ready}`;
     const now = Date.now();
-    const cached = globalForInstallStatus.__vozebProInstallStatusCache;
+    const cached = globalForInstallStatus.__dqInstallStatusCache;
     if (cached?.key === key) {
         if (cached.value && cached.expiresAt > now) return cached.value;
         if (cached.pending) return cached.pending;
     }
 
     const pending = loadInstallStatus(provider, encryption);
-    globalForInstallStatus.__vozebProInstallStatusCache = { key, expiresAt: 0, pending };
+    globalForInstallStatus.__dqInstallStatusCache = { key, expiresAt: 0, pending };
     try {
         const value = await pending;
         const ttl = value.firstAdminRequired ? 0 : value.ready ? READY_CACHE_TTL_MS : UNHEALTHY_CACHE_TTL_MS;
-        globalForInstallStatus.__vozebProInstallStatusCache = { key, value: ttl ? value : undefined, expiresAt: ttl ? Date.now() + ttl : 0 };
+        globalForInstallStatus.__dqInstallStatusCache = { key, value: ttl ? value : undefined, expiresAt: ttl ? Date.now() + ttl : 0 };
         return value;
     } catch (error) {
-        globalForInstallStatus.__vozebProInstallStatusCache = undefined;
+        globalForInstallStatus.__dqInstallStatusCache = undefined;
         throw error;
     }
 }
 
 export function invalidateInstallStatusCache() {
-    globalForInstallStatus.__vozebProInstallStatusCache = undefined;
+    globalForInstallStatus.__dqInstallStatusCache = undefined;
 }
 
 async function loadInstallStatus(provider: "file" | "postgres", encryption = getEncryptionKeyStatus()): Promise<InstallStatus> {
@@ -107,7 +107,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
                 schemaReady: false,
                 connectionEnv,
                 message: "缺少 PostgreSQL 连接配置。请在服务器环境变量、.env.local 或 Docker Compose 中填写 DATABASE_URL。",
-                detail: "本机部署通常是 postgres://用户名:密码@localhost:5432/vozeb_pro；Docker Compose 通常是 postgres://用户名:密码@postgres:5432/vozeb_pro。",
+                detail: "本机部署通常是 postgres://用户名:密码@localhost:5432/dq；Docker Compose 通常是 postgres://用户名:密码@postgres:5432/dq。",
             },
         });
     }
@@ -182,7 +182,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
 export async function initializeInstallDatabase() {
     if (getDatabaseProvider() !== "postgres") throw new InstallInitializationError("当前存储模式不需要初始化 PostgreSQL", 409);
     if (!getPostgresConnectionString()) throw new InstallInitializationError("请先配置 DATABASE_URL", 400);
-    if (!getEncryptionKeyStatus().ready) throw new InstallInitializationError("请先配置有效的 VOZEB_PRO_ENCRYPTION_KEY", 400);
+    if (!getEncryptionKeyStatus().ready) throw new InstallInitializationError("请先配置有效的 DQ_ENCRYPTION_KEY", 400);
     try {
         await initializePostgresSchema();
     } catch (error) {

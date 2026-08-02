@@ -15,7 +15,7 @@ describe("admin channel health route", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         mocks.setSystemChannelHealthResult.mockReset();
-        (globalThis as typeof globalThis & { __vozebProChannelHealthCooldowns?: Map<string, number> }).__vozebProChannelHealthCooldowns?.clear();
+        (globalThis as typeof globalThis & { __dqChannelHealthCooldowns?: Map<string, number> }).__dqChannelHealthCooldowns?.clear();
     });
 
     it("rejects health checks without configured credentials", async () => {

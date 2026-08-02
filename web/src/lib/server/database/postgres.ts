@@ -8,7 +8,7 @@ export type QueryExecutor = {
     query<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]): Promise<QueryResult<T>>;
 };
 
-const POSTGRES_TABLE_PREFIX = "vozeb_pro_";
+const POSTGRES_TABLE_PREFIX = "dq_";
 const POSTGRES_TABLES = [
     "schema_migrations",
     "app_settings",
@@ -232,9 +232,9 @@ const POSTGRES_SCHEMA_OBJECTS = [
 ] as const;
 
 const globalForPostgres = globalThis as typeof globalThis & {
-    __vozebProPostgresPool?: Pool;
-    __vozebProPostgresSchemaReady?: Promise<void>;
-    __vozebProPostgresNotifications?: PostgresNotificationState;
+    __dqPostgresPool?: Pool;
+    __dqPostgresSchemaReady?: Promise<void>;
+    __dqPostgresNotifications?: PostgresNotificationState;
 };
 
 type PostgresNotificationListener = (payload: string) => void;
@@ -246,7 +246,7 @@ type PostgresNotificationState = {
 };
 
 export function getDatabaseProvider(): DatabaseProvider {
-    return process.env.VOZEB_PRO_DATABASE_PROVIDER?.trim().toLowerCase() === "file" ? "file" : "postgres";
+    return process.env.DQ_DATABASE_PROVIDER?.trim().toLowerCase() === "file" ? "file" : "postgres";
 }
 
 export function isPostgresDatabaseEnabled() {
@@ -259,17 +259,17 @@ export function getPostgresConnectionString() {
 
 function getPostgresPool() {
     const connectionString = getPostgresConnectionString();
-    if (!connectionString) throw new Error("DATABASE_URL is required when VOZEB_PRO_DATABASE_PROVIDER=postgres");
+    if (!connectionString) throw new Error("DATABASE_URL is required when DQ_DATABASE_PROVIDER=postgres");
 
-    if (!globalForPostgres.__vozebProPostgresPool) {
-        globalForPostgres.__vozebProPostgresPool = new Pool({
+    if (!globalForPostgres.__dqPostgresPool) {
+        globalForPostgres.__dqPostgresPool = new Pool({
             connectionString,
-            max: normalizePoolMax(process.env.VOZEB_PRO_DATABASE_POOL_MAX),
-            ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined,
+            max: normalizePoolMax(process.env.DQ_DATABASE_POOL_MAX),
+            ssl: parseBoolean(process.env.DQ_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined,
         });
     }
 
-    return globalForPostgres.__vozebProPostgresPool;
+    return globalForPostgres.__dqPostgresPool;
 }
 
 export async function postgresQuery<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
@@ -318,7 +318,7 @@ export async function withPostgresTransaction<T>(handler: (client: QueryExecutor
 
 export async function subscribePostgresNotification(channel: string, listener: PostgresNotificationListener) {
     const name = normalizeNotificationChannel(channel);
-    const state: PostgresNotificationState = globalForPostgres.__vozebProPostgresNotifications ?? (globalForPostgres.__vozebProPostgresNotifications = { listeners: new Map() });
+    const state: PostgresNotificationState = globalForPostgres.__dqPostgresNotifications ?? (globalForPostgres.__dqPostgresNotifications = { listeners: new Map() });
     const existing = state.listeners.get(name);
     const listeners = existing || new Set<PostgresNotificationListener>();
     listeners.add(listener);
@@ -337,7 +337,7 @@ async function ensurePostgresNotificationClient(state: PostgresNotificationState
     if (state.connecting) return state.connecting;
     const connectionString = getPostgresConnectionString();
     if (!connectionString) throw new Error("DATABASE_URL is required for PostgreSQL notifications");
-    const client = new Client({ connectionString, ssl: parseBoolean(process.env.VOZEB_PRO_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined });
+    const client = new Client({ connectionString, ssl: parseBoolean(process.env.DQ_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined });
     state.connecting = (async () => {
         await client.connect();
         client.on("notification", (message) => {
@@ -370,25 +370,25 @@ function normalizeNotificationChannel(value: string) {
 }
 
 export async function ensurePostgresSchema() {
-    if (globalForPostgres.__vozebProPostgresSchemaReady) return globalForPostgres.__vozebProPostgresSchemaReady;
+    if (globalForPostgres.__dqPostgresSchemaReady) return globalForPostgres.__dqPostgresSchemaReady;
 
-    const result = await getPostgresPool().query<{ table_name: string | null }>("SELECT to_regclass('public.vozeb_pro_users')::text AS table_name");
+    const result = await getPostgresPool().query<{ table_name: string | null }>("SELECT to_regclass('public.dq_users')::text AS table_name");
     if (!result.rows[0]?.table_name) throw new Error("PostgreSQL schema has not been initialized");
 
     return initializePostgresSchema();
 }
 
 export async function initializePostgresSchema() {
-    if (!globalForPostgres.__vozebProPostgresSchemaReady) {
-        globalForPostgres.__vozebProPostgresSchemaReady = getPostgresPool()
+    if (!globalForPostgres.__dqPostgresSchemaReady) {
+        globalForPostgres.__dqPostgresSchemaReady = getPostgresPool()
             .query(prefixPostgresSql(POSTGRESQL_SCHEMA_SQL))
             .then(() => undefined)
             .catch((error) => {
-                globalForPostgres.__vozebProPostgresSchemaReady = undefined;
+                globalForPostgres.__dqPostgresSchemaReady = undefined;
                 throw error;
             });
     }
-    return globalForPostgres.__vozebProPostgresSchemaReady;
+    return globalForPostgres.__dqPostgresSchemaReady;
 }
 
 function prefixPostgresSql(sql: string) {

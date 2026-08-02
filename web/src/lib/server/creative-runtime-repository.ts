@@ -65,7 +65,7 @@ export type CreativeRunBundleResult<T extends AgentRunBase> = {
 const RUNTIME_FILE = "creative-runtime.json";
 const RECENT_CONTEXT_MESSAGES = 12;
 const MAX_CONTEXT_SUMMARY_LENGTH = 8000;
-const CREATIVE_RUN_NOTIFY_CHANNEL = "vozeb_pro_run_events";
+const CREATIVE_RUN_NOTIFY_CHANNEL = "dq_run_events";
 
 export async function createPostgresRunBundle<T extends AgentRunBase>(userId: string, input: CreateRunBundleInput<T>) {
     await ensurePostgresSchema();

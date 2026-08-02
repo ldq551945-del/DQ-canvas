@@ -82,7 +82,7 @@ async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | n
         const response = await fetch(current, {
             method,
             headers: {
-                "User-Agent": "VOZEB-PRO-Media-Proxy/0.0.3",
+                "User-Agent": "DQ-Media-Proxy/0.0.3",
                 ...(range ? { Range: range } : {}),
             },
             cache: "no-store",

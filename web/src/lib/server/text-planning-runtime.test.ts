@@ -128,11 +128,11 @@ describe("text planning runtime protocol matrix", () => {
 
         await requestStructuredText({
             ...requestInput(candidate("newapi")),
-            headers: { "x-vozeb-pro-points-idempotency-key": "planning-one", "idempotency-key": "planning-one" },
+            headers: { "x-dq-points-idempotency-key": "planning-one", "idempotency-key": "planning-one" },
         });
 
         const headers = new Headers(mockedFetch.mock.calls[0]?.[1]?.headers);
-        expect(headers.get("x-vozeb-pro-points-idempotency-key")).toBe("planning-one:chat-json");
+        expect(headers.get("x-dq-points-idempotency-key")).toBe("planning-one:chat-json");
         expect(headers.get("idempotency-key")).toBe("planning-one:chat-json");
     });
 

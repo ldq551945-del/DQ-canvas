@@ -339,7 +339,7 @@ export async function pollOpenAiImageTask(config: ImageTaskConfig, taskId: strin
                 throw new Error(message);
             }
             const payload = (await response.json()) as ImageApiResponse;
-            const baseUrl = response.headers.get("x-vozeb-pro-upstream-url") || mediaBaseUrl || pollUrl;
+            const baseUrl = response.headers.get("x-dq-upstream-url") || mediaBaseUrl || pollUrl;
             const image = parseImagePayloadCompat(payload, baseUrl, config);
             if (image) return image;
             const error = readImagePayloadError(payload);
@@ -700,7 +700,7 @@ export async function readFetchError(response: Response, fallback: string) {
     const statusText = `${fallback}，状态码 ${response.status}`;
     if (!text) return statusText;
     if (/^\s*(?:<!doctype\s+html|<html\b)/i.test(text)) {
-        const upstreamUrl = response.headers.get("x-vozeb-pro-upstream-url") || "";
+        const upstreamUrl = response.headers.get("x-dq-upstream-url") || "";
         const contentType = response.headers.get("content-type") || "";
         const details = [upstreamUrl ? `地址 ${upstreamUrl}` : "", contentType ? `类型 ${contentType}` : ""].filter(Boolean).join("，");
         return `${fallback}，上游返回了网页错误（HTTP ${response.status}${details ? `，${details}` : ""}），请检查接口路径、鉴权、参考图提交方式或网关状态`;
@@ -714,18 +714,18 @@ export async function readFetchError(response: Response, fallback: string) {
 }
 
 export function readPointsRemaining(headers: Headers) {
-    const value = headers.get("x-vozeb-pro-points-remaining");
+    const value = headers.get("x-dq-points-remaining");
     const numberValue = Number(value);
     return Number.isFinite(numberValue) ? numberValue : undefined;
 }
 
 export function readBilling(headers: Headers) {
-    const rawCost = headers.get("x-vozeb-pro-points-cost");
+    const rawCost = headers.get("x-dq-points-cost");
     const pointsCost = rawCost === null ? undefined : Number(rawCost);
     return {
         pointsRemaining: readPointsRemaining(headers),
         pointsCost: pointsCost !== undefined && Number.isFinite(pointsCost) && pointsCost >= 0 ? pointsCost : undefined,
-        pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined,
+        pointsRecordId: headers.get("x-dq-points-record-id") || undefined,
     };
 }
 

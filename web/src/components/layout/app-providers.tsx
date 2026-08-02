@@ -33,7 +33,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
         const reloadOnceForChunkError = (reason: unknown) => {
             const text = reason instanceof Error ? `${reason.name} ${reason.message}` : String(reason);
             if (!/ChunkLoadError|Loading chunk|dynamically imported module|failed to fetch/i.test(text)) return;
-            const key = "vozeb-pro:chunk-reload-attempted";
+            const key = "dq:chunk-reload-attempted";
             const lastAttempt = Number(sessionStorage.getItem(key) || "0");
             if (Date.now() - lastAttempt < 30_000) return;
             sessionStorage.setItem(key, String(Date.now()));

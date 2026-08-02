@@ -87,7 +87,7 @@ export async function POST(request: Request) {
                         throw new Error(phase === "visual" ? "模型没有为全部镜头生成视觉结构" : "模型没有生成有效内容结构");
                     }
                     const response = NextResponse.json({ code: 0, data, msg: phase === "visual" ? "视觉结构已生成" : "内容结构待审核" });
-                    if (typeof call.pointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(call.pointsRemaining));
+                    if (typeof call.pointsRemaining === "number") response.headers.set("x-dq-points-remaining", String(call.pointsRemaining));
                     return response;
                 } catch (error) {
                     if (hasSystemAiCharge(call)) refundedPointsRemaining = (await refund(user.id, model, call))?.pointsBalance;
@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         throw latestError instanceof Error ? latestError : new Error("没有可用的文本模型渠道");
     } catch (error) {
         const response = NextResponse.json({ code: 502, data: null, msg: error instanceof Error ? error.message : "剧本分析失败" }, { status: 502 });
-        if (typeof refundedPointsRemaining === "number") response.headers.set("x-vozeb-pro-points-remaining", String(refundedPointsRemaining));
+        if (typeof refundedPointsRemaining === "number") response.headers.set("x-dq-points-remaining", String(refundedPointsRemaining));
         return response;
     }
 }
@@ -200,7 +200,7 @@ function normalizeVisualAssets(value: unknown) {
 }
 
 function readCallResult(args: string, headers: Headers) {
-    const remaining = Number(headers.get("x-vozeb-pro-points-remaining"));
+    const remaining = Number(headers.get("x-dq-points-remaining"));
     return {
         args,
         pointsRemaining: Number.isFinite(remaining) ? remaining : undefined,

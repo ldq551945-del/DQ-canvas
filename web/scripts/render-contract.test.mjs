@@ -14,9 +14,9 @@ const source = readFileSync(path.join(repoRoot, "render.yaml"), "utf8");
 describe("Render Blueprint contract", () => {
     it("keeps the Web, Worker, database, shared secret, health check and disk topology aligned", () => {
         expect(validateRenderBlueprint({ repoRoot })).toEqual({
-            services: ["vozeb-pro", "vozeb-pro-generation-worker"],
-            database: "vozeb-pro-postgres",
-            environmentGroup: "vozeb-pro-runtime",
+            services: ["dq", "dq-generation-worker"],
+            database: "dq-postgres",
+            environmentGroup: "dq-runtime",
         });
     });
 

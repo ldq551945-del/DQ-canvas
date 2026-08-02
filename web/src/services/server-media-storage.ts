@@ -55,7 +55,7 @@ export function parseServerMediaUrl(value: string): ServerMediaReference | null 
     try {
         const absolute = /^https?:\/\//i.test(source);
         if (absolute && (typeof window === "undefined" || new URL(source).origin !== window.location.origin)) return null;
-        const parsed = new URL(source, "http://vozeb.local");
+        const parsed = new URL(source, "http://dq.local");
         const route = SERVER_MEDIA_ROUTES.find(({ prefix }) => parsed.pathname.startsWith(prefix));
         if (!route) return null;
         const storageKey = parsed.pathname.slice(route.prefix.length).split("/").map(decodeURIComponent).join("/");

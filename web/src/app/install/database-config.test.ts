@@ -7,8 +7,8 @@ const baseConfig = {
     mode: "baota" as const,
     host: "127.0.0.1",
     port: "5432",
-    database: "vozeb_pro",
-    username: "vozeb_pro",
+    database: "dq",
+    username: "dq",
     password: "safe password",
     ssl: false,
     encryptionKey: "ab".repeat(32),
@@ -23,17 +23,17 @@ describe("database deployment config", () => {
     it("uses host networking without a bundled PostgreSQL service in Baota mode", () => {
         const snippets = buildDeploymentSnippets(baseConfig);
 
-        expect(snippets.envText).toContain("@127.0.0.1:5432/vozeb_pro");
+        expect(snippets.envText).toContain("@127.0.0.1:5432/dq");
         expect(snippets.composeText).toContain("network_mode: host");
         expect(snippets.composeText).not.toContain("postgres:\n");
         expect(snippets.composeText).not.toContain("ports:");
-        expect(snippets.composeText).toContain(`VOZEB_PRO_ENCRYPTION_KEY: "${baseConfig.encryptionKey}"`);
-        expect(snippets.envText).toContain(`VOZEB_PRO_MAINTENANCE_TOKEN=${baseConfig.maintenanceToken}`);
-        expect(snippets.composeText.match(/VOZEB_PRO_MAINTENANCE_TOKEN:/g)).toHaveLength(2);
+        expect(snippets.composeText).toContain(`DQ_ENCRYPTION_KEY: "${baseConfig.encryptionKey}"`);
+        expect(snippets.envText).toContain(`DQ_MAINTENANCE_TOKEN=${baseConfig.maintenanceToken}`);
+        expect(snippets.composeText.match(/DQ_MAINTENANCE_TOKEN:/g)).toHaveLength(2);
         expect(snippets.composeText).toContain("generation-worker:");
-        expect(snippets.composeText).toContain("VOZEB_PRO_WORKER_API_ORIGIN: http://127.0.0.1:3000");
-        expect(snippets.envText).toContain("VOZEB_PRO_TRUSTED_PROXY_HOPS=1");
-        expect(snippets.composeText).toContain('VOZEB_PRO_TRUSTED_PROXY_HOPS: "1"');
+        expect(snippets.composeText).toContain("DQ_WORKER_API_ORIGIN: http://127.0.0.1:3000");
+        expect(snippets.envText).toContain("DQ_TRUSTED_PROXY_HOPS=1");
+        expect(snippets.composeText).toContain('DQ_TRUSTED_PROXY_HOPS: "1"');
     });
 
     it.each([
@@ -43,10 +43,10 @@ describe("database deployment config", () => {
     ])("does not inject Baota proxy defaults into $mode mode", ({ mode, host, ssl }) => {
         const snippets = buildDeploymentSnippets({ ...baseConfig, mode, host, ssl });
 
-        expect(snippets.envText).not.toContain("VOZEB_PRO_TRUSTED_PROXY_HOPS");
-        expect(snippets.composeText).not.toContain("VOZEB_PRO_TRUSTED_PROXY_HOPS");
+        expect(snippets.envText).not.toContain("DQ_TRUSTED_PROXY_HOPS");
+        expect(snippets.composeText).not.toContain("DQ_TRUSTED_PROXY_HOPS");
         expect(snippets.composeText).toContain("generation-worker:");
-        expect(snippets.composeText.match(/VOZEB_PRO_MAINTENANCE_TOKEN:/g)).toHaveLength(2);
+        expect(snippets.composeText.match(/DQ_MAINTENANCE_TOKEN:/g)).toHaveLength(2);
     });
 
     it("uses the Compose service name for the bundled Worker origin", () => {
@@ -54,7 +54,7 @@ describe("database deployment config", () => {
 
         expect(snippets.envText).toContain(`POSTGRES_PASSWORD=${baseConfig.password}`);
         expect(snippets.envText).not.toContain("DATABASE_URL=");
-        expect(snippets.composeText).toContain("VOZEB_PRO_WORKER_API_ORIGIN: http://app:3000");
+        expect(snippets.composeText).toContain("DQ_WORKER_API_ORIGIN: http://app:3000");
         expect(snippets.composeText).toContain('command: ["node", "/app/web/scripts/generation-worker.mjs"]');
         expect(snippets.composeText).toContain("condition: service_healthy");
     });
@@ -68,7 +68,7 @@ describe("database deployment config", () => {
 
         expect(Object.keys(document.services)).toContain("app");
         expect(Object.keys(document.services)).toContain("generation-worker");
-        expect(document.services.app.environment.VOZEB_PRO_MAINTENANCE_TOKEN).toBe(baseConfig.maintenanceToken);
-        expect(document.services["generation-worker"].environment.VOZEB_PRO_MAINTENANCE_TOKEN).toBe(baseConfig.maintenanceToken);
+        expect(document.services.app.environment.DQ_MAINTENANCE_TOKEN).toBe(baseConfig.maintenanceToken);
+        expect(document.services["generation-worker"].environment.DQ_MAINTENANCE_TOKEN).toBe(baseConfig.maintenanceToken);
     });
 });

@@ -13,7 +13,7 @@ vi.mock("@/lib/server/referral-service", () => ({
             .toUpperCase(),
     ),
     recordReferralVisit: mocks.recordReferralVisit,
-    REFERRAL_COOKIE_NAME: "vozeb_referral",
+    REFERRAL_COOKIE_NAME: "dq_referral",
 }));
 vi.mock("@/lib/server/security", () => ({
     checkRateLimit: mocks.checkRateLimit,
@@ -36,6 +36,6 @@ describe("GET /invite/[code]", () => {
 
         expect(mocks.recordReferralVisit).toHaveBeenCalledWith("INVITE88", { countClick: false });
         expect(response.headers.get("location")).toBe("http://localhost/register?next=%2Fgallery%2Fwork-one&ref=INVITE88");
-        expect(response.headers.get("set-cookie")).toContain("vozeb_referral=INVITE88");
+        expect(response.headers.get("set-cookie")).toContain("dq_referral=INVITE88");
     });
 });

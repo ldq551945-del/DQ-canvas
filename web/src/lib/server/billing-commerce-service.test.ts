@@ -86,7 +86,7 @@ const coupon = {
 function order(overrides: Partial<BillingOrderRecord> = {}): BillingOrderRecord {
     return {
         id: "order-one",
-        orderNo: "VZ001",
+        orderNo: "DQ001",
         productId: product.id,
         userId: coupon.userId,
         productKind: "plan",

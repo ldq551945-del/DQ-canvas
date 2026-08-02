@@ -17,7 +17,7 @@ describe("Alipay payment webhook adapter", () => {
             status: "succeeded",
             eventType: "alipay.trade_success",
             orderId: "order-one",
-            orderNo: "VZ001",
+            orderNo: "DQ001",
             providerTradeId: "2026072800000001",
             amountCents: 1299,
             currency: "CNY",
@@ -41,7 +41,7 @@ function signedAlipayCallback() {
         notify_id: "notify-one",
         trade_no: "2026072800000001",
         trade_status: "TRADE_SUCCESS",
-        out_trade_no: "VZ001",
+        out_trade_no: "DQ001",
         passback_params: encodeURIComponent("order-one"),
         total_amount: "12.99",
         gmt_payment: "2026-07-28 16:20:00",
@@ -60,9 +60,9 @@ function alipayConfig(): PaymentRuntimeConfig {
         saved: { providers: {} },
         providers: { alipay: { enabled: true, saved: true } },
         valuesByEnvName: {
-            VOZEB_PRO_ALIPAY_MODE: "face_to_face",
-            VOZEB_PRO_ALIPAY_APP_ID: "2026000000000000",
-            VOZEB_PRO_ALIPAY_PUBLIC_KEY: alipayPublicKey,
+            DQ_ALIPAY_MODE: "face_to_face",
+            DQ_ALIPAY_APP_ID: "2026000000000000",
+            DQ_ALIPAY_PUBLIC_KEY: alipayPublicKey,
         },
     };
 }

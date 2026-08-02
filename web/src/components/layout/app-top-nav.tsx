@@ -18,7 +18,7 @@ export function AppTopNav() {
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const navItemRefs = useRef<(HTMLAnchorElement | null)[]>([]);
     const [navIndicator, setNavIndicator] = useState({ left: 7, width: 0, visible: false });
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
@@ -49,7 +49,7 @@ export function AppTopNav() {
                         <div className="flex min-w-0 items-center justify-start overflow-hidden">
                             <Link href="/" className="flex h-full min-w-0 items-center gap-2.5 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
                                 <SiteLogo logoUrl={site.logoUrl} className="size-9" />
-                                <span className="max-w-[24vw] truncate text-xl font-semibold sm:max-w-[30vw] lg:max-w-none">{site.title || "VOZEB PRO"}</span>
+                                <span className="max-w-[24vw] truncate text-xl font-semibold sm:max-w-[30vw] lg:max-w-none">{site.title || "DQ-绘图"}</span>
                             </Link>
 
                             <button

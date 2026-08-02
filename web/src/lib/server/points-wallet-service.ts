@@ -110,7 +110,7 @@ class PointsWalletConflictError extends AuthInputError {
 
 export function walletClock(input: WalletClockInput = {}): WalletClock {
     const now = input.now || new Date();
-    const timeZone = validTimeZone(input.timeZone || process.env.VOZEB_PRO_TIME_ZONE || DEFAULT_TIME_ZONE);
+    const timeZone = validTimeZone(input.timeZone || process.env.DQ_TIME_ZONE || DEFAULT_TIME_ZONE);
     const zoned = dayjs(now).tz(timeZone);
     return {
         now,

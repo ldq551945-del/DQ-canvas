@@ -13,10 +13,10 @@ type ModerationOptions = { env?: ModerationEnv; fetchImpl?: typeof fetch; now?: 
 
 export async function moderateWorkContent(input: ModerationInput, options: ModerationOptions = {}) {
     const env = options.env || process.env;
-    const provider = env.VOZEB_PRO_CONTENT_MODERATION_PROVIDER?.trim().toLowerCase() || "manual";
+    const provider = env.DQ_CONTENT_MODERATION_PROVIDER?.trim().toLowerCase() || "manual";
     const checkedAt = (options.now || (() => new Date()))().toISOString();
 
-    if (provider === "keywords") return keywordModeration(input, env.VOZEB_PRO_CONTENT_MODERATION_KEYWORDS, checkedAt);
+    if (provider === "keywords") return keywordModeration(input, env.DQ_CONTENT_MODERATION_KEYWORDS, checkedAt);
     if (provider === "http") {
         try {
             return await httpModeration(input, env, options.fetchImpl || fetch, checkedAt);
@@ -50,11 +50,11 @@ function keywordModeration(input: ModerationInput, value: string | undefined, ch
 }
 
 async function httpModeration(input: ModerationInput, env: ModerationEnv, fetchImpl: typeof fetch, checkedAt: string) {
-    const endpoint = new URL(env.VOZEB_PRO_CONTENT_MODERATION_URL || "");
+    const endpoint = new URL(env.DQ_CONTENT_MODERATION_URL || "");
     if (endpoint.protocol !== "https:" && endpoint.protocol !== "http:") throw new Error("Invalid moderation endpoint");
     const response = await fetchImpl(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(env.VOZEB_PRO_CONTENT_MODERATION_API_KEY ? { Authorization: `Bearer ${env.VOZEB_PRO_CONTENT_MODERATION_API_KEY}` } : {}) },
+        headers: { "Content-Type": "application/json", ...(env.DQ_CONTENT_MODERATION_API_KEY ? { Authorization: `Bearer ${env.DQ_CONTENT_MODERATION_API_KEY}` } : {}) },
         body: JSON.stringify(input),
         signal: AbortSignal.timeout(3000),
     });

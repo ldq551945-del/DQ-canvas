@@ -52,7 +52,7 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
     const data = await parseImageSubmissionJson<ImageApiResponse>(response);
     return parseChargedImageResponse(task, response, async () => {
         if (isProviderBusinessError(data)) throw new GenerationSubmissionSafeFailure(readProviderError(data) || "自定义图片接口返回失败");
-        const baseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
+        const baseUrl = response.headers.get("x-dq-upstream-url") || url;
         const direct = configuredImageResult(data, baseUrl, task);
         if (direct) return direct;
         const taskId = readImageTaskId(data);
@@ -79,7 +79,7 @@ export async function pollCustomImageTask(task: ImageTask, taskId: string, reque
             }
             const data = (await response.json().catch(() => null)) as ImageApiResponse | null;
             if (!data || isProviderBusinessError(data)) throw new ImageUpstreamTerminalError(readProviderError(data) || "自定义图片任务查询失败");
-            const result = configuredImageResult(data, response.headers.get("x-vozeb-pro-upstream-url") || url, task);
+            const result = configuredImageResult(data, response.headers.get("x-dq-upstream-url") || url, task);
             if (result) return result;
             const status = readProviderString(data, config.advancedConfig?.statusField, STATUS_KEYS).toLowerCase();
             if (!isPendingImageStatus(status)) throw new ImageUpstreamTerminalError(readProviderError(data) || "自定义图片任务完成但没有返回图片");

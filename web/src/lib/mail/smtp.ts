@@ -26,8 +26,8 @@ export async function sendSmtpTestMail({ mail, to }: SendTestMailInput) {
     await sendSmtpMail({
         mail,
         to: recipient,
-        subject: "VOZEB PRO 邮箱服务测试",
-        text: ["这是一封来自 VOZEB PRO 管理后台的测试邮件。", "", "如果你收到这封邮件，说明 SMTP 配置可以正常发送。"].join("\r\n"),
+        subject: "DQ-绘图 邮箱服务测试",
+        text: ["这是一封来自 DQ-绘图 管理后台的测试邮件。", "", "如果你收到这封邮件，说明 SMTP 配置可以正常发送。"].join("\r\n"),
     });
 }
 
@@ -38,7 +38,7 @@ export async function sendSmtpMail({ mail, to, subject, text }: SendSmtpMailInpu
     const password = mail.password;
     const fromEmail = (mail.fromEmail || username).trim();
     const recipient = to.trim();
-    const fromName = (mail.fromName || "VOZEB PRO").trim();
+    const fromName = (mail.fromName || "DQ-绘图").trim();
 
     if (!host) throw new Error("请填写 SMTP 服务器");
     if (!username) throw new Error("请填写邮箱账号");
@@ -191,7 +191,7 @@ function dotStuff(value: string) {
 }
 
 function smtpDomain(email: string) {
-    return email.split("@")[1] || "vozeb-pro.local";
+    return email.split("@")[1] || "dq.local";
 }
 
 function isEmail(value: string) {

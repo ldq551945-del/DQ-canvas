@@ -10,13 +10,13 @@ export async function downloadUserDataExport() {
 export function userDataExportFileName(contentDisposition: string | null, now = new Date()) {
     const extended = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     const regular = contentDisposition?.match(/filename="?([^";]+)"?/i)?.[1];
-    let fileName = extended || regular || `vozeb-pro-personal-data-${now.toISOString().slice(0, 10)}.json`;
+    let fileName = extended || regular || `dq-personal-data-${now.toISOString().slice(0, 10)}.json`;
     try {
         fileName = decodeURIComponent(fileName);
     } catch {
         // Keep a valid server-provided ASCII filename when decoding fails.
     }
-    return fileName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").slice(0, 180) || "vozeb-pro-personal-data.json";
+    return fileName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").slice(0, 180) || "dq-personal-data.json";
 }
 
 async function readError(response: Response) {

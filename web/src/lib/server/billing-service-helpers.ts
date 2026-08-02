@@ -165,7 +165,7 @@ export async function assertBillingDatabaseReady() {
 export function generateOrderNo() {
     const date = new Date();
     const stamp = `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}${pad2(date.getHours())}${pad2(date.getMinutes())}${pad2(date.getSeconds())}`;
-    return `VZ${stamp}${randomBytes(4).toString("hex").toUpperCase()}`;
+    return `DQ${stamp}${randomBytes(4).toString("hex").toUpperCase()}`;
 }
 
 export function deterministicPaymentId(provider: string, providerTradeId: string) {
@@ -173,7 +173,7 @@ export function deterministicPaymentId(provider: string, providerTradeId: string
 }
 
 export function orderExpiresMinutes() {
-    return normalizeInteger(process.env.VOZEB_PRO_BILLING_ORDER_EXPIRES_MINUTES, 1, 24 * 60, DEFAULT_ORDER_EXPIRES_MINUTES);
+    return normalizeInteger(process.env.DQ_BILLING_ORDER_EXPIRES_MINUTES, 1, 24 * 60, DEFAULT_ORDER_EXPIRES_MINUTES);
 }
 
 export function normalizeId(value: unknown) {

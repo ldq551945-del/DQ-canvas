@@ -442,9 +442,9 @@ function AgentDetailBlock({ detail, theme }: { detail: unknown; theme: (typeof c
 }
 
 function AgentAvatar({ theme }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     return (
-        <span className="grid size-8 shrink-0 place-items-center" role="img" aria-label={`${site.title || "VOZEB PRO"} Agent`} style={{ color: theme.node.text }}>
+        <span className="grid size-8 shrink-0 place-items-center" role="img" aria-label={`${site.title || "DQ-绘图"} Agent`} style={{ color: theme.node.text }}>
             <SiteLogo logoUrl={site.logoUrl} className="size-5" />
         </span>
     );

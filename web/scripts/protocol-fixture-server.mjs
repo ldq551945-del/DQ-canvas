@@ -295,8 +295,8 @@ function delay(ms) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
-    const port = Number(process.env.VOZEB_PRO_PROTOCOL_FIXTURE_PORT) || 4010;
-    const host = process.env.VOZEB_PRO_PROTOCOL_FIXTURE_HOST || "127.0.0.1";
-    const fixture = createProtocolFixtureServer({ videoPath: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_VIDEO, responseDelayMs: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_DELAY_MS, failImage: process.env.VOZEB_PRO_PROTOCOL_FIXTURE_FAIL_IMAGE === "1" });
+    const port = Number(process.env.DQ_PROTOCOL_FIXTURE_PORT) || 4010;
+    const host = process.env.DQ_PROTOCOL_FIXTURE_HOST || "127.0.0.1";
+    const fixture = createProtocolFixtureServer({ videoPath: process.env.DQ_PROTOCOL_FIXTURE_VIDEO, responseDelayMs: process.env.DQ_PROTOCOL_FIXTURE_DELAY_MS, failImage: process.env.DQ_PROTOCOL_FIXTURE_FAIL_IMAGE === "1" });
     fixture.server.listen(port, host, () => console.log(`Protocol fixture ready at http://${host}:${port}`));
 }

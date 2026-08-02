@@ -65,7 +65,7 @@ function dataUrlMimeType(value: string) {
 
 function urlExtension(value: string) {
     try {
-        const extension = new URL(value, "http://vozeb.local").pathname.match(/\.([a-z0-9]{2,8})$/i)?.[1]?.toLowerCase();
+        const extension = new URL(value, "http://dq.local").pathname.match(/\.([a-z0-9]{2,8})$/i)?.[1]?.toLowerCase();
         return extension && KNOWN_MEDIA_EXTENSIONS.has(extension) ? extension : "";
     } catch {
         return "";
@@ -85,7 +85,7 @@ function normalizeExtension(value: string) {
 function storageIdentityToken(value: string) {
     let path = value;
     try {
-        path = new URL(value, "http://vozeb.local").pathname;
+        path = new URL(value, "http://dq.local").pathname;
     } catch {
         // Keep the raw storage key.
     }

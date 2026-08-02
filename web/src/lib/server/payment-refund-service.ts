@@ -34,7 +34,7 @@ export async function refundPaymentTransaction(order: BillingOrderRecord, paymen
 }
 
 async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
-    const secretKey = requiredConfig(paymentConfig, "VOZEB_PRO_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
+    const secretKey = requiredConfig(paymentConfig, "DQ_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
     const target = resolveStripeRefundTarget(order, payment);
     if (!target) throw new BillingInputError("缺少 Stripe PaymentIntent 或 Charge，不能自动退款", 409);
 
@@ -43,8 +43,8 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
     params.set("amount", String(order.amountCents));
     params.set("metadata[orderId]", order.id);
     params.set("metadata[orderNo]", order.orderNo);
-    params.set("metadata[vozebProOrderId]", order.id);
-    params.set("metadata[vozebProOrderNo]", order.orderNo);
+    params.set("metadata[dqOrderId]", order.id);
+    params.set("metadata[dqOrderNo]", order.orderNo);
     const reason = normalizeText(options.reason, "", 200);
     if (reason) params.set("metadata[refundReason]", reason);
     if (options.operatorUserId) params.set("metadata[operatorUserId]", normalizeText(options.operatorUserId, "", 120));
@@ -54,7 +54,7 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
         headers: {
             authorization: `Bearer ${secretKey}`,
             "content-type": "application/x-www-form-urlencoded",
-            "Idempotency-Key": `vozeb-pro-refund-${order.id}`,
+            "Idempotency-Key": `dq-refund-${order.id}`,
         },
         body: params,
     });
@@ -71,9 +71,9 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
 }
 
 async function refundAlipayPayment(order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
-    const appId = requiredConfig(paymentConfig, "VOZEB_PRO_ALIPAY_APP_ID");
-    const privateKey = loadPrivateKey(paymentConfig, "VOZEB_PRO_ALIPAY_PRIVATE_KEY", "VOZEB_PRO_ALIPAY_PRIVATE_KEY_PATH");
-    const gateway = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_ALIPAY_GATEWAY_URL") || "https://openapi.alipay.com/gateway.do";
+    const appId = requiredConfig(paymentConfig, "DQ_ALIPAY_APP_ID");
+    const privateKey = loadPrivateKey(paymentConfig, "DQ_ALIPAY_PRIVATE_KEY", "DQ_ALIPAY_PRIVATE_KEY_PATH");
+    const gateway = getPaymentRuntimeEnv(paymentConfig, "DQ_ALIPAY_GATEWAY_URL") || "https://openapi.alipay.com/gateway.do";
     const bizContent: Record<string, string> = {
         out_trade_no: order.orderNo,
         refund_amount: centsToDecimal(order.amountCents),
@@ -112,9 +112,9 @@ async function refundAlipayPayment(order: BillingOrderRecord, payment: PaymentTr
 }
 
 async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
-    const mchid = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_MCH_ID");
-    const serialNo = requiredConfig(paymentConfig, "VOZEB_PRO_WECHAT_PAY_CERT_SERIAL_NO");
-    const privateKey = loadPrivateKey(paymentConfig, "VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY", "VOZEB_PRO_WECHAT_PAY_PRIVATE_KEY_PATH");
+    const mchid = requiredConfig(paymentConfig, "DQ_WECHAT_PAY_MCH_ID");
+    const serialNo = requiredConfig(paymentConfig, "DQ_WECHAT_PAY_CERT_SERIAL_NO");
+    const privateKey = loadPrivateKey(paymentConfig, "DQ_WECHAT_PAY_PRIVATE_KEY", "DQ_WECHAT_PAY_PRIVATE_KEY_PATH");
     if (order.currency.toUpperCase() !== "CNY") throw new BillingInputError("微信支付退款只支持 CNY 订单", 409);
     const transactionId = normalizeProviderTradeNo(payment.providerPaymentId || payment.providerTradeId, order);
     const payload: Record<string, unknown> = {
@@ -128,11 +128,11 @@ async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTr
     };
     if (transactionId) payload.transaction_id = transactionId;
     else payload.out_trade_no = order.orderNo;
-    const notifyUrl = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_REFUND_NOTIFY_URL");
+    const notifyUrl = getPaymentRuntimeEnv(paymentConfig, "DQ_WECHAT_PAY_REFUND_NOTIFY_URL");
     if (notifyUrl) payload.notify_url = notifyUrl;
 
     const body = JSON.stringify(payload);
-    const apiBase = (getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
+    const apiBase = (getPaymentRuntimeEnv(paymentConfig, "DQ_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
     const path = "/v3/refund/domestic/refunds";
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = randomBytes(16).toString("hex");
@@ -159,9 +159,9 @@ async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTr
 }
 
 async function refundPayplyPayment(order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
-    const refundUrl = getPaymentRuntimeValue(paymentConfig, "VOZEB_PRO_PAYPLY_REFUND_URL", "PAYPLY_REFUND_URL");
+    const refundUrl = getPaymentRuntimeValue(paymentConfig, "DQ_PAYPLY_REFUND_URL", "PAYPLY_REFUND_URL");
     if (!refundUrl) throw new BillingInputError("该支付渠道未配置自动退款接口，请先配置 PayPly 退款接口后再退款", 400);
-    const apiKey = requiredConfig(paymentConfig, "VOZEB_PRO_PAYPLY_API_KEY", "PAYPLY_API_KEY");
+    const apiKey = requiredConfig(paymentConfig, "DQ_PAYPLY_API_KEY", "PAYPLY_API_KEY");
     const idempotencyKey = providerRefundRequestNo(order);
     const body = buildPayplyRefundPayload(paymentConfig, order, payment, options);
     const contentType = payplyRefundContentType(paymentConfig);
@@ -170,13 +170,13 @@ async function refundPayplyPayment(order: BillingOrderRecord, payment: PaymentTr
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readPayplyError(payload, "PayPly 退款失败"), response.status >= 500 ? 502 : 400);
 
-    const providerStatus = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_REFUND_STATUS_FIELD", ["refundStatus", "refund_status", "status", "data.refundStatus", "data.status", "result.status"]), 80);
+    const providerStatus = normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_REFUND_STATUS_FIELD", ["refundStatus", "refund_status", "status", "data.refundStatus", "data.status", "result.status"]), 80);
     const status = normalizePayplyRefundStatus(providerStatus, paymentConfig);
     if (!status) throw new BillingInputError(`PayPly 退款未成功：${providerStatus || "unknown"}`, 502);
     return {
         provider: "payply",
         status,
-        providerRefundId: normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "VOZEB_PRO_PAYPLY_REFUND_ID_FIELD", ["refundId", "refund_id", "id", "data.refundId", "data.refund_id", "data.id", "result.id"]), 160),
+        providerRefundId: normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_REFUND_ID_FIELD", ["refundId", "refund_id", "id", "data.refundId", "data.refund_id", "data.id", "result.id"]), 160),
         rawPayload: sanitizeJson(payload),
     };
 }
@@ -198,13 +198,13 @@ function normalizeProviderTradeNo(value: unknown, order: BillingOrderRecord) {
 
 function providerRefundRequestNo(order: BillingOrderRecord) {
     const id = normalizeText(order.id || order.orderNo, "", 80).replace(/[^a-zA-Z0-9_-]/g, "");
-    return `vozeb-pro-refund-${id || order.orderNo}`.slice(0, 64);
+    return `dq-refund-${id || order.orderNo}`.slice(0, 64);
 }
 
 function buildPayplyRefundPayload(paymentConfig: PaymentRuntimeConfig, order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions) {
     const refundRequestNo = providerRefundRequestNo(order);
     const defaultPayload: Record<string, unknown> = {
-        merchantId: getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_MERCHANT_ID") || undefined,
+        merchantId: getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_MERCHANT_ID") || undefined,
         orderId: order.id,
         orderNo: order.orderNo,
         providerOrderId: order.providerOrderId || payment.providerTradeId || order.orderNo,
@@ -218,12 +218,12 @@ function buildPayplyRefundPayload(paymentConfig: PaymentRuntimeConfig, order: Bi
         refundRequestNo,
         idempotencyKey: refundRequestNo,
         metadata: {
-            vozebProOrderId: order.id,
-            vozebProOrderNo: order.orderNo,
+            dqOrderId: order.id,
+            dqOrderNo: order.orderNo,
             userId: order.userId || "",
         },
     };
-    const template = getPaymentRuntimeValue(paymentConfig, "VOZEB_PRO_PAYPLY_REFUND_REQUEST_TEMPLATE", "PAYPLY_REFUND_REQUEST_TEMPLATE");
+    const template = getPaymentRuntimeValue(paymentConfig, "DQ_PAYPLY_REFUND_REQUEST_TEMPLATE", "PAYPLY_REFUND_REQUEST_TEMPLATE");
     if (!template) return defaultPayload;
     const rendered = renderTemplate(template, {
         orderId: order.id,
@@ -270,7 +270,7 @@ function buildPayplyRequest(refundUrl: string, method: "GET" | "POST", contentTy
 }
 
 function payplyHeaders(config: PaymentRuntimeConfig, apiKey: string, contentType: string, idempotencyKey: string) {
-    const customHeader = getPaymentRuntimeEnv(config, "VOZEB_PRO_PAYPLY_API_KEY_HEADER");
+    const customHeader = getPaymentRuntimeEnv(config, "DQ_PAYPLY_API_KEY_HEADER");
     const headers: Record<string, string> = { "content-type": contentType, "idempotency-key": idempotencyKey };
     if (customHeader) {
         headers[customHeader] = apiKey;
@@ -278,7 +278,7 @@ function payplyHeaders(config: PaymentRuntimeConfig, apiKey: string, contentType
         headers.authorization = `Bearer ${apiKey}`;
         headers["x-api-key"] = apiKey;
     }
-    return { ...headers, ...parseExtraHeaders(config, "VOZEB_PRO_PAYPLY_EXTRA_HEADERS", "PAYPLY_EXTRA_HEADERS"), ...parseExtraHeaders(config, "VOZEB_PRO_PAYPLY_REFUND_EXTRA_HEADERS", "PAYPLY_REFUND_EXTRA_HEADERS") };
+    return { ...headers, ...parseExtraHeaders(config, "DQ_PAYPLY_EXTRA_HEADERS", "PAYPLY_EXTRA_HEADERS"), ...parseExtraHeaders(config, "DQ_PAYPLY_REFUND_EXTRA_HEADERS", "PAYPLY_REFUND_EXTRA_HEADERS") };
 }
 
 function parseExtraHeaders(config: PaymentRuntimeConfig, ...names: string[]): Record<string, string> {
@@ -316,7 +316,7 @@ function normalizePayplyRefundStatus(value: string | undefined, paymentConfig: P
     const status = normalizeText(value, "", 80).toLowerCase();
     if (!status) return "succeeded";
     if (status === "pending" || status === "processing") return "pending";
-    const configured = getPaymentRuntimeEnv(paymentConfig, "VOZEB_PRO_PAYPLY_REFUND_SUCCESS_STATUSES");
+    const configured = getPaymentRuntimeEnv(paymentConfig, "DQ_PAYPLY_REFUND_SUCCESS_STATUSES");
     const successStatuses = (configured || "refunded,refund,success,succeeded,completed,ok")
         .split(",")
         .map((item) => item.trim().toLowerCase())
@@ -375,16 +375,16 @@ function signWechatRequest(method: string, path: string, timestamp: string, nonc
 }
 
 function stripeApiBase(config: PaymentRuntimeConfig) {
-    return (getPaymentRuntimeEnv(config, "VOZEB_PRO_STRIPE_API_BASE") || "https://api.stripe.com").replace(/\/+$/, "");
+    return (getPaymentRuntimeEnv(config, "DQ_STRIPE_API_BASE") || "https://api.stripe.com").replace(/\/+$/, "");
 }
 
 function payplyRefundRequestMethod(config: PaymentRuntimeConfig) {
-    const method = getPaymentRuntimeValue(config, "VOZEB_PRO_PAYPLY_REFUND_REQUEST_METHOD", "PAYPLY_REFUND_REQUEST_METHOD").toUpperCase();
+    const method = getPaymentRuntimeValue(config, "DQ_PAYPLY_REFUND_REQUEST_METHOD", "PAYPLY_REFUND_REQUEST_METHOD").toUpperCase();
     return method === "GET" ? "GET" : "POST";
 }
 
 function payplyRefundContentType(config: PaymentRuntimeConfig) {
-    const contentType = getPaymentRuntimeValue(config, "VOZEB_PRO_PAYPLY_REFUND_CONTENT_TYPE", "PAYPLY_REFUND_CONTENT_TYPE", "VOZEB_PRO_PAYPLY_CONTENT_TYPE", "PAYPLY_CONTENT_TYPE") || "application/json";
+    const contentType = getPaymentRuntimeValue(config, "DQ_PAYPLY_REFUND_CONTENT_TYPE", "PAYPLY_REFUND_CONTENT_TYPE", "DQ_PAYPLY_CONTENT_TYPE", "PAYPLY_CONTENT_TYPE") || "application/json";
     return contentType === "application/x-www-form-urlencoded" ? contentType : "application/json";
 }
 

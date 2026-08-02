@@ -43,7 +43,7 @@ export function AuthForm({
 }: AuthFormProps) {
     const router = useRouter();
     const { message } = App.useApp();
-    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "VOZEB PRO", logoUrl: "/logo.svg" };
+    const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const setUser = useUserStore((state) => state.setUser);
     const [username, setUsername] = useState("");
     const [email, setEmail] = useState("");
@@ -103,7 +103,7 @@ export function AuthForm({
                 {headerSlot}
                 <div className="auth-form-header">
                     <p className="auth-form-kicker text-sm font-medium text-cyan-600 dark:text-cyan-300">{firstUser ? "首次初始化" : isRegister ? "创建创作账号" : "欢迎回来"}</p>
-                    <h2 className={cn("mt-2 font-semibold tracking-normal text-stone-950 dark:text-white", variant === "embedded" ? "text-2xl" : "text-3xl")}>{firstUser ? "创建首个管理员" : isRegister ? "注册 VOZEB PRO" : "登录 VOZEB PRO"}</h2>
+                    <h2 className={cn("mt-2 font-semibold tracking-normal text-stone-950 dark:text-white", variant === "embedded" ? "text-2xl" : "text-3xl")}>{firstUser ? "创建首个管理员" : isRegister ? "注册 DQ-绘图" : "登录 DQ-绘图"}</h2>
                     <p className="auth-form-description mt-3 text-sm leading-6 text-stone-500 dark:text-stone-400">{isRegister ? "保存创作项目、提示词和常用风格，从同一个入口继续。" : "继续你的电商、短剧、美颜与画布创作。"}</p>
                 </div>
 
@@ -137,7 +137,7 @@ export function AuthForm({
                                 prefix={<Mail className="size-4 text-stone-500" />}
                                 value={email}
                                 onChange={(event) => setEmail(event.target.value)}
-                                placeholder="csyqlz@gmail.com"
+                                placeholder="3275573660@qq.com"
                                 autoComplete="email"
                                 type="email"
                                 disabled={submitting || disabled}

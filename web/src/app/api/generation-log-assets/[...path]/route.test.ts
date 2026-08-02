@@ -36,7 +36,7 @@ describe("generation log asset access", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
-        mocks.getDataDir.mockReturnValue("C:/vozeb-data");
+        mocks.getDataDir.mockReturnValue("C:/dq-data");
         mocks.canAccess.mockResolvedValue(true);
         mocks.registration.mockResolvedValue({ originalName: "uploaded-file.png", mimeType: "image/png" });
         mocks.rate.mockResolvedValue({ allowed: true, remaining: 239, resetAt: Date.now() + 60_000 });

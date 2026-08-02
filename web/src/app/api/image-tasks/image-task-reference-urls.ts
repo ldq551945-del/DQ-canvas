@@ -20,7 +20,7 @@ export async function publicImageReferenceRequestUrl(reference: ImageTaskReferen
     if (localCandidate) {
         const signedUrl = signReferenceAssetInputUrl(localCandidate, publicOrigin);
         if (signedUrl !== localCandidate) return signedUrl;
-        throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
+        throw new Error("站内参考素材签名不可用，请配置 DQ_ENCRYPTION_KEY");
     }
 
     const dataUrl = (reference.dataUrl || "").trim();
@@ -29,7 +29,7 @@ export async function publicImageReferenceRequestUrl(reference: ImageTaskReferen
     if (asset.url) return asset.url;
     if (!isExternalPublicOrigin(publicOrigin)) throw new Error("参考图需要公网图片 URL；本地开发 localhost 不能直接提交给上游，请部署后配置 NEXT_PUBLIC_SITE_URL");
     const signedUrl = createSignedReferenceAssetUrl(asset.token, publicOrigin);
-    if (!signedUrl) throw new Error("站内参考素材签名不可用，请配置 VOZEB_PRO_ENCRYPTION_KEY");
+    if (!signedUrl) throw new Error("站内参考素材签名不可用，请配置 DQ_ENCRYPTION_KEY");
     return asset.url || signedUrl;
 }
 

@@ -10,7 +10,7 @@ import type { AuthSettings, SiteSocialKey } from "@/lib/auth/store";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
 export const siteSocialItems: Array<{ key: SiteSocialKey; label: string; placeholder: string; icon: ReactNode }> = [
-    { key: "email", label: "邮箱联系", placeholder: "mailto:csyqlz@gmail.com", icon: <Mail className="size-4" /> },
+    { key: "email", label: "邮箱联系", placeholder: "mailto:3275573660@qq.com", icon: <Mail className="size-4" /> },
     { key: "telegram", label: "Telegram", placeholder: "未配置", icon: <Send className="size-4" /> },
     { key: "x", label: "X", placeholder: "未配置", icon: <span className="text-xs font-bold">X</span> },
     { key: "instagram", label: "Instagram", placeholder: "未配置", icon: <span className="text-[11px] font-bold">IG</span> },

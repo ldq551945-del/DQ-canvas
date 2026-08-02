@@ -35,10 +35,10 @@ const publicMediaIpRateLimit: RateLimitConfig = { maxRequests: 240, windowMs: 60
 const blockedHostnames = ["metadata.google.internal", "metadata.goog", "metadata.azure.com", "instance-data"];
 
 const globalSecurityStore = globalThis as typeof globalThis & {
-    __vozebProRateLimits?: Map<string, { count: number; resetAt: number }>;
+    __dqRateLimits?: Map<string, { count: number; resetAt: number }>;
 };
 
-const rateLimits = (globalSecurityStore.__vozebProRateLimits ??= new Map<string, { count: number; resetAt: number }>());
+const rateLimits = (globalSecurityStore.__dqRateLimits ??= new Map<string, { count: number; resetAt: number }>());
 
 export function getClientIp(request: Request) {
     const trustedProxyHops = readTrustedProxyHops();
@@ -161,9 +161,9 @@ export async function isSafeOutboundUrl(value: string, options?: { allowCredenti
 }
 
 function privateUpstreamHostAllowed(hostname: string) {
-    if (process.env.VOZEB_PRO_ALLOW_PRIVATE_UPSTREAMS !== "1") return false;
+    if (process.env.DQ_ALLOW_PRIVATE_UPSTREAMS !== "1") return false;
     const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return (process.env.VOZEB_PRO_PRIVATE_UPSTREAM_HOSTS || "")
+    return (process.env.DQ_PRIVATE_UPSTREAM_HOSTS || "")
         .split(",")
         .map((value) =>
             value
@@ -187,7 +187,7 @@ async function isSafeOutboundHost(hostname: string) {
         const addresses = await lookup(host, { all: true, verbatim: true });
         if (!addresses.length) return false;
         if (addresses.every((address) => isPublicIpAddress(address.address))) return true;
-        return process.env.VOZEB_PRO_ALLOW_FAKE_IP_DNS === "1" && addresses.every((address) => isClashFakeIpAddress(address.address));
+        return process.env.DQ_ALLOW_FAKE_IP_DNS === "1" && addresses.every((address) => isClashFakeIpAddress(address.address));
     } catch {
         return false;
     }
@@ -234,6 +234,6 @@ function cleanupRateLimits(now: number) {
 }
 
 function readTrustedProxyHops() {
-    const value = Number(process.env.VOZEB_PRO_TRUSTED_PROXY_HOPS || 0);
+    const value = Number(process.env.DQ_TRUSTED_PROXY_HOPS || 0);
     return Number.isInteger(value) && value > 0 ? Math.min(value, 10) : 0;
 }

@@ -60,7 +60,7 @@ describe("POST /api/generation-webhooks/:channelId", () => {
 function request(body: unknown) {
     return new Request("http://localhost/api/generation-webhooks/channel-one", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-vozeb-pro-signature": "signature" },
+        headers: { "content-type": "application/json", "x-dq-signature": "signature" },
         body: JSON.stringify(body),
     });
 }

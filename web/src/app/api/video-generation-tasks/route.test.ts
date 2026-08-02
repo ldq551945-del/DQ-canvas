@@ -184,7 +184,7 @@ describe("video generation candidate failover", () => {
 
     it("forwards the authenticated maintenance worker identity to the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
-        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-worker", status: "queued" }));
 
         const response = await POST(
@@ -193,7 +193,7 @@ describe("video generation candidate failover", () => {
                 headers: {
                     authorization: `Bearer ${token}`,
                     "content-type": "application/json",
-                    "x-vozeb-pro-worker-user-id": "user",
+                    "x-dq-worker-user-id": "user",
                 },
                 body: JSON.stringify({ config: { model: "video" }, prompt: "A test video", references: [] }),
             }),
@@ -202,7 +202,7 @@ describe("video generation candidate failover", () => {
 
         expect(response.status).toBe(200);
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
-        expect(headers.get("x-vozeb-pro-worker-user-id")).toBe("user");
+        expect(headers.get("x-dq-worker-user-id")).toBe("user");
         expect(headers.has("cookie")).toBe(false);
         vi.unstubAllEnvs();
     });
@@ -269,10 +269,10 @@ describe("video generation candidate failover", () => {
         expect(imageResponse.status, JSON.stringify(imagePayload)).toBe(200);
         expect(textUrl).toContain("/api/ai/system/one/text-to-video");
         expect(imageUrl).toContain("/api/ai/system/one/image-to-video");
-        expect(textHeaders.get("x-vozeb-pro-logical-model")).toBe("video");
-        expect(textHeaders.get("x-vozeb-pro-upstream-model")).toBe("video-one");
-        expect(textHeaders.get("x-vozeb-pro-points-idempotency-key")).toBe("video-request:video-text");
-        expect(imageHeaders.get("x-vozeb-pro-points-idempotency-key")).toBe("video-request:video-image");
+        expect(textHeaders.get("x-dq-logical-model")).toBe("video");
+        expect(textHeaders.get("x-dq-upstream-model")).toBe("video-one");
+        expect(textHeaders.get("x-dq-points-idempotency-key")).toBe("video-request:video-text");
+        expect(imageHeaders.get("x-dq-points-idempotency-key")).toBe("video-request:video-image");
     });
 
     it("builds an OpenAI video multipart request and uses its image-to-video path", async () => {

@@ -520,16 +520,16 @@ function responseHeaders(headers: Headers, pointsResult?: Awaited<ReturnType<typ
         const value = headers.get(key);
         if (value) nextHeaders.set(key, value);
     });
-    if (upstreamUrl) nextHeaders.set("x-vozeb-pro-upstream-url", upstreamUrl);
+    if (upstreamUrl) nextHeaders.set("x-dq-upstream-url", upstreamUrl);
     if (pointsResult) {
-        nextHeaders.set("x-vozeb-pro-points-cost", String(pointsResult.cost));
-        nextHeaders.set("x-vozeb-pro-points-remaining", String(pointsResult.remaining));
-        nextHeaders.set("x-vozeb-pro-points-permanent", String(pointsResult.permanentRemaining));
-        nextHeaders.set("x-vozeb-pro-points-daily", String(pointsResult.dailyRemaining));
-        nextHeaders.set("x-vozeb-pro-points-daily-expires-at", pointsResult.dailyExpiresAt);
-        if (pointsResult.recordId) nextHeaders.set("x-vozeb-pro-points-record-id", pointsResult.recordId);
+        nextHeaders.set("x-dq-points-cost", String(pointsResult.cost));
+        nextHeaders.set("x-dq-points-remaining", String(pointsResult.remaining));
+        nextHeaders.set("x-dq-points-permanent", String(pointsResult.permanentRemaining));
+        nextHeaders.set("x-dq-points-daily", String(pointsResult.dailyRemaining));
+        nextHeaders.set("x-dq-points-daily-expires-at", pointsResult.dailyExpiresAt);
+        if (pointsResult.recordId) nextHeaders.set("x-dq-points-record-id", pointsResult.recordId);
     } else if (typeof refundedPointsRemaining === "number") {
-        nextHeaders.set("x-vozeb-pro-points-remaining", String(refundedPointsRemaining));
+        nextHeaders.set("x-dq-points-remaining", String(refundedPointsRemaining));
     }
     return nextHeaders;
 }

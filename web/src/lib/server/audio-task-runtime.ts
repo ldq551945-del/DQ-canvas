@@ -212,9 +212,9 @@ function providerFetch(task: AudioTask, origin: string, cookie: string, workerUs
 }
 
 function readBilling(headers: Headers) {
-    const raw = headers.get("x-vozeb-pro-points-cost");
+    const raw = headers.get("x-dq-points-cost");
     const value = raw === null ? undefined : Number(raw);
-    return { pointsCost: value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined, pointsRecordId: headers.get("x-vozeb-pro-points-record-id") || undefined };
+    return { pointsCost: value !== undefined && Number.isFinite(value) && value >= 0 ? value : undefined, pointsRecordId: headers.get("x-dq-points-record-id") || undefined };
 }
 
 function mediaContext(task: AudioTask) {

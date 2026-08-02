@@ -3,16 +3,16 @@ import { randomUUID } from "node:crypto";
 
 import { resolveGenerationWorkerOrigin } from "./generation-runtime.mjs";
 
-const token = process.env.VOZEB_PRO_MAINTENANCE_TOKEN?.trim() || "";
+const token = process.env.DQ_MAINTENANCE_TOKEN?.trim() || "";
 const origin = resolveGenerationWorkerOrigin();
-const workerId = (process.env.VOZEB_PRO_GENERATION_WORKER_ID?.trim() || `generation-worker:${hostname()}:${process.pid}:${randomUUID()}`).slice(0, 150);
-const idleDelayMs = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_INTERVAL_MS, 2_000, 500, 30_000);
-const lanes = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_LANES, 2, 1, 8);
-const heartbeatIntervalMs = boundedNumber(process.env.VOZEB_PRO_GENERATION_WORKER_HEARTBEAT_MS, 15_000, 5_000, 60_000);
+const workerId = (process.env.DQ_GENERATION_WORKER_ID?.trim() || `generation-worker:${hostname()}:${process.pid}:${randomUUID()}`).slice(0, 150);
+const idleDelayMs = boundedNumber(process.env.DQ_GENERATION_WORKER_INTERVAL_MS, 2_000, 500, 30_000);
+const lanes = boundedNumber(process.env.DQ_GENERATION_WORKER_LANES, 2, 1, 8);
+const heartbeatIntervalMs = boundedNumber(process.env.DQ_GENERATION_WORKER_HEARTBEAT_MS, 15_000, 5_000, 60_000);
 let stopping = false;
 let heartbeatPending = false;
 
-if (token.length < 32) throw new Error("VOZEB_PRO_MAINTENANCE_TOKEN must contain at least 32 characters");
+if (token.length < 32) throw new Error("DQ_MAINTENANCE_TOKEN must contain at least 32 characters");
 
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
@@ -33,7 +33,7 @@ async function runLane(index) {
                 method: "POST",
                 headers: {
                     authorization: `Bearer ${token}`,
-                    "x-vozeb-pro-worker-id": laneId,
+                    "x-dq-worker-id": laneId,
                 },
                 signal: AbortSignal.timeout(40 * 60_000),
             });
@@ -60,7 +60,7 @@ async function sendHeartbeat() {
             method: "POST",
             headers: {
                 authorization: `Bearer ${token}`,
-                "x-vozeb-pro-worker-id": workerId,
+                "x-dq-worker-id": workerId,
             },
             signal: AbortSignal.timeout(10_000),
         });

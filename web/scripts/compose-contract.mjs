@@ -12,11 +12,11 @@ export const composeProfiles = [
 ];
 
 export const docsComposeProfiles = [
-    { file: "docs/docker-compose.yml", image: "ghcr.io/csyqlz/vozeb-pro-docs:latest" },
+    { file: "docs/docker-compose.yml", image: "ghcr.io/ldq551945-del/dq-docs:latest" },
     { file: "docs/docker-compose.local.yml", build: { context: "..", dockerfile: "docs/Dockerfile" } },
 ];
 
-const maintenanceToken = "${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}";
+const maintenanceToken = "${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}";
 
 export function validateComposeContracts({ repoRoot }) {
     return composeProfiles.map((profile) => {
@@ -75,15 +75,15 @@ export function validateComposeContract(source, profile) {
     ensure(JSON.stringify(worker.command) === JSON.stringify(["node", "/app/web/scripts/generation-worker.mjs"]), "Worker 启动命令不正确");
     ensure(app.env_file?.includes(".env"), "app 必须读取 .env");
     ensure(worker.env_file?.includes(".env"), "generation-worker 必须读取 .env");
-    ensure(appEnvironment.VOZEB_PRO_MAINTENANCE_TOKEN === maintenanceToken, "app 未声明强制维护令牌");
-    ensure(workerEnvironment.VOZEB_PRO_MAINTENANCE_TOKEN === maintenanceToken, "generation-worker 未声明同一强制维护令牌");
-    ensure(workerEnvironment.VOZEB_PRO_WORKER_API_ORIGIN === profile.workerOrigin, `Worker API 地址必须为 ${profile.workerOrigin}`);
-    ensure(appEnvironment.VOZEB_PRO_DATABASE_PROVIDER === "postgres", "app 必须使用 PostgreSQL provider");
+    ensure(appEnvironment.DQ_MAINTENANCE_TOKEN === maintenanceToken, "app 未声明强制维护令牌");
+    ensure(workerEnvironment.DQ_MAINTENANCE_TOKEN === maintenanceToken, "generation-worker 未声明同一强制维护令牌");
+    ensure(workerEnvironment.DQ_WORKER_API_ORIGIN === profile.workerOrigin, `Worker API 地址必须为 ${profile.workerOrigin}`);
+    ensure(appEnvironment.DQ_DATABASE_PROVIDER === "postgres", "app 必须使用 PostgreSQL provider");
     ensure(typeof appEnvironment.DATABASE_URL === "string", "app 缺少 DATABASE_URL");
     ensure(!("DATABASE_URL" in workerEnvironment), "generation-worker 不应直接持有数据库连接串");
-    ensure(!("VOZEB_PRO_DATABASE_PROVIDER" in workerEnvironment), "generation-worker 不应直接访问数据库 provider");
-    ensure(app.volumes?.includes("vozeb-pro-data:/app/web/.data"), "app 缺少持久数据卷挂载");
-    ensure(Object.hasOwn(compose?.volumes || {}, "vozeb-pro-data"), "缺少 vozeb-pro-data 顶层数据卷");
+    ensure(!("DQ_DATABASE_PROVIDER" in workerEnvironment), "generation-worker 不应直接访问数据库 provider");
+    ensure(app.volumes?.includes("dq-data:/app/web/.data"), "app 缺少持久数据卷挂载");
+    ensure(Object.hasOwn(compose?.volumes || {}, "dq-data"), "缺少 dq-data 顶层数据卷");
     ensure(
         app.healthcheck?.test?.some((value) => String(value).includes("/api/health/live")),
         "app 健康检查必须调用 /api/health/live",
@@ -93,20 +93,20 @@ export function validateComposeContract(source, profile) {
     if (profile.embeddedPostgres) {
         ensure(Boolean(services.postgres), "默认或本地拓扑必须包含 PostgreSQL 服务");
         ensure(String(appEnvironment.DATABASE_URL || "").includes("@postgres:5432/"), "内置 PostgreSQL 拓扑必须连接 postgres 服务");
-        ensure(Object.hasOwn(compose?.volumes || {}, "vozeb-pro-postgres"), "内置 PostgreSQL 拓扑缺少数据库数据卷");
+        ensure(Object.hasOwn(compose?.volumes || {}, "dq-postgres"), "内置 PostgreSQL 拓扑缺少数据库数据卷");
     } else {
         ensure(!services.postgres, "外部数据库拓扑不得内置 PostgreSQL 服务");
         ensure(String(appEnvironment.DATABASE_URL || "").startsWith("${DATABASE_URL:?"), "外部数据库拓扑必须显式要求 DATABASE_URL");
-        ensure(!Object.hasOwn(compose?.volumes || {}, "vozeb-pro-postgres"), "外部数据库拓扑不得声明无用的 PostgreSQL 数据卷");
+        ensure(!Object.hasOwn(compose?.volumes || {}, "dq-postgres"), "外部数据库拓扑不得声明无用的 PostgreSQL 数据卷");
     }
 
     if (profile.hostNetwork) {
         ensure(app.network_mode === "host", "宝塔 app 必须使用 host 网络");
         ensure(worker.network_mode === "host", "宝塔 generation-worker 必须使用 host 网络");
-        ensure("VOZEB_PRO_TRUSTED_PROXY_HOPS" in appEnvironment, "宝塔拓扑缺少反向代理层数配置");
+        ensure("DQ_TRUSTED_PROXY_HOPS" in appEnvironment, "宝塔拓扑缺少反向代理层数配置");
     } else {
         ensure(!app.network_mode && !worker.network_mode, "宝塔专用 host 网络不得泄漏到其他拓扑");
-        ensure(!("VOZEB_PRO_TRUSTED_PROXY_HOPS" in appEnvironment), "宝塔专用反向代理默认值不得泄漏到其他拓扑");
+        ensure(!("DQ_TRUSTED_PROXY_HOPS" in appEnvironment), "宝塔专用反向代理默认值不得泄漏到其他拓扑");
     }
 
     if (violations.length > 0) throw new Error(`${profile.file} Compose 契约失败：\n- ${violations.join("\n- ")}`);

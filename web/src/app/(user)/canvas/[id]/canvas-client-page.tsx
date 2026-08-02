@@ -21,7 +21,7 @@ import { CanvasNodeUpscaleDialog } from "../components/canvas-node-upscale-dialo
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasTopBar } from "../components/canvas-top-bar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
-import { VozebProCanvas } from "../components/vozeb-pro-canvas";
+import { DQCanvas } from "../components/dq-canvas";
 import { CanvasNodeType, type Position } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
@@ -40,12 +40,12 @@ export default function CanvasPage() {
 
     if (!mounted) return <CanvasRefreshShell />;
 
-    return <VozebProCanvasPage />;
+    return <DQCanvasPage />;
 }
 
 import { useCanvasPageController } from "./use-canvas-page-controller";
 
-function VozebProCanvasPage() {
+function DQCanvasPage() {
     const [nodeCreatePosition, setNodeCreatePosition] = useState<Position | null>(null);
     const controller = useCanvasPageController();
     const {
@@ -318,7 +318,7 @@ function VozebProCanvasPage() {
                     onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
                 />
 
-                <VozebProCanvas
+                <DQCanvas
                     containerRef={containerRef}
                     viewport={viewport}
                     backgroundMode={backgroundMode}
@@ -491,7 +491,7 @@ function VozebProCanvasPage() {
                             onClose={() => setNodeCreatePosition(null)}
                         />
                     ) : null}
-                </VozebProCanvas>
+                </DQCanvas>
 
                 <CanvasNodeHoverToolbar
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}

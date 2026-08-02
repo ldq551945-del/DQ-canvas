@@ -22,14 +22,14 @@ describe("Docker Compose contracts", () => {
 
     it("rejects a Worker that can bypass the application database boundary", () => {
         const profile = composeProfiles.find(({ file }) => file === "docker-compose.external-db.yml");
-        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("      VOZEB_PRO_WORKER_API_ORIGIN: http://app:3000", "      VOZEB_PRO_WORKER_API_ORIGIN: http://app:3000\n      DATABASE_URL: postgres://leaked");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("      DQ_WORKER_API_ORIGIN: http://app:3000", "      DQ_WORKER_API_ORIGIN: http://app:3000\n      DATABASE_URL: postgres://leaked");
 
         expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 不应直接持有数据库连接串");
     });
 
     it("rejects Baota-only host networking in the public default topology", () => {
         const profile = composeProfiles.find(({ file }) => file === "docker-compose.yml");
-        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("    image: ${VOZEB_PRO_IMAGE", "    network_mode: host\n    image: ${VOZEB_PRO_IMAGE");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("    image: ${DQ_IMAGE", "    network_mode: host\n    image: ${DQ_IMAGE");
 
         expect(() => validateComposeContract(source, profile)).toThrow("宝塔专用 host 网络不得泄漏到其他拓扑");
     });

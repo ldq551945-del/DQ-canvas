@@ -171,7 +171,7 @@ export function SystemChannelEditor({
             <AdminChannelProtocolSetup channel={channel} onChange={onChange} />
             <div className="mt-3 grid gap-3 sm:mt-4 lg:grid-cols-[180px_minmax(0,1fr)_minmax(220px,0.8fr)]">
                 <LabeledControl label="渠道名称">
-                    <Input value={channel.name} placeholder="青岩智影、123NHH、VOZEB PRO、自定义接口" onChange={(event) => onChange({ name: event.target.value })} />
+                    <Input value={channel.name} placeholder="青岩智影、123NHH、DQ-绘图、自定义接口" onChange={(event) => onChange({ name: event.target.value })} />
                 </LabeledControl>
                 <LabeledControl label="Base URL">
                     <Input value={channel.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => onChange({ baseUrl: event.target.value })} />

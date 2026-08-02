@@ -20,7 +20,7 @@ const providerOptions = [
     { label: "人工确认", value: "manual" },
 ];
 
-const sampleCsv = "商户订单号,支付流水号,金额,币种,状态\nVZ202607160001,ch_123,19.90,CNY,succeeded";
+const sampleCsv = "商户订单号,支付流水号,金额,币种,状态\nDQ202607160001,ch_123,19.90,CNY,succeeded";
 
 export function BillingReconciliationImport({ open, onClose }: BillingReconciliationImportProps) {
     const { message } = App.useApp();

@@ -13,7 +13,7 @@ describe("admin models route", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
         savedChannel.apiKey = "test-secret-value";
-        (globalThis as typeof globalThis & { __vozebProModelFetchCooldowns?: Map<string, number> }).__vozebProModelFetchCooldowns?.clear();
+        (globalThis as typeof globalThis & { __dqModelFetchCooldowns?: Map<string, number> }).__dqModelFetchCooldowns?.clear();
     });
 
     it("uses the saved server-side API key when the client sends only channelId", async () => {
@@ -208,7 +208,7 @@ describe("admin models route", () => {
     });
 
     it("rejects an encrypted storage value before calling the provider", async () => {
-        savedChannel.apiKey = "vozeb-pro-secret:v1:iv.tag.payload";
+        savedChannel.apiKey = "dq-secret:v1:iv.tag.payload";
         const fetchMock = vi.fn();
         vi.stubGlobal("fetch", fetchMock);
 

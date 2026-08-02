@@ -2,7 +2,7 @@
 
 This Contributor License Agreement ("Agreement") applies to any code,
 documentation, design asset, issue text, pull request, patch, or other
-material ("Contribution") that you submit to the VOZEB PRO project
+material ("Contribution") that you submit to the DQ-绘图 project
 ("Project").
 
 By submitting a Contribution, you agree to the terms below.
@@ -88,4 +88,4 @@ or by requiring acceptance through an automated CLA workflow.
 ## 8. Contact
 
 For questions about this Agreement, contact the maintainers through the
-repository or email `csyqlz@gmail.com`.
+repository or email `3275573660@qq.com`.

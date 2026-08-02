@@ -22,11 +22,15 @@ type ThemeName = "light" | "dark";
 
 type ThemeViewTransition = {
     ready?: PromiseLike<unknown>;
+    updateCallbackDone?: PromiseLike<unknown>;
     finished?: PromiseLike<unknown>;
     skipTransition?: () => void;
 };
 
+type ThemeTransitionOwner = object;
+
 type ActiveThemeTransition = {
+    owner: ThemeTransitionOwner;
     transition: ThemeViewTransition;
     interrupted: boolean;
     settled: boolean;
@@ -41,6 +45,7 @@ export function createThemeTransitionCoordinator() {
     let active: ActiveThemeTransition | null = null;
     let desiredTheme: ThemeName | null = null;
     let latestRequestId = 0;
+    let latestRequestOwner: ThemeTransitionOwner | null = null;
 
     const runSafely = (callback: () => void) => {
         try {
@@ -57,17 +62,37 @@ export function createThemeTransitionCoordinator() {
         runSafely(record.cleanup);
     };
 
+    const invalidateOwner = (owner: ThemeTransitionOwner) => {
+        if (latestRequestOwner === owner) {
+            latestRequestId += 1;
+            latestRequestOwner = null;
+            desiredTheme = null;
+        }
+
+        const record = active;
+        if (!record || record.owner !== owner) return;
+        if (!record.interrupted) {
+            record.interrupted = true;
+            runSafely(() => record.transition.skipTransition?.());
+        }
+        settle(record);
+    };
+
     return {
-        requestTheme(currentTheme: ThemeName, targetTheme?: ThemeName) {
+        requestTheme(owner: ThemeTransitionOwner, currentTheme: ThemeName, targetTheme?: ThemeName) {
             const requestBaseTheme = active ? (desiredTheme ?? currentTheme) : currentTheme;
             const nextTheme = resolveNextTheme(requestBaseTheme, targetTheme);
             if (nextTheme === requestBaseTheme) return null;
 
             desiredTheme = nextTheme;
+            latestRequestOwner = owner;
             return { id: ++latestRequestId, theme: nextTheme };
         },
-        isLatestRequest(requestId: number) {
-            return requestId === latestRequestId;
+        isLatestRequest(owner: ThemeTransitionOwner, requestId: number) {
+            return owner === latestRequestOwner && requestId === latestRequestId;
+        },
+        syncTheme(owner: ThemeTransitionOwner, actualTheme: ThemeName) {
+            if (owner === latestRequestOwner && desiredTheme !== null && desiredTheme !== actualTheme) invalidateOwner(owner);
         },
         interrupt(applyLatestTheme: () => void) {
             const record = active;
@@ -77,11 +102,11 @@ export function createThemeTransitionCoordinator() {
                 record.interrupted = true;
                 runSafely(() => record.transition.skipTransition?.());
             }
-            applyLatestTheme();
+            runSafely(applyLatestTheme);
             return true;
         },
-        track(transition: ThemeViewTransition, onReady: () => void, cleanup: () => void) {
-            const record: ActiveThemeTransition = { transition, interrupted: false, settled: false, cleanup };
+        track(owner: ThemeTransitionOwner, transition: ThemeViewTransition, onReady: () => void, cleanup: () => void) {
+            const record: ActiveThemeTransition = { owner, transition, interrupted: false, settled: false, cleanup };
             active = record;
 
             if (transition.ready && typeof transition.ready.then === "function") {
@@ -89,6 +114,13 @@ export function createThemeTransitionCoordinator() {
                     () => {
                         if (!record.interrupted && !record.settled) runSafely(onReady);
                     },
+                    () => undefined,
+                );
+            }
+
+            if (transition.updateCallbackDone && typeof transition.updateCallbackDone.then === "function") {
+                void Promise.resolve(transition.updateCallbackDone).then(
+                    () => undefined,
                     () => undefined,
                 );
             }
@@ -102,13 +134,7 @@ export function createThemeTransitionCoordinator() {
                 settle(record);
             }
         },
-        dispose() {
-            const record = active;
-            if (!record) return;
-            record.interrupted = true;
-            runSafely(() => record.transition.skipTransition?.());
-            settle(record);
-        },
+        invalidateOwner,
     };
 }
 
@@ -183,15 +209,22 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
     const shape = variant ?? "circle";
     const [isDark, setIsDark] = useState(false);
     const buttonRef = useRef<HTMLButtonElement>(null);
+    const ownerRef = useRef<ThemeTransitionOwner | null>(null);
+    const onThemeChangeRef = useRef(onThemeChange);
+    if (!ownerRef.current) ownerRef.current = {};
+    const owner = ownerRef.current;
+    onThemeChangeRef.current = onThemeChange;
 
     useEffect(() => {
         if (theme) {
+            themeTransitionCoordinator.syncTheme(owner, theme);
             setIsDark(theme === "dark");
             return;
         }
 
         const updateTheme = () => {
             const nextTheme = document.documentElement.classList.contains("dark") ? "dark" : "light";
+            themeTransitionCoordinator.syncTheme(owner, nextTheme);
             setIsDark(nextTheme === "dark");
         };
 
@@ -204,7 +237,9 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
         });
 
         return () => observer.disconnect();
-    }, [theme]);
+    }, [owner, theme]);
+
+    useEffect(() => () => themeTransitionCoordinator.invalidateOwner(owner), [owner]);
 
     const toggleTheme = useCallback(() => {
         const button = buttonRef.current;
@@ -212,17 +247,17 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
 
         const root = document.documentElement;
         const currentTheme = root.classList.contains("dark") ? "dark" : "light";
-        const request = themeTransitionCoordinator.requestTheme(currentTheme, targetTheme);
+        const request = themeTransitionCoordinator.requestTheme(owner, currentTheme, targetTheme);
         if (!request) return;
         const { id: requestId, theme: nextTheme } = request;
 
         const applyTheme = () => {
-            if (!themeTransitionCoordinator.isLatestRequest(requestId)) return;
+            if (!themeTransitionCoordinator.isLatestRequest(owner, requestId)) return;
             const appliedTheme = root.classList.contains("dark") ? "dark" : "light";
             setIsDark(nextTheme === "dark");
             root.classList.toggle("dark", nextTheme === "dark");
             root.style.colorScheme = nextTheme;
-            if (nextTheme !== appliedTheme) onThemeChange?.(nextTheme);
+            if (nextTheme !== appliedTheme) onThemeChangeRef.current?.(nextTheme);
         };
 
         if (themeTransitionCoordinator.interrupt(applyTheme)) return;
@@ -273,6 +308,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
         }
 
         themeTransitionCoordinator.track(
+            owner,
             transition,
             () => {
                 root.animate(
@@ -290,7 +326,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
             },
             cleanup,
         );
-    }, [shape, fromCenter, duration, targetTheme, onThemeChange]);
+    }, [shape, fromCenter, duration, owner, targetTheme]);
 
     return (
         <button type="button" ref={buttonRef} onClick={toggleTheme} className={cn(className)} {...props}>

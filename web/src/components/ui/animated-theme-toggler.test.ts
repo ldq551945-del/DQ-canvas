@@ -28,6 +28,8 @@ describe("AnimatedThemeToggler transition coordination", () => {
     });
 
     it("interrupts an in-flight transition instead of starting another one", async () => {
+        const firstOwner = {};
+        const secondOwner = {};
         const ready = deferred();
         const finished = deferred();
         const skipTransition = vi.fn();
@@ -36,15 +38,15 @@ describe("AnimatedThemeToggler transition coordination", () => {
         const applyFirstRapidToggle = vi.fn();
         const applySecondRapidToggle = vi.fn();
         const coordinator = createThemeTransitionCoordinator();
-        const darkRequest = coordinator.requestTheme("light", "dark");
+        const darkRequest = coordinator.requestTheme(firstOwner, "light", "dark");
 
-        coordinator.track({ ready: ready.promise, finished: finished.promise, skipTransition }, animate, cleanup);
-        const lightRequest = coordinator.requestTheme("light", "light");
+        coordinator.track(firstOwner, { ready: ready.promise, finished: finished.promise, skipTransition }, animate, cleanup);
+        const lightRequest = coordinator.requestTheme(secondOwner, "light", "light");
 
         expect(darkRequest?.theme).toBe("dark");
         expect(lightRequest?.theme).toBe("light");
-        expect(coordinator.isLatestRequest(darkRequest!.id)).toBe(false);
-        expect(coordinator.isLatestRequest(lightRequest!.id)).toBe(true);
+        expect(coordinator.isLatestRequest(firstOwner, darkRequest!.id)).toBe(false);
+        expect(coordinator.isLatestRequest(secondOwner, lightRequest!.id)).toBe(true);
         expect(coordinator.interrupt(applyFirstRapidToggle)).toBe(true);
         expect(coordinator.interrupt(applySecondRapidToggle)).toBe(true);
         expect(skipTransition).toHaveBeenCalledTimes(1);
@@ -61,13 +63,14 @@ describe("AnimatedThemeToggler transition coordination", () => {
     });
 
     it("animates a ready transition and always cleans up after completion", async () => {
+        const owner = {};
         const ready = deferred();
         const finished = deferred();
         const animate = vi.fn();
         const cleanup = vi.fn();
         const coordinator = createThemeTransitionCoordinator();
 
-        coordinator.track({ ready: ready.promise, finished: finished.promise }, animate, cleanup);
+        coordinator.track(owner, { ready: ready.promise, finished: finished.promise }, animate, cleanup);
         ready.resolve();
         await flushPromiseHandlers();
         expect(animate).toHaveBeenCalledTimes(1);
@@ -76,5 +79,51 @@ describe("AnimatedThemeToggler transition coordination", () => {
         await flushPromiseHandlers();
         expect(cleanup).toHaveBeenCalledTimes(1);
         expect(coordinator.interrupt(vi.fn())).toBe(false);
+    });
+
+    it("invalidates an owner's delayed callback and consumes update callback rejection", async () => {
+        const owner = {};
+        const ready = deferred();
+        const updateCallbackDone = deferred();
+        const finished = deferred();
+        const skipTransition = vi.fn();
+        const animate = vi.fn();
+        const cleanup = vi.fn();
+        const coordinator = createThemeTransitionCoordinator();
+        const request = coordinator.requestTheme(owner, "light", "dark");
+
+        coordinator.track(owner, { ready: ready.promise, updateCallbackDone: updateCallbackDone.promise, finished: finished.promise, skipTransition }, animate, cleanup);
+        coordinator.syncTheme(owner, "light");
+
+        expect(coordinator.isLatestRequest(owner, request!.id)).toBe(false);
+        expect(skipTransition).toHaveBeenCalledTimes(1);
+        expect(cleanup).toHaveBeenCalledTimes(1);
+
+        ready.reject(new DOMException("Transition was skipped", "AbortError"));
+        updateCallbackDone.reject(new DOMException("Update callback failed", "AbortError"));
+        finished.reject(new DOMException("Transition was skipped", "AbortError"));
+        await flushPromiseHandlers();
+
+        expect(animate).not.toHaveBeenCalled();
+        expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a newer request valid when the interrupted transition owner unmounts", () => {
+        const transitionOwner = {};
+        const latestOwner = {};
+        const finished = deferred();
+        const skipTransition = vi.fn();
+        const cleanup = vi.fn();
+        const coordinator = createThemeTransitionCoordinator();
+        const firstRequest = coordinator.requestTheme(transitionOwner, "light", "dark");
+
+        coordinator.track(transitionOwner, { finished: finished.promise, skipTransition }, vi.fn(), cleanup);
+        const latestRequest = coordinator.requestTheme(latestOwner, "light", "light");
+        coordinator.invalidateOwner(transitionOwner);
+
+        expect(coordinator.isLatestRequest(transitionOwner, firstRequest!.id)).toBe(false);
+        expect(coordinator.isLatestRequest(latestOwner, latestRequest!.id)).toBe(true);
+        expect(skipTransition).toHaveBeenCalledTimes(1);
+        expect(cleanup).toHaveBeenCalledTimes(1);
     });
 });

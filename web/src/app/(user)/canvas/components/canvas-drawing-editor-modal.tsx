@@ -9,6 +9,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { uploadServerMedia } from "@/services/server-media-storage";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasDrawingPreview, CanvasNodeData } from "../types";
+import { initializeCanvasDrawingEditor } from "../utils/canvas-drawing-editor";
 import { createCanvasDrawingDocument, normalizeCanvasDrawingDocument, type CanvasDrawingSaveSummary } from "../utils/canvas-drawing-storage";
 
 const SINGLE_PAGE_OPTIONS = { maxPages: 1 } as const;
@@ -204,10 +205,7 @@ export function CanvasDrawingEditorModal({ open, node, onClose, onSaved }: { ope
                             licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY || undefined}
                             onMount={(editor) => {
                                 editorRef.current = editor;
-                                const [primaryPage, ...extraPages] = editor.getPages();
-                                if (primaryPage) editor.setCurrentPage(primaryPage.id);
-                                extraPages.forEach((page) => editor.deletePage(page.id));
-                                editor.setCurrentTool("draw");
+                                initializeCanvasDrawingEditor(editor);
                                 return () => {
                                     if (editorRef.current === editor) editorRef.current = null;
                                 };

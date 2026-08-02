@@ -566,19 +566,6 @@ pnpm run build
 - [AGPL-3.0](LICENSE)
 - [贡献者协议](CLA.md)
 
-## 社区交流
-
-<table>
-  <tr>
-    <td width="260"><a href="https://store.dqin-666zj.top/community"><img src="docs/public/community/qq-dq-community.webp" width="240" alt="DQ 开源交流 社区二维码"></a></td>
-    <td>
-      <strong>DQ 开源交流</strong><br>
-      社区：<code>社区入口</code> · <a href="https://store.dqin-666zj.top/community">访问社区</a><br><br>
-      欢迎交流部署、模型渠道适配、工作台使用、Bug 复现和代码贡献。请勿在群内发送 API Key、数据库密码、支付密钥、服务器私钥或未经脱敏的生产日志。
-    </td>
-  </tr>
-</table>
-
 ## 致谢
 
 - 感谢上游开源贡献者对画布创作工作流、Canvas Agent 和 Codex 插件能力的贡献。

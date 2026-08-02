@@ -1,0 +1,53 @@
+diff --git a/dist-cjs/lib/editor/managers/FontManager/FontManager.js b/dist-cjs/lib/editor/managers/FontManager/FontManager.js
+index ab010c4..c7760ac 100644
+--- a/dist-cjs/lib/editor/managers/FontManager/FontManager.js
++++ b/dist-cjs/lib/editor/managers/FontManager/FontManager.js
+@@ -97,0 +98 @@ class FontManager {
++    const isStale = () => this.fontStates.__unsafe__getWithoutCapture(font) !== state;
+@@ -101,0 +103,4 @@ class FontManager {
++        if (isStale()) {
++          console.debug(`Font "${font.family}" load interrupted by editor dispose`);
++          return;
++        }
+@@ -104,0 +110,4 @@ class FontManager {
++        if (isStale()) {
++          console.debug(`Font "${font.family}" load interrupted by editor dispose`, err);
++          return;
++        }
+diff --git a/dist-esm/lib/editor/managers/FontManager/FontManager.mjs b/dist-esm/lib/editor/managers/FontManager/FontManager.mjs
+index 493b80b..dea7b7c 100644
+--- a/dist-esm/lib/editor/managers/FontManager/FontManager.mjs
++++ b/dist-esm/lib/editor/managers/FontManager/FontManager.mjs
+@@ -79,0 +80 @@ class FontManager {
++    const isStale = () => this.fontStates.__unsafe__getWithoutCapture(font) !== state;
+@@ -83,0 +85,4 @@ class FontManager {
++        if (isStale()) {
++          console.debug(`Font "${font.family}" load interrupted by editor dispose`);
++          return;
++        }
+@@ -86,0 +92,4 @@ class FontManager {
++        if (isStale()) {
++          console.debug(`Font "${font.family}" load interrupted by editor dispose`, err);
++          return;
++        }
+diff --git a/src/lib/editor/managers/FontManager/FontManager.ts b/src/lib/editor/managers/FontManager/FontManager.ts
+index 37c7adb..f86ed64 100644
+--- a/src/lib/editor/managers/FontManager/FontManager.ts
++++ b/src/lib/editor/managers/FontManager/FontManager.ts
+@@ -108,0 +109,4 @@ export class FontManager {
++		// dispose() clears fontStates while loads may still be in flight, so a late
++		// callback must only touch the exact entry it was created for - not a fresh
++		// entry from a later request. Check identity, not just presence.
++		const isStale = () => this.fontStates.__unsafe__getWithoutCapture(font) !== state
+@@ -114,0 +119,5 @@ export class FontManager {
++					if (isStale()) {
++						// eslint-disable-next-line no-console
++						console.debug(`Font "${font.family}" load interrupted by editor dispose`)
++						return
++					}
+@@ -118,0 +128,5 @@ export class FontManager {
++					if (isStale()) {
++						// eslint-disable-next-line no-console
++						console.debug(`Font "${font.family}" load interrupted by editor dispose`, err)
++						return
++					}

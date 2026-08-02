@@ -8,3 +8,6 @@ overrides:
     fast-uri: 3.1.4
     postcss: 8.5.25
     sharp: 0.35.3
+# Upstream fix: https://github.com/tldraw/tldraw/commit/6610ac30579d277c62902509a7f4c0d1f261e813
+patchedDependencies:
+    "@tldraw/editor@5.2.5": patches/@tldraw__editor@5.2.5.patch

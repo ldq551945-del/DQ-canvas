@@ -12,6 +12,9 @@ import type { CanvasDrawingPreview, CanvasNodeData } from "../types";
 import { createCanvasDrawingDocument, normalizeCanvasDrawingDocument, type CanvasDrawingSaveSummary } from "../utils/canvas-drawing-storage";
 
 const SINGLE_PAGE_OPTIONS = { maxPages: 1 } as const;
+// tldraw derives its asset-utils configuration from this prop's identity. Keep
+// the empty list stable so parent canvas updates do not recreate the editor.
+const NO_VIDEO_MIME_TYPES = [] as const;
 const DRAWING_RENDER_MAX_DIMENSION = 2048;
 const DRAWING_RENDER_PADDING = 24;
 
@@ -189,7 +192,7 @@ export function CanvasDrawingEditorModal({ open, node, onClose, onSaved }: { ope
                             options={SINGLE_PAGE_OPTIONS}
                             maxAssetSize={20 * 1024 * 1024}
                             maxImageDimension={5000}
-                            acceptedVideoMimeTypes={[]}
+                            acceptedVideoMimeTypes={NO_VIDEO_MIME_TYPES}
                             licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY || undefined}
                             onMount={(editor) => {
                                 editorRef.current = editor;

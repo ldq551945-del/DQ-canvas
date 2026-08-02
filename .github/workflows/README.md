@@ -1,6 +1,6 @@
 # 自动化流程
 
-该目录保存 VOZEB PRO 的 GitHub Actions 工作流，用于提交质量检查和多架构容器镜像发布。
+该目录保存 DQ-绘图 的 GitHub Actions 工作流，用于提交质量检查和多架构容器镜像发布。
 
 - `quality.yml`：检查主应用与文档站的格式、类型、测试、构建和发布条件。
 - `docker-image.yml`：构建并发布主应用多架构镜像。

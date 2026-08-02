@@ -4,7 +4,7 @@ run-name: 文档站多架构镜像 · ${{ github.ref_name }}
 on:
   push:
     branches: ["main"]
-    tags: ["v*", "VOZEB-PRO-v*"]
+    tags: ["v*", "DQ-v*"]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/csyqlz/vozeb-pro-docs
+  IMAGE_NAME: ghcr.io/ldq551945-del/dq-docs
 
 jobs:
   meta:

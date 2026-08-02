@@ -205,8 +205,9 @@ export function CanvasDrawingEditorModal({ open, node, onClose, onSaved }: { ope
                             licenseKey={process.env.NEXT_PUBLIC_TLDRAW_LICENSE_KEY || undefined}
                             onMount={(editor) => {
                                 editorRef.current = editor;
-                                initializeCanvasDrawingEditor(editor);
+                                const cancelViewportFit = initializeCanvasDrawingEditor(editor);
                                 return () => {
+                                    cancelViewportFit();
                                     if (editorRef.current === editor) editorRef.current = null;
                                 };
                             }}

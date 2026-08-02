@@ -13,9 +13,16 @@ describe("initializeCanvasDrawingEditor", () => {
             setCurrentTool: vi.fn((tool: string) => calls.push(`tool:${tool}`)),
             zoomToFit: vi.fn(() => calls.push("fit")),
         } as unknown as Editor;
+        const cancelViewportFit = vi.fn();
+        const scheduleViewportFit = vi.fn((fit: () => void) => {
+            calls.push("schedule-fit");
+            fit();
+            return cancelViewportFit;
+        });
 
-        initializeCanvasDrawingEditor(editor);
+        const cleanup = initializeCanvasDrawingEditor(editor, scheduleViewportFit);
 
-        expect(calls).toEqual(["page:page:primary", "delete:page:extra", "tool:draw", "fit"]);
+        expect(calls).toEqual(["page:page:primary", "delete:page:extra", "tool:draw", "schedule-fit", "fit"]);
+        expect(cleanup).toBe(cancelViewportFit);
     });
 });

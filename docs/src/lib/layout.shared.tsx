@@ -3,7 +3,7 @@ import { appName, gitConfig } from "./shared";
 import { ArrowUpRight } from "lucide-react";
 
 const githubUrl = `https://github.com/${gitConfig.user}/${gitConfig.repo}`;
-const qqGroupUrl = "https://qm.qq.com/q/9MVLTxuRd6";
+const qqGroupUrl = "https://store.dqin-666zj.top/community";
 
 export function baseOptions(): BaseLayoutProps {
   return {
@@ -43,8 +43,8 @@ export function baseOptions(): BaseLayoutProps {
       },
       {
         type: "icon",
-        text: "VOZEB 开源交流 QQ 群",
-        label: "VOZEB 开源交流 QQ 群（1049777515）",
+        text: "DQ 开源交流 社区",
+        label: "DQ 开源交流 社区（社区入口）",
         url: qqGroupUrl,
         external: true,
         on: "menu",

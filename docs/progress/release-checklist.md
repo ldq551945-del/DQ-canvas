@@ -1,4 +1,4 @@
-# VOZEB PRO 发布检查清单
+# DQ-绘图 发布检查清单
 
 发布前先在 `web` 目录执行：
 
@@ -29,7 +29,7 @@ pnpm run check:release
 
 ## GitHub 发布
 
-- Release 只记录 VOZEB PRO 当前版本的真实变更。
-- Release 标题使用 `VOZEB PRO v版本号`，例如 `VOZEB PRO v0.0.3`。
+- Release 只记录 DQ-绘图 当前版本的真实变更。
+- Release 标题使用 `DQ-绘图 v版本号`，例如 `DQ-绘图 v0.0.3`。
 - README 首页不写更新列表，只保留 GitHub Releases 入口。
 - 版本更新后同步 `VERSION`、`web/package.json`、README、docs 首页、CHANGELOG 和 README 截图。

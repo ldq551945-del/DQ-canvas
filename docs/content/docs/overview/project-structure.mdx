@@ -1,6 +1,6 @@
 ---
 title: 项目结构与流程
-description: VOZEB PRO 目录职责、服务边界、核心请求链路和部署拓扑
+description: DQ-绘图 目录职责、服务边界、核心请求链路和部署拓扑
 ---
 
 # 项目结构与流程
@@ -10,14 +10,14 @@ description: VOZEB PRO 目录职责、服务边界、核心请求链路和部署
 ## 仓库目录
 
 ```text
-VOZEB-PRO/
+DQ/
 |- .github/workflows/       质量检查、主应用镜像和文档镜像工作流
 |- docs/                    Fumadocs 文档站
 |  |- content/docs/         产品、部署、后端与进度文档
-|  |- public/community/     QQ 群等项目社区素材
+|  |- public/community/     社区等项目社区素材
 |  |- public/screenshots/   文档使用的脱敏页面截图
 |  `- src/                  文档站页面、搜索和导航
-|- web/                     VOZEB PRO 主应用
+|- web/                     DQ-绘图 主应用
 |  |- public/               Logo、图标等静态资源
 |  |- scripts/              standalone 启动与运维脚本
 |  `- src/
@@ -192,7 +192,7 @@ flowchart LR
 flowchart LR
     USER["浏览器"] --> HTTPS["HTTPS 域名"]
     HTTPS --> NGINX["宝塔 Nginx 或其他反向代理"]
-    NGINX --> APP["VOZEB PRO :3000"]
+    NGINX --> APP["DQ-绘图 :3000"]
     APP --> PG[("PostgreSQL 16")]
     APP --> LOCAL["本地持久媒体目录"]
     APP --> OSS["可选 S3 / OSS"]

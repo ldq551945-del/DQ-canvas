@@ -58,7 +58,7 @@ description: 当前接口响应事实与管理员敏感配置契约
 - 本地媒体只接受单段 `bytes` Range；多段或非法 Range 返回 416，开放、后缀或显式超大 Range 每次最多返回 32 MiB，并通过 `Content-Range` 让播放器继续读取。媒体代理也会把 Range 规范到相同上限，上游忽略 Range 时仍受响应字节上限约束。
 - 本地原件返回弱 ETag、Last-Modified 和条件 304；图片 WebP 变体保留有限宽度与 ETag。HEAD 不创建本地文件流；对象存储 HEAD 不会把签名为 GET 的临时地址错误用于 HEAD。
 - 私有读取按用户或签名限流，公开作品按资源总量和可信客户端 IP 分层限流；本地文件、公开媒体和媒体代理另有进程内总并发/单身份并发许可，响应完成、错误、取消或租约到期时会释放并取消底层流。429 响应携带 `Retry-After`。
-- 客户端 IP 只在 `VOZEB_PRO_TRUSTED_PROXY_HOPS` 大于 `0` 时读取对应代理层；直连环境不得信任客户端自行提交的转发头。
+- 客户端 IP 只在 `DQ_TRUSTED_PROXY_HOPS` 大于 `0` 时读取对应代理层；直连环境不得信任客户端自行提交的转发头。
 
 ## 社区互动与榜单
 
@@ -145,14 +145,14 @@ Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/proj
 
 文本、图片、视频和音频任务详情接口，以及 Agent Run SSE，只会唤醒当前用户正在读取的同一持久任务。业务状态与执行阶段分离：`pending/running` 任务可处于 `created/submitting/submitted/polling/result_ready/persisting`；普通 Agent 生成完成后可进入 `review_pending/reviewing/review_unavailable/completed`，持久 Worker 最多尝试三次复盘，复盘失败不改变用户已经收到的生成结果。`needs_review` 和普通终态不会被页面或 Worker 自动推进。已经保存上游任务 ID 后，恢复路径只能查询原任务；`result_ready` 只重试结果保存，不能再次创建上游任务。
 
-- `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <VOZEB_PRO_MAINTENANCE_TOKEN>` 领取一个有界恢复批次；可通过 `x-vozeb-pro-worker-id` 同步心跳。
-- `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Bearer Token 和必填 `x-vozeb-pro-worker-id` 上报心跳。
-- `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；`x-vozeb-pro-signature` 或 `x-signature` 传递原始请求体的 HMAC-SHA256 十六进制签名，`x-vozeb-pro-event-id` 可提供稳定事件 ID。
+- `POST /api/maintenance/generation-tasks/run`：使用 `Authorization: Bearer <DQ_MAINTENANCE_TOKEN>` 领取一个有界恢复批次；可通过 `x-dq-worker-id` 同步心跳。
+- `POST /api/maintenance/generation-tasks/heartbeat`：使用相同 Bearer Token 和必填 `x-dq-worker-id` 上报心跳。
+- `POST /api/generation-webhooks/{channelId}`：接收不超过 1MB 的 JSON；`x-dq-signature` 或 `x-signature` 传递原始请求体的 HMAC-SHA256 十六进制签名，`x-dq-event-id` 可提供稳定事件 ID。
 - `POST /api/admin/generation-operations/{type}/{id}/review`：管理员处理 `needs_review` 的 `text/image/video/audio` 任务，动作仅允许 `resume_upstream`、`provide_result` 或 `confirm_failed`。
 
 维护接口未配置令牌时返回 503，认证失败返回 401。生成回调未配置密钥返回 503，签名失败返回 401；它只匹配当前启用渠道下已有的图片、视频或音频任务，并使用 PostgreSQL 中的 `(channelId, eventId)` 保证幂等。回调已登记但尚未匹配任务时返回成功并保留对账状态，不会创建新任务或重复扣费。以上接口均返回 `{ code, data, msg }`，日志与响应不得包含维护令牌、Webhook 密钥、渠道 API Key 或完整鉴权头。
 
-PostgreSQL Provider 在 Run、事件和助手消息的同一事务中写入 `pg_notify('vozeb_pro_run_events', runId)`；SSE 进程使用独立连接 `LISTEN` 后立即读取持久事件。通知只用于唤醒，跨实例恢复仍以事件表为准，并保留 2.5 秒轮询和 15 秒心跳作为断线或通知丢失兜底。文件 Provider 继续使用进程内通知。
+PostgreSQL Provider 在 Run、事件和助手消息的同一事务中写入 `pg_notify('dq_run_events', runId)`；SSE 进程使用独立连接 `LISTEN` 后立即读取持久事件。通知只用于唤醒，跨实例恢复仍以事件表为准，并保留 2.5 秒轮询和 15 秒心跳作为断线或通知丢失兜底。文件 Provider 继续使用进程内通知。
 
 ## 模型路由设置快照
 

@@ -1,6 +1,6 @@
 ---
 title: 生产上线基线
-description: VOZEB PRO 商业部署前的健康检查、调度、备份、监控、支付与合规清单
+description: DQ-绘图 商业部署前的健康检查、调度、备份、监控、支付与合规清单
 ---
 
 # 生产上线基线
@@ -22,12 +22,12 @@ description: VOZEB PRO 商业部署前的健康检查、调度、备份、监控
 
 ## 计划任务
 
-配置至少 32 个字符的 `VOZEB_PRO_MAINTENANCE_TOKEN`，每 5 分钟调用：
+配置至少 32 个字符的 `DQ_MAINTENANCE_TOKEN`，每 5 分钟调用：
 
 ```bash
 curl -fsS -X POST \
-  -H "Authorization: Bearer $VOZEB_PRO_MAINTENANCE_TOKEN" \
-  https://vozeb-pro.example.com/api/maintenance/billing-orders/expire
+  -H "Authorization: Bearer $DQ_MAINTENANCE_TOKEN" \
+  https://store.dqin-666zj.top/api/maintenance/billing-orders/expire
 ```
 
 宝塔使用计划任务，Docker 使用宿主机 Cron，云平台使用 Scheduler。任务可以重复执行，多实例会通过数据库锁避免重复关闭订单。
@@ -68,7 +68,7 @@ curl -fsS -X POST \
 
 ## 容量与压测
 
-先以生产相同数据库、代理和存储进行 100、500、1000 并发分级测试，记录登录、列表、生成任务创建、SSE 连接、支付和后台查询的 P95/P99。根据瓶颈再调整 `VOZEB_PRO_DATABASE_POOL_MAX`、实例数、队列或缓存，不要仅靠增大连接池解决并发问题。
+先以生产相同数据库、代理和存储进行 100、500、1000 并发分级测试，记录登录、列表、生成任务创建、SSE 连接、支付和后台查询的 P95/P99。根据瓶颈再调整 `DQ_DATABASE_POOL_MAX`、实例数、队列或缓存，不要仅靠增大连接池解决并发问题。
 
 后台财务摘要已使用单次 PostgreSQL 聚合和订单/支付流水时间索引，正常退款不再进入支付状态异常计数，订单与支付日期窗口也同时约束对账子查询。本地 PostgreSQL 16.14 的真实执行计划命中两张表的时间索引并在 0.701ms 完成，但两表当前没有订单数据；仍需在生产等价订单量下保存 P50/P95/P99、连接池/锁等待和真实支付商对账证据。
 

@@ -16,7 +16,7 @@ export function GET(request: Request) {
 }
 
 function appFaviconUrl(requestUrl: string) {
-  const value = process.env.VOZEB_PRO_APP_URL?.trim();
+  const value = process.env.DQ_APP_URL?.trim();
   if (!value) return null;
   try {
     const appUrl = new URL(value);

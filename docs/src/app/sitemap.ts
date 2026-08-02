@@ -3,7 +3,7 @@ import type { MetadataRoute } from "next";
 import { source } from "@/lib/source";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://docs.vozeb.pro").replace(/\/+$/, "");
+  const baseUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://store.dqin-666zj.top").replace(/\/+$/, "");
   return [
     {
       url: `${baseUrl}/`,

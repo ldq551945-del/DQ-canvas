@@ -1,6 +1,6 @@
 ---
 title: 本地开发
-description: 使用 Node.js、pnpm 和 PostgreSQL 开发 VOZEB PRO
+description: 使用 Node.js、pnpm 和 PostgreSQL 开发 DQ-绘图
 ---
 
 # 本地开发
@@ -15,8 +15,8 @@ description: 使用 Node.js、pnpm 和 PostgreSQL 开发 VOZEB PRO
 ## 数据库
 
 ```sql
-CREATE USER vozeb_pro WITH PASSWORD 'password';
-CREATE DATABASE vozeb_pro OWNER vozeb_pro;
+CREATE USER dq WITH PASSWORD 'password';
+CREATE DATABASE dq OWNER dq;
 ```
 
 ## 环境变量
@@ -29,12 +29,12 @@ cp .env.example web/.env.local
 
 ```dotenv
 NEXT_PUBLIC_SITE_URL=http://localhost:3000
-VOZEB_PRO_DATABASE_PROVIDER=postgres
-DATABASE_URL=postgres://vozeb_pro:password@localhost:5432/vozeb_pro
-VOZEB_PRO_DATABASE_POOL_MAX=10
-VOZEB_PRO_DATABASE_SSL=0
-VOZEB_PRO_ENCRYPTION_KEY=填写 openssl rand -hex 32 的输出
-VOZEB_PRO_INTERNAL_ORIGIN=http://127.0.0.1:3000
+DQ_DATABASE_PROVIDER=postgres
+DATABASE_URL=postgres://dq:password@localhost:5432/dq
+DQ_DATABASE_POOL_MAX=10
+DQ_DATABASE_SSL=0
+DQ_ENCRYPTION_KEY=填写 openssl rand -hex 32 的输出
+DQ_INTERNAL_ORIGIN=http://127.0.0.1:3000
 ```
 
 ## 启动 Web
@@ -55,7 +55,7 @@ pnpm install --frozen-lockfile
 pnpm run dev
 ```
 
-独立文档站固定访问 `http://localhost:3001`。`http://localhost:3000` 只属于 `web/` 主应用；如果该地址显示“VOZEB PRO 文档中心”，说明启动了 `docs/` 子项目或旧版文档脚本，而不是主应用。
+独立文档站固定访问 `http://localhost:3001`。`http://localhost:3000` 只属于 `web/` 主应用；如果该地址显示“DQ-绘图 文档中心”，说明启动了 `docs/` 子项目或旧版文档脚本，而不是主应用。
 
 ## 常用检查
 

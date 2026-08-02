@@ -2,16 +2,16 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-vozeb_pro}
-      POSTGRES_USER: ${POSTGRES_USER:-vozeb_pro}
+      POSTGRES_DB: ${POSTGRES_DB:-dq}
+      POSTGRES_USER: ${POSTGRES_USER:-dq}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中配置 POSTGRES_PASSWORD}
     volumes:
-      - vozeb-pro-postgres:/var/lib/postgresql/data
+      - dq-postgres:/var/lib/postgresql/data
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-vozeb_pro} -d ${POSTGRES_DB:-vozeb_pro}",
+          "pg_isready -U ${POSTGRES_USER:-dq} -d ${POSTGRES_DB:-dq}",
         ]
       interval: 5s
       timeout: 5s
@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
 
   app:
-    image: vozeb-pro:local
+    image: dq:local
     build:
       context: .
       dockerfile: Dockerfile
@@ -28,17 +28,17 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - vozeb-pro-data:/app/web/.data
+      - dq-data:/app/web/.data
     environment:
       NEXT_TELEMETRY_DISABLED: "1"
-      VOZEB_PRO_DATA_DIR: /app/web/.data
-      VOZEB_PRO_INTERNAL_ORIGIN: http://127.0.0.1:3000
-      VOZEB_PRO_DATABASE_PROVIDER: postgres
-      DATABASE_URL: postgres://${POSTGRES_USER:-vozeb_pro}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-vozeb_pro}
-      VOZEB_PRO_DATABASE_POOL_MAX: ${VOZEB_PRO_DATABASE_POOL_MAX:-10}
-      VOZEB_PRO_DATABASE_SSL: "0"
-      VOZEB_PRO_ENCRYPTION_KEY: ${VOZEB_PRO_ENCRYPTION_KEY:?请在 .env 中配置 VOZEB_PRO_ENCRYPTION_KEY}
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      DQ_DATA_DIR: /app/web/.data
+      DQ_INTERNAL_ORIGIN: http://127.0.0.1:3000
+      DQ_DATABASE_PROVIDER: postgres
+      DATABASE_URL: postgres://${POSTGRES_USER:-dq}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dq}
+      DQ_DATABASE_POOL_MAX: ${DQ_DATABASE_POOL_MAX:-10}
+      DQ_DATABASE_SSL: "0"
+      DQ_ENCRYPTION_KEY: ${DQ_ENCRYPTION_KEY:?请在 .env 中配置 DQ_ENCRYPTION_KEY}
+      DQ_MAINTENANCE_TOKEN: ${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,18 +57,18 @@ services:
     restart: unless-stopped
 
   generation-worker:
-    image: vozeb-pro:local
+    image: dq:local
     command: ["node", "/app/web/scripts/generation-worker.mjs"]
     env_file:
       - .env
     environment:
-      VOZEB_PRO_WORKER_API_ORIGIN: http://app:3000
-      VOZEB_PRO_MAINTENANCE_TOKEN: ${VOZEB_PRO_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      DQ_WORKER_API_ORIGIN: http://app:3000
+      DQ_MAINTENANCE_TOKEN: ${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
     depends_on:
       app:
         condition: service_healthy
     restart: unless-stopped
 
 volumes:
-  vozeb-pro-data:
-  vozeb-pro-postgres:
+  dq-data:
+  dq-postgres:

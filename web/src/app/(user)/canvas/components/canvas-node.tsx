@@ -287,11 +287,6 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onViewImage?.(data);
                         return;
                     }
-                    if (isDrawing) {
-                        event.stopPropagation();
-                        onEditDrawing?.(data);
-                        return;
-                    }
                     if (data.type !== CanvasNodeType.Text) return;
                     event.stopPropagation();
                     setIsEditingContent(true);
@@ -326,6 +321,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
                         onGenerateImage={onGenerateImage}
+                        onEditDrawing={onEditDrawing}
                         onImageDimensions={onImageDimensions}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}

@@ -43,4 +43,38 @@ describe("Canvas entry behavior", () => {
         expect(source).not.toContain("autoOpenedAgentRef");
         expect(source).not.toContain('matchMedia("(min-width: 1024px)")');
     });
+
+    it("opens drawings only from the two node pencil buttons", async () => {
+        const [content, node, hoverToolbar, clientPage] = await Promise.all([
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-node-content.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-node.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/components/canvas-node-hover-toolbar.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/[id]/canvas-client-page.tsx"), "utf8"),
+        ]);
+
+        expect(content.match(/aria-label="编辑绘图"/g)).toHaveLength(2);
+        expect(content.match(/onMouseDown=\{stopEditEventPropagation\}/g)).toHaveLength(2);
+        expect(content.match(/onPointerDown=\{stopEditEventPropagation\}/g)).toHaveLength(2);
+        expect(content).toContain("onEditDrawing?.(node)");
+        expect(node).toContain("onEditDrawing={onEditDrawing}");
+        expect(node).not.toContain("onEditDrawing?.(data)");
+        expect(hoverToolbar).not.toContain("editDrawing");
+        expect(clientPage.match(/onEditDrawing=/g)).toHaveLength(1);
+    });
+
+    it("creates and selects drawings without opening the editor", async () => {
+        const [pointerInteractions, nodeActions, interactionCore] = await Promise.all([
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/[id]/use-canvas-pointer-interactions.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/[id]/use-canvas-node-actions.tsx"), "utf8"),
+            readFile(resolve(process.cwd(), "src/app/(user)/canvas/[id]/use-canvas-interaction-core.tsx"), "utf8"),
+        ]);
+
+        expect(pointerInteractions).not.toContain("setDrawingNodeId");
+        expect(pointerInteractions).toContain("clickedNode?.type === CanvasNodeType.Drawing");
+        expect(pointerInteractions).toContain("setDialogNodeId(null)");
+        expect(nodeActions).not.toContain("if (type === CanvasNodeType.Drawing) setDrawingNodeId");
+        expect(nodeActions).toContain("type !== CanvasNodeType.Drawing");
+        expect(interactionCore).not.toContain("setDrawingNodeId");
+        expect(interactionCore).toContain("type !== CanvasNodeType.Drawing");
+    });
 });

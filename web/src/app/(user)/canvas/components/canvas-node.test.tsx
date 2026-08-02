@@ -89,6 +89,41 @@ describe("CanvasNode task content", () => {
     });
 });
 
+describe("CanvasNode drawing editor entry points", () => {
+    const drawingNode: CanvasNodeData = {
+        ...imageNode,
+        id: "drawing",
+        type: CanvasNodeType.Drawing,
+        title: "绘图",
+        metadata: {},
+    };
+
+    it("shows both the center and footer edit buttons for an empty drawing", () => {
+        const markup = renderImageNode({ data: drawingNode, onEditDrawing: noop });
+
+        expect(markup.match(/aria-label="编辑绘图"/g)).toHaveLength(2);
+    });
+
+    it("keeps only the footer edit button after a preview exists", () => {
+        const markup = renderImageNode({
+            data: {
+                ...drawingNode,
+                metadata: {
+                    drawingPreview: {
+                        serverUrl: "/api/reference-assets/permanent/drawing.png",
+                        mimeType: "image/png",
+                        width: 320,
+                        height: 320,
+                    },
+                },
+            },
+            onEditDrawing: noop,
+        });
+
+        expect(markup.match(/aria-label="编辑绘图"/g)).toHaveLength(1);
+    });
+});
+
 describe("CanvasNode error content", () => {
     it("centers the error and retry action inside the node", () => {
         const failedNode: CanvasNodeData = { ...imageNode, metadata: { status: "error", errorDetails: "生成失败，请稍后重试" } };

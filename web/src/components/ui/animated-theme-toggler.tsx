@@ -18,6 +18,102 @@ interface AnimatedThemeTogglerProps extends React.ComponentPropsWithoutRef<"butt
     onThemeChange?: (theme: "light" | "dark") => void;
 }
 
+type ThemeName = "light" | "dark";
+
+type ThemeViewTransition = {
+    ready?: PromiseLike<unknown>;
+    finished?: PromiseLike<unknown>;
+    skipTransition?: () => void;
+};
+
+type ActiveThemeTransition = {
+    transition: ThemeViewTransition;
+    interrupted: boolean;
+    settled: boolean;
+    cleanup: () => void;
+};
+
+export function resolveNextTheme(currentTheme: ThemeName, targetTheme?: ThemeName): ThemeName {
+    return targetTheme ?? (currentTheme === "dark" ? "light" : "dark");
+}
+
+export function createThemeTransitionCoordinator() {
+    let active: ActiveThemeTransition | null = null;
+    let desiredTheme: ThemeName | null = null;
+    let latestRequestId = 0;
+
+    const runSafely = (callback: () => void) => {
+        try {
+            callback();
+        } catch {
+            // A rejected/skipped browser transition must not surface as an unhandled UI error.
+        }
+    };
+
+    const settle = (record: ActiveThemeTransition) => {
+        if (record.settled) return;
+        record.settled = true;
+        if (active === record) active = null;
+        runSafely(record.cleanup);
+    };
+
+    return {
+        requestTheme(currentTheme: ThemeName, targetTheme?: ThemeName) {
+            const requestBaseTheme = active ? (desiredTheme ?? currentTheme) : currentTheme;
+            const nextTheme = resolveNextTheme(requestBaseTheme, targetTheme);
+            if (nextTheme === requestBaseTheme) return null;
+
+            desiredTheme = nextTheme;
+            return { id: ++latestRequestId, theme: nextTheme };
+        },
+        isLatestRequest(requestId: number) {
+            return requestId === latestRequestId;
+        },
+        interrupt(applyLatestTheme: () => void) {
+            const record = active;
+            if (!record) return false;
+
+            if (!record.interrupted) {
+                record.interrupted = true;
+                runSafely(() => record.transition.skipTransition?.());
+            }
+            applyLatestTheme();
+            return true;
+        },
+        track(transition: ThemeViewTransition, onReady: () => void, cleanup: () => void) {
+            const record: ActiveThemeTransition = { transition, interrupted: false, settled: false, cleanup };
+            active = record;
+
+            if (transition.ready && typeof transition.ready.then === "function") {
+                void Promise.resolve(transition.ready).then(
+                    () => {
+                        if (!record.interrupted && !record.settled) runSafely(onReady);
+                    },
+                    () => undefined,
+                );
+            }
+
+            if (transition.finished && typeof transition.finished.then === "function") {
+                void Promise.resolve(transition.finished).then(
+                    () => settle(record),
+                    () => settle(record),
+                );
+            } else {
+                settle(record);
+            }
+        },
+        dispose() {
+            const record = active;
+            if (!record) return;
+            record.interrupted = true;
+            runSafely(() => record.transition.skipTransition?.());
+            settle(record);
+        },
+    };
+}
+
+const themeTransitionCoordinator = createThemeTransitionCoordinator();
+
 function polygonCollapsed(cx: number, cy: number, vertexCount: number): string {
     const pairs = Array.from({ length: vertexCount }, () => `${cx}px ${cy}px`).join(", ");
     return `polygon(${pairs})`;
@@ -95,7 +191,8 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
         }
 
         const updateTheme = () => {
-            setIsDark(document.documentElement.classList.contains("dark"));
+            const nextTheme = document.documentElement.classList.contains("dark") ? "dark" : "light";
+            setIsDark(nextTheme === "dark");
         };
 
         updateTheme();
@@ -113,6 +210,28 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
         const button = buttonRef.current;
         if (!button) return;
 
+        const root = document.documentElement;
+        const currentTheme = root.classList.contains("dark") ? "dark" : "light";
+        const request = themeTransitionCoordinator.requestTheme(currentTheme, targetTheme);
+        if (!request) return;
+        const { id: requestId, theme: nextTheme } = request;
+
+        const applyTheme = () => {
+            if (!themeTransitionCoordinator.isLatestRequest(requestId)) return;
+            const appliedTheme = root.classList.contains("dark") ? "dark" : "light";
+            setIsDark(nextTheme === "dark");
+            root.classList.toggle("dark", nextTheme === "dark");
+            root.style.colorScheme = nextTheme;
+            if (nextTheme !== appliedTheme) onThemeChange?.(nextTheme);
+        };
+
+        if (themeTransitionCoordinator.interrupt(applyTheme)) return;
+
+        if (typeof document.startViewTransition !== "function") {
+            applyTheme();
+            return;
+        }
+
         const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
         const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
 
@@ -129,23 +248,8 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
 
         const maxRadius = Math.hypot(Math.max(x, viewportWidth - x), Math.max(y, viewportHeight - y));
 
-        const applyTheme = () => {
-            const nextTheme = targetTheme ?? (isDark ? "light" : "dark");
-            if (nextTheme === (isDark ? "dark" : "light")) return;
-            setIsDark(nextTheme === "dark");
-            document.documentElement.classList.toggle("dark", nextTheme === "dark");
-            document.documentElement.style.colorScheme = nextTheme;
-            onThemeChange?.(nextTheme);
-        };
-
-        if (typeof document.startViewTransition !== "function") {
-            applyTheme();
-            return;
-        }
-
         const clipPath = getThemeTransitionClipPaths(shape, x, y, maxRadius, viewportWidth, viewportHeight);
 
-        const root = document.documentElement;
         root.dataset.magicuiThemeVt = "active";
         root.style.setProperty("--magicui-theme-toggle-vt-duration", `${duration}ms`);
         // Pin the collapsed clip-path via CSS so Firefox does not paint the new
@@ -157,19 +261,21 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
             root.style.removeProperty("--magicui-theme-vt-clip-from");
         };
 
-        const transition = document.startViewTransition(() => {
-            flushSync(applyTheme);
-        });
-        if (typeof transition?.finished?.finally === "function") {
-            transition.finished.finally(cleanup);
-        } else {
+        let transition: ReturnType<typeof document.startViewTransition>;
+        try {
+            transition = document.startViewTransition(() => {
+                flushSync(applyTheme);
+            });
+        } catch {
             cleanup();
+            applyTheme();
+            return;
         }
 
-        const ready = transition?.ready;
-        if (ready && typeof ready.then === "function") {
-            ready.then(() => {
-                document.documentElement.animate(
+        themeTransitionCoordinator.track(
+            transition,
+            () => {
+                root.animate(
                     {
                         clipPath,
                     },
@@ -181,9 +287,10 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
                         pseudoElement: "::view-transition-new(root)",
                     },
                 );
-            });
-        }
-    }, [shape, fromCenter, duration, isDark, targetTheme, onThemeChange]);
+            },
+            cleanup,
+        );
+    }, [shape, fromCenter, duration, targetTheme, onThemeChange]);
 
     return (
         <button type="button" ref={buttonRef} onClick={toggleTheme} className={cn(className)} {...props}>

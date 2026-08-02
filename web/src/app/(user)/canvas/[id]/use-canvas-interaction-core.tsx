@@ -49,7 +49,6 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         nodeImageSettingsOpen,
         dialogNodeId,
         setDialogNodeId,
-        setDrawingNodeId,
         infoNodeId,
         cropNodeId,
         maskEditNodeId,
@@ -179,12 +178,11 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
             setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);
-            else if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== CanvasNodeType.Drawing) setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
             setConnecting(null);
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, projectId, setConnecting, setDrawingNodeId],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, projectId, setConnecting],
     );
 
     const cancelPendingConnectionCreate = useCallback(() => {

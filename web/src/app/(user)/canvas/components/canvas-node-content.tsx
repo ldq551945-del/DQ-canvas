@@ -31,6 +31,7 @@ export type NodeContentRendererProps = {
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onEditDrawing?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
@@ -60,26 +61,35 @@ export const nodeContentRenderers = {
     [CanvasNodeType.BrandKit]: BrandKitNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
-export function DrawingNodeContent({ node, theme }: NodeContentRendererProps) {
+export function DrawingNodeContent({ node, theme, onEditDrawing }: NodeContentRendererProps) {
     const preview = drawingPreviewUrl(node.metadata?.drawingPreview);
     const shapeCount = node.metadata?.drawingDocument?.shapeCount || 0;
     const pageCount = node.metadata?.drawingDocument?.pageCount || 1;
+    const stopEditEventPropagation = (event: React.SyntheticEvent) => event.stopPropagation();
+    const editDrawing = (event: React.MouseEvent<HTMLButtonElement>) => {
+        event.stopPropagation();
+        onEditDrawing?.(node);
+    };
     return (
         <div className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: theme.node.fill, color: theme.node.text }}>
             <div className="relative min-h-0 flex-1 overflow-hidden" style={{ background: preview ? "#fff" : theme.node.fill }}>
                 {preview ? (
-                    <img
-                        src={preview}
-                        alt={node.title || "绘图预览"}
-                        className="h-full w-full object-contain"
-                        draggable={false}
-                        onWheel={(event) => event.stopPropagation()}
-                    />
+                    <img src={preview} alt={node.title || "绘图预览"} className="h-full w-full object-contain" draggable={false} onWheel={(event) => event.stopPropagation()} />
                 ) : (
                     <div className="flex h-full items-center justify-center" style={{ color: theme.node.placeholder }}>
-                        <span className="grid size-12 place-items-center rounded-xl border" style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel }}>
+                        <button
+                            type="button"
+                            className="grid size-12 place-items-center rounded-xl border transition-colors"
+                            style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel }}
+                            aria-label="编辑绘图"
+                            title="编辑绘图"
+                            onMouseDown={stopEditEventPropagation}
+                            onPointerDown={stopEditEventPropagation}
+                            onDoubleClick={stopEditEventPropagation}
+                            onClick={editDrawing}
+                        >
                             <Pencil className="size-5" />
-                        </span>
+                        </button>
                     </div>
                 )}
             </div>
@@ -90,7 +100,19 @@ export function DrawingNodeContent({ node, theme }: NodeContentRendererProps) {
                         {shapeCount} 个图形 · {pageCount} 个页面
                     </div>
                 </div>
-                <Pencil className="size-3.5 shrink-0" style={{ color: theme.node.activeStroke }} aria-hidden="true" />
+                <button
+                    type="button"
+                    className="grid size-8 shrink-0 place-items-center rounded-lg transition-colors"
+                    style={{ color: theme.node.activeStroke, background: theme.toolbar.activeBg }}
+                    aria-label="编辑绘图"
+                    title="编辑绘图"
+                    onMouseDown={stopEditEventPropagation}
+                    onPointerDown={stopEditEventPropagation}
+                    onDoubleClick={stopEditEventPropagation}
+                    onClick={editDrawing}
+                >
+                    <Pencil className="size-3.5" aria-hidden="true" />
+                </button>
             </div>
         </div>
     );

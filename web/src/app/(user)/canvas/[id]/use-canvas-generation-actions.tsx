@@ -62,7 +62,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         setSelectedConnectionId,
         setRunningNodeId,
         setAssetPickerOpen,
-        projectLoaded,
         setDialogNodeId,
         assistantCollapsed,
         setAssistantCollapsed,
@@ -74,7 +73,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         connectionsRef,
         generateNodeRef,
         agentCloseTimerRef,
-        autoOpenedAgentRef,
     } = state;
     const { startGenerationRequest, finishGenerationRequest, completeVideoTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
     const { screenToCanvas, applyAgentOps } = interactions;
@@ -771,15 +769,6 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         }, CANVAS_AGENT_PANEL_MOTION_MS);
     };
 
-    useEffect(() => {
-        if (!projectLoaded || autoOpenedAgentRef.current) return;
-        autoOpenedAgentRef.current = true;
-        if (window.matchMedia("(min-width: 1024px)").matches) {
-            setAssistantMounted(true);
-            setAssistantClosing(false);
-            setAssistantCollapsed(false);
-        }
-    }, [projectLoaded]);
     return {
         handleGenerateNode,
         handleRetryNode,

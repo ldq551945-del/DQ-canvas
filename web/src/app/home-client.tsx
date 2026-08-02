@@ -3,14 +3,13 @@
 import { type PointerEvent as ReactPointerEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Camera, Clapperboard, Image as ImageIcon, Mail, Send, ShoppingBag, Sparkles, WandSparkles } from "lucide-react";
+import { ArrowRight, Camera, Clapperboard, Image as ImageIcon, Mail, Send, ShoppingBag, WandSparkles } from "lucide-react";
 import { Button, Image, Modal } from "antd";
 
 import { AuthForm } from "@/components/auth/auth-form";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { landingNavigationTools, navigationTools } from "@/constant/navigation-tools";
-import { DQ_COMMUNITY_URL } from "@/constant/community";
 import { fetchPrompts, type Prompt } from "@/services/api/prompts";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -72,11 +71,7 @@ const defaultSite: {
     privacyUrl: "/privacy",
     homeShowcaseMode: "random",
     homeShowcaseItems: [],
-    friendLinks: [
-        { id: "dq-home", label: "DQ-绘图", url: "https://store.dqin-666zj.top/", enabled: true },
-        { id: "qq-dq-open-source", label: "DQ 开源交流 社区", url: DQ_COMMUNITY_URL, enabled: true },
-        { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
-    ],
+    friendLinks: [{ id: "dq-home", label: "DQ-绘图", url: "https://store.dqin-666zj.top/", enabled: true }],
     socials: {
         email: { enabled: true, label: "邮箱联系", url: "mailto:3275573660@qq.com" },
         telegram: { enabled: false, label: "Telegram", url: "" },
@@ -383,10 +378,6 @@ export default function HomePage() {
                             <h1 className={cn("landing-hero-title text-balance font-semibold tracking-normal text-stone-950 dark:text-white", siteTitle.length > 8 && "is-long-title")} title={siteTitle}>
                                 {siteTitle}
                             </h1>
-                            <div className="landing-hero-badge inline-flex items-center gap-2">
-                                <Sparkles className="size-4" />
-                                <span>Agent 创作入口</span>
-                            </div>
                         </div>
                         <p className="landing-hero-description mt-6 max-w-2xl text-stone-600 dark:text-white/68">从商品展示到短剧分镜，再到人像精修，把想法、参考图和常用风格放在同一个入口，快速得到可继续编辑的视觉结果。</p>
                         <div className="landing-hero-proof-grid mt-7" role="list" aria-label="创作场景">

@@ -354,30 +354,6 @@
     background: radial-gradient(ellipse at 12% 12%, rgba(0, 0, 0, 0.36), transparent 48%), radial-gradient(circle at 12% 88%, rgba(20, 184, 166, 0.14), transparent 42%), radial-gradient(circle at 92% 38%, rgba(168, 85, 247, 0.13), transparent 44%);
 }
 
-.landing-hero-badge {
-    border: 1px solid rgba(15, 23, 42, 0.12);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.78);
-    color: rgba(15, 23, 42, 0.68);
-    min-height: 36px;
-    padding: 0 13px;
-    font-size: 13px;
-    font-weight: 720;
-    box-shadow:
-        0 14px 34px rgba(15, 23, 42, 0.07),
-        inset 0 1px 0 rgba(255, 255, 255, 0.74);
-    backdrop-filter: blur(14px);
-}
-
-.dark .landing-hero-badge {
-    border-color: rgba(125, 211, 252, 0.18);
-    background: rgba(255, 255, 255, 0.075);
-    color: rgba(255, 255, 255, 0.74);
-    box-shadow:
-        0 16px 46px rgba(0, 0, 0, 0.22),
-        inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
 .landing-hero-title {
     max-width: 52rem;
     font-size: 4.65rem;
@@ -870,10 +846,6 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-    .landing-hero-badge {
-        animation: landing-rise-in 680ms cubic-bezier(0.16, 1, 0.3, 1) 80ms both;
-    }
-
     .landing-hero-title {
         animation:
             landing-rise-in 760ms cubic-bezier(0.16, 1, 0.3, 1) 160ms both,

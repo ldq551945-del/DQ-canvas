@@ -181,7 +181,6 @@ function DQCanvasPage() {
         connectionTargetNodeIdRef,
         selectionBoxRef,
         agentCloseTimerRef,
-        autoOpenedAgentRef,
         pendingConnectionCreateRef,
         generationRequestsRef,
         resumingImageTaskIdsRef,

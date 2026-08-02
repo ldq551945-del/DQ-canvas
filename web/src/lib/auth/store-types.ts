@@ -1,7 +1,6 @@
 export type UserRole = "admin" | "user";
 export type UserStatus = "active" | "disabled";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
-import { DQ_COMMUNITY_URL } from "@/constant/community";
 
 export type ApiCallFormat = "openai" | "gemini";
 export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
@@ -333,11 +332,7 @@ export const DEFAULT_SITE_SOCIALS: SiteSocialSettings = {
     instagram: { enabled: false, label: "Instagram", url: "" },
 };
 
-export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [
-    { id: "dq-home", label: "DQ-绘图", url: "https://store.dqin-666zj.top/", enabled: true },
-    { id: "qq-dq-open-source", label: "DQ 开源交流 社区", url: DQ_COMMUNITY_URL, enabled: true },
-    { id: "linux-do", label: "Linux.do", url: "https://linux.do/", enabled: true },
-];
+export const DEFAULT_SITE_FRIEND_LINKS: SiteFriendLink[] = [{ id: "dq-home", label: "DQ-绘图", url: "https://store.dqin-666zj.top/", enabled: true }];
 
 export type MailSettings = {
     provider: string;

@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Button, Dropdown, Modal } from "antd";
-import { BookOpen, Bot, Images, Menu, Plus, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
+import { BookOpen, Images, Menu, Plus, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
 
+import { SiteLogo } from "@/components/layout/site-logo";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -154,7 +155,11 @@ export function CanvasTopBar({
                             paddingInline: 12,
                             boxShadow: colorTheme === "dark" ? "0 10px 30px rgba(0,0,0,.28)" : "0 10px 24px rgba(28,25,23,.08)",
                         }}
-                        icon={<Bot className="size-4" />}
+                        icon={
+                            <span className="canvas-agent-button-icon inline-flex size-7 shrink-0 items-center justify-center">
+                                <SiteLogo logoUrl="/logo.svg" className={agentOpen ? "size-7 dark:bg-stone-950" : "size-7"} />
+                            </span>
+                        }
                         onClick={onToggleAgent}
                         aria-label="Agent 对话"
                     >

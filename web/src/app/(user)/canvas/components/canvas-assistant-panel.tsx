@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Bot, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
+import { ArrowDown, History, PanelRightClose, Pause, Play, Plus, Square, Trash2, X } from "lucide-react";
 import { App, Button, Modal, Tooltip } from "antd";
 import { motion } from "motion/react";
 
@@ -11,6 +11,7 @@ import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
+import { SiteLogo } from "@/components/layout/site-logo";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
@@ -625,7 +626,7 @@ export function CanvasAssistantPanel({
                 <header className="flex h-14 items-center justify-between border-b px-4" style={{ borderColor: theme.node.stroke }}>
                     <div className="flex min-w-0 items-center gap-2">
                         <span className="grid size-8 place-items-center rounded-lg">
-                            <Bot className="size-4" />
+                            <SiteLogo logoUrl="/logo.svg" className="size-7" />
                         </span>
                         <div className="min-w-0">
                             <div className="text-base font-semibold leading-5">Agent</div>

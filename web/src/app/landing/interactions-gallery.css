@@ -266,11 +266,6 @@
         transform: none !important;
     }
 }
-@media (width<=767px) {
-    .landing-home-v2 .landing-hero-heading .landing-hero-badge {
-        display: none !important;
-    }
-}
 .landing-home-v2 .landing-workbench-preview:hover .landing-moon-window,
 .landing-home-v2 .landing-workbench-preview:hover .landing-creative-output-card.is-featured,
 .landing-home-v2 .landing-workbench-preview:hover .landing-creative-input-card,

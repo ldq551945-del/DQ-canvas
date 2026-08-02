@@ -1,38 +1,7 @@
 /* Homepage interactions styles. */
-.landing-home-v2 .landing-hero-heading .landing-hero-badge,
-.landing-home-v2 .landing-hero-heading .landing-hero-badge:hover {
-    color: inherit !important;
-    background: #ffffffd1 !important;
-    border-color: #0ea5e933 !important;
-    box-shadow:
-        0 12px 30px #0f172a0f,
-        inset 0 1px #ffffffeb !important;
-}
-.landing-home-v2 .landing-hero-heading .landing-hero-badge {
-    transform-origin: 50% !important;
-    transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
-}
-.landing-home-v2 .landing-hero-heading .landing-hero-badge:hover {
-    transform: translate(108%, -33%) scale(1.08) !important;
-}
-.landing-home-v2 .landing-hero-heading .landing-hero-badge:hover svg {
-    transform: scale(1.08) !important;
-}
-.dark .landing-home-v2 .landing-hero-heading .landing-hero-badge,
-.dark .landing-home-v2 .landing-hero-heading .landing-hero-badge:hover {
-    color: inherit !important;
-    background: #0f172ac2 !important;
-    border-color: #7dd3fc3d !important;
-    box-shadow:
-        0 12px 30px #0000002e,
-        inset 0 1px #ffffff14 !important;
-}
 .landing-home-v2 .landing-hero-title {
     transform-origin: 50% 70%;
     will-change: transform, opacity, filter, letter-spacing;
-}
-.landing-home-v2 .landing-hero-badge {
-    animation: 0.56s cubic-bezier(0.16, 1, 0.3, 1) 0.76s both landing-cinema-badge;
 }
 @keyframes landing-cinema-title {
     0% {
@@ -53,16 +22,6 @@
         letter-spacing: 0;
         clip-path: inset(0);
         transform: perspective(900px) translateY(0) scale(1) rotateX(0);
-    }
-}
-@keyframes landing-cinema-badge {
-    0% {
-        opacity: 0;
-        transform: translate(108%, -33%) scale(0.82);
-    }
-    to {
-        opacity: 1;
-        transform: translate(108%, -33%) scale(1);
     }
 }
 .landing-home-v2 .landing-hero-proof-grid span:first-child {
@@ -94,21 +53,6 @@
     color: #fda4af !important;
     background: #8318434d !important;
     border-color: #fb71854d !important;
-}
-@media (width<=1023px) {
-    .landing-home-v2 .landing-hero-heading .landing-hero-badge:hover {
-        transform: translate(4%, -92%) scale(1.08) !important;
-    }
-    @keyframes landing-cinema-badge {
-        0% {
-            opacity: 0;
-            transform: translate(4%, -92%) scale(0.82);
-        }
-        to {
-            opacity: 1;
-            transform: translate(4%, -92%) scale(1);
-        }
-    }
 }
 @media (width<=767px) {
     .landing-home-v2 .landing-moon-header {
@@ -149,8 +93,7 @@
     }
 }
 @media (prefers-reduced-motion: reduce) {
-    .landing-home-v2 .landing-hero-title,
-    .landing-home-v2 .landing-hero-badge {
+    .landing-home-v2 .landing-hero-title {
         animation: none !important;
     }
 }
@@ -470,10 +413,6 @@
         animation-duration: 1ms !important;
         animation-delay: 0s !important;
     }
-}
-.landing-home-v2 .landing-hero-badge {
-    animation-duration: 0.72s !important;
-    animation-delay: 1.75s !important;
 }
 @keyframes landing-cinema-title-slow {
     0% {

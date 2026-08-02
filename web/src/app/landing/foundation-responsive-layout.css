@@ -54,12 +54,6 @@
         padding-top: 20px;
     }
 
-    .landing-hero-badge {
-        min-height: 34px;
-        padding-inline: 12px;
-        font-size: 12px;
-    }
-
     .landing-hero-title {
         font-size: 2.35rem;
         line-height: 1.04;
@@ -248,10 +242,6 @@
         gap: 14px;
         padding-bottom: 20px;
         padding-top: 12px;
-    }
-
-    .landing-hero-badge {
-        min-height: 32px;
     }
 
     .landing-hero-title {

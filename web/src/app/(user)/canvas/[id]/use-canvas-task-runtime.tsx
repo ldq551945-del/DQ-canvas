@@ -156,7 +156,6 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
         connectionTargetNodeIdRef,
         selectionBoxRef,
         agentCloseTimerRef,
-        autoOpenedAgentRef,
         pendingConnectionCreateRef,
         generationRequestsRef,
         resumingImageTaskIdsRef,

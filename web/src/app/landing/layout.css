@@ -579,9 +579,6 @@
     .landing-home-v2 .landing-hero-copy-panel {
         text-align: center;
     }
-    .landing-home-v2 .landing-hero-badge {
-        margin-inline: auto;
-    }
     .landing-home-v2 .landing-hero-proof-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
         width: 100% !important;

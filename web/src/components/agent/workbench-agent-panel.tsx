@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Bot, BookOpen, Check, CircleStop, FileAudio2, Film, History, LoaderCircle, Plus, RotateCcw, Search, SlidersHorizontal, XCircle } from "lucide-react";
+import { BookOpen, Check, CircleStop, FileAudio2, Film, History, LoaderCircle, Plus, RotateCcw, Search, SlidersHorizontal, XCircle } from "lucide-react";
 import { Button, Input, Popover, Tooltip } from "antd";
 
 import { AgentMessageActions } from "@/components/agent/agent-message-actions";
 import { AgentMarkdown } from "@/components/agent/agent-markdown";
 import { formatAgentMessageText } from "@/components/agent/agent-message-format";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
+import { SiteLogo } from "@/components/layout/site-logo";
 import type { AgentSkillSummary } from "@/services/api/agent-skills";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -32,7 +33,7 @@ export function WorkbenchAgentHeader({ subtitle, historyContent, onNew }: { subt
         <header className="workbench-agent-header flex h-11 shrink-0 items-center justify-between border-b border-stone-200/80 pb-2 sm:h-14 sm:pb-3 dark:border-stone-800">
             <div className="flex min-w-0 items-center gap-2.5">
                 <span className="workbench-agent-icon grid size-7 place-items-center rounded-md bg-stone-100 sm:size-8 sm:rounded-lg dark:bg-stone-800">
-                    <Bot className="size-4" />
+                    <SiteLogo logoUrl="/logo.svg" className="size-7" />
                 </span>
                 <div>
                     <h1 className="text-base font-semibold leading-5">Agent</h1>
@@ -54,7 +55,7 @@ export function WorkbenchSkillEmptyState({ skills, onSelect }: { skills: Workben
         <div className="flex min-h-12 flex-1 items-center justify-center overflow-hidden px-1 py-1.5 text-center sm:min-h-[180px] sm:px-4 sm:py-4">
             <div className="min-w-0 max-w-full">
                 <div className="mx-auto mb-2 hidden size-8 place-items-center rounded-lg bg-stone-100 sm:mb-3 sm:grid sm:size-10 sm:rounded-xl dark:bg-stone-800">
-                    <Bot className="size-4" />
+                    <SiteLogo logoUrl="/logo.svg" className="size-7" />
                 </div>
                 <h2 className="text-xs font-semibold sm:text-base">告诉我你想创作什么</h2>
                 <p className="mx-auto mt-1 hidden max-w-[360px] text-xs leading-5 text-stone-500 sm:block dark:text-stone-400">描述你想生成的画面，也可以添加参考素材。</p>

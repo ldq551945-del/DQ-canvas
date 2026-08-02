@@ -451,9 +451,21 @@ export function normalizeShowcaseTags(value: unknown): string[] {
     return Array.from(new Set(raw.map((tag) => String(tag || "").trim()).filter(Boolean))).slice(0, 4);
 }
 
+const LEGACY_DEFAULT_SITE_FRIEND_LINKS = new Map([
+    ["qq-dq-open-source", "https://store.dqin-666zj.top/community"],
+    ["linux-do", "https://linux.do"],
+]);
+
 export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
-    const links = Array.isArray(settings) ? settings : DEFAULT_SITE_FRIEND_LINKS;
-    const normalized = links
+    const links = Array.isArray(settings)
+        ? settings.filter((link) => {
+              const value = link as Partial<SiteFriendLink>;
+              const id = String(value.id || "").trim();
+              const url = normalizeLinkUrl(value.url, "").replace(/\/$/, "");
+              return LEGACY_DEFAULT_SITE_FRIEND_LINKS.get(id) !== url;
+          })
+        : DEFAULT_SITE_FRIEND_LINKS;
+    return links
         .map((link, index) => {
             const value = link as Partial<SiteFriendLink>;
             return {
@@ -465,18 +477,6 @@ export function normalizeSiteFriendLinks(settings: unknown): SiteFriendLink[] {
         })
         .filter((link) => link.url)
         .slice(0, 12);
-    for (const link of DEFAULT_SITE_FRIEND_LINKS) {
-        if (normalized.some((item) => item.id === link.id || item.url.replace(/\/$/, "") === link.url.replace(/\/$/, ""))) continue;
-        normalized.push(link);
-    }
-    const defaultOrdered = DEFAULT_SITE_FRIEND_LINKS.flatMap((link) => {
-        const normalizedUrl = link.url.replace(/\/$/, "");
-        const matched = normalized.find((item) => item.id === link.id || item.url.replace(/\/$/, "") === normalizedUrl);
-        return matched ? [matched] : [];
-    });
-    const defaultKeys = new Set(DEFAULT_SITE_FRIEND_LINKS.flatMap((link) => [link.id, link.url.replace(/\/$/, "")]));
-    const others = normalized.filter((link) => !defaultKeys.has(link.id) && !defaultKeys.has(link.url.replace(/\/$/, "")));
-    return [...defaultOrdered, ...others].slice(0, 12);
 }
 
 export function normalizeSiteSocials(settings: Partial<SiteSocialSettings> | undefined): SiteSocialSettings {

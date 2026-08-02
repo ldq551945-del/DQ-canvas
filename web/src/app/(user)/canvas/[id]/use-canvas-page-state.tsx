@@ -142,7 +142,6 @@ export function useCanvasPageState() {
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
     const agentCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const autoOpenedAgentRef = useRef(false);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
     const resumingImageTaskIdsRef = useRef(new Set<string>());
@@ -284,7 +283,6 @@ export function useCanvasPageState() {
         connectionTargetNodeIdRef,
         selectionBoxRef,
         agentCloseTimerRef,
-        autoOpenedAgentRef,
         pendingConnectionCreateRef,
         generationRequestsRef,
         resumingImageTaskIdsRef,

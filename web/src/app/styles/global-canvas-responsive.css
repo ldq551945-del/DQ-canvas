@@ -14,6 +14,27 @@
     word-break: break-word;
 }
 
+.canvas-agent-button.ant-btn .ant-btn-icon,
+.canvas-agent-button.ant-btn.ant-btn .ant-btn-icon {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 28px;
+    height: 28px !important;
+    justify-content: center;
+    line-height: 0;
+    margin-inline-end: 0 !important;
+    width: 28px !important;
+}
+
+.canvas-agent-button-icon {
+    align-items: center;
+    display: inline-flex;
+    flex: 0 0 28px;
+    height: 28px;
+    justify-content: center;
+    width: 28px;
+}
+
 @media (max-width: 768px), (hover: none) and (pointer: coarse) {
     .canvas-surface,
     .node-element {
@@ -167,16 +188,6 @@
         width: 34px !important;
     }
 
-    .canvas-agent-button.ant-btn .ant-btn-icon,
-    .canvas-agent-button.ant-btn.ant-btn .ant-btn-icon {
-        align-items: center;
-        display: inline-flex;
-        height: 17px !important;
-        line-height: 0;
-        margin-inline-end: 0 !important;
-        width: 17px !important;
-    }
-
     .canvas-agent-button.ant-btn > span:not(.ant-btn-icon),
     .canvas-agent-button.ant-btn.ant-btn > span:not(.ant-btn-icon) {
         display: none;
@@ -263,16 +274,6 @@
         width: 17px;
     }
 
-    .canvas-topbar-actions .canvas-agent-button.ant-btn .ant-btn-icon,
-    .canvas-topbar-actions .canvas-agent-button.ant-btn.ant-btn .ant-btn-icon {
-        align-items: center;
-        display: inline-flex;
-        height: 17px !important;
-        line-height: 0;
-        margin-inline-end: 0 !important;
-        width: 17px !important;
-    }
-
     .canvas-topbar-actions .canvas-agent-button.ant-btn > span:not(.ant-btn-icon),
     .canvas-topbar-actions .canvas-agent-button.ant-btn.ant-btn > span:not(.ant-btn-icon) {
         display: none !important;
@@ -320,12 +321,6 @@
     .canvas-agent-button.ant-btn svg {
         height: 16px;
         width: 16px;
-    }
-
-    .canvas-agent-button.ant-btn .ant-btn-icon,
-    .canvas-agent-button.ant-btn.ant-btn .ant-btn-icon {
-        height: 16px !important;
-        width: 16px !important;
     }
 
     .user-points-popover .ant-popover-inner {

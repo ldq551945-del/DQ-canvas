@@ -74,6 +74,20 @@
         background-color: transparent !important;
     }
 
+    .app-sidebar-home-link:focus-visible {
+        outline: 2px solid #6e87db;
+        outline-offset: -2px;
+    }
+
+    .app-sidebar-home-logo {
+        transform: scale(1);
+        transition: transform 150ms ease-out;
+    }
+
+    .app-sidebar-home-link:active .app-sidebar-home-logo {
+        transform: scale(0.9);
+    }
+
     .landing-nav-pill,
     .app-shell-nav-pill {
         background: rgba(255, 255, 255, 0.66);
@@ -552,6 +566,7 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
+        .app-sidebar-home-logo,
         .app-shell-nav-pill,
         .app-shell-nav-indicator,
         .app-shell-nav-link,
@@ -563,6 +578,10 @@
         .app-shell-nav-link:hover,
         .app-shell-nav-link:focus-visible,
         .app-shell-nav-link.is-active {
+            transform: none !important;
+        }
+
+        .app-sidebar-home-link:active .app-sidebar-home-logo {
             transform: none !important;
         }
     }

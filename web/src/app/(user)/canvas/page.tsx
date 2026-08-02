@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
@@ -20,9 +20,7 @@ import { exportCanvasProjects, remapImportedProjectMedia } from "./utils/canvas-
 export default function CanvasPage() {
     const { message } = App.useApp();
     const router = useRouter();
-    const searchParams = useSearchParams();
     const inputRef = useRef<HTMLInputElement>(null);
-    const autoOpenRef = useRef(false);
     const [creating, setCreating] = useState(false);
     const [exporting, setExporting] = useState(false);
     const userId = useUserStore((state) => state.user?.id || "");
@@ -38,11 +36,8 @@ export default function CanvasPage() {
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
     const ready = Boolean(userId && hydrated && hydratedUserId === userId);
 
-    const mode = searchParams.get("mode");
-    const agentMode = mode === "new" || mode === "recent" || mode === "choose";
-    const agentQuery = agentMode ? `?${searchParams.toString()}` : "";
     const enterProject = (id: string) => {
-        router.push(`/canvas/${id}${agentQuery}`);
+        router.push(`/canvas/${id}`);
     };
     const createAndEnter = async () => {
         if (creating) return;
@@ -101,22 +96,6 @@ export default function CanvasPage() {
     useEffect(() => {
         void hydrate();
     }, [hydrate, userId]);
-
-    useEffect(() => {
-        if (!ready || autoOpenRef.current || (mode !== "new" && mode !== "recent")) return;
-        autoOpenRef.current = true;
-        void (async () => {
-            try {
-                const id = mode === "new" ? await createProject(`DQ-绘图 画布 ${projects.length + 1}`) : projects[0]?.id || (await createProject(`DQ-绘图 画布 ${projects.length + 1}`));
-                enterProject(id);
-            } catch (error) {
-                autoOpenRef.current = false;
-                message.error(error instanceof Error ? error.message : "画布打开失败");
-            }
-        })();
-    }, [createProject, message, mode, projects, ready]);
-
-    if (ready && (mode === "new" || mode === "recent")) return <main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在打开画布...</main>;
 
     return (
         <main className="h-full overflow-auto bg-background text-stone-950 dark:text-stone-100">

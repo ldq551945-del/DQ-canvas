@@ -149,7 +149,6 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         connectionTargetNodeIdRef,
         selectionBoxRef,
         agentCloseTimerRef,
-        autoOpenedAgentRef,
         pendingConnectionCreateRef,
         generationRequestsRef,
         resumingImageTaskIdsRef,

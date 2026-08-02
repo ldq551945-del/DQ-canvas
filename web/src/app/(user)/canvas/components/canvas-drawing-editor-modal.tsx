@@ -37,6 +37,7 @@ export function CanvasDrawingEditorModal({ open, node, onClose, onSaved }: { ope
     );
     const store = useMemo(() => createTLStore({ assets: assetStore }), [assetStore, node?.id]);
     const editorRef = useRef<Editor | null>(null);
+    const initializedStoreRef = useRef<typeof store | null>(null);
     const currentDocumentRef = useRef(node?.metadata?.drawingDocument || null);
     const savePromiseRef = useRef<Promise<boolean> | null>(null);
     const [ready, setReady] = useState(false);
@@ -45,7 +46,14 @@ export function CanvasDrawingEditorModal({ open, node, onClose, onSaved }: { ope
     const [loadError, setLoadError] = useState("");
 
     useEffect(() => {
-        if (!open || !node) return;
+        if (!open || !node) {
+            initializedStoreRef.current = null;
+            return;
+        }
+        // Saving replaces the parent node object. Do not reload that snapshot into
+        // the active store and let its listener mark the just-saved document dirty.
+        if (initializedStoreRef.current === store) return;
+        initializedStoreRef.current = store;
         setReady(false);
         setDirty(false);
         setLoadError("");

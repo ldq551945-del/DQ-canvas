@@ -1,65 +1,65 @@
 services:
   - type: web
-    name: vozeb-pro
+    name: dq
     runtime: docker
     plan: starter
     autoDeployTrigger: off
     healthCheckPath: /api/health/live
     disk:
-      name: vozeb-pro-data
+      name: dq-data
       mountPath: /app/web/.data
       sizeGB: 10
     envVars:
-      - fromGroup: vozeb-pro-runtime
+      - fromGroup: dq-runtime
       - key: PORT
         value: 3000
       - key: NODE_OPTIONS
         value: --max-old-space-size=384
       - key: UV_THREADPOOL_SIZE
         value: "2"
-      - key: VOZEB_PRO_DATA_DIR
+      - key: DQ_DATA_DIR
         value: /app/web/.data
-      - key: VOZEB_PRO_INTERNAL_ORIGIN
+      - key: DQ_INTERNAL_ORIGIN
         value: http://127.0.0.1:3000
-      - key: VOZEB_PRO_DATABASE_PROVIDER
+      - key: DQ_DATABASE_PROVIDER
         value: postgres
       - key: DATABASE_URL
         fromDatabase:
-          name: vozeb-pro-postgres
+          name: dq-postgres
           property: connectionString
-      - key: VOZEB_PRO_DATABASE_POOL_MAX
+      - key: DQ_DATABASE_POOL_MAX
         value: "5"
-      - key: VOZEB_PRO_DATABASE_SSL
+      - key: DQ_DATABASE_SSL
         value: "1"
-      - key: VOZEB_PRO_ENCRYPTION_KEY
+      - key: DQ_ENCRYPTION_KEY
         generateValue: true
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
 
   - type: worker
-    name: vozeb-pro-generation-worker
+    name: dq-generation-worker
     runtime: docker
     plan: starter
     autoDeployTrigger: off
     dockerCommand: node /app/web/scripts/generation-worker.mjs
     envVars:
-      - fromGroup: vozeb-pro-runtime
+      - fromGroup: dq-runtime
       - key: NODE_OPTIONS
         value: --max-old-space-size=128
-      - key: VOZEB_PRO_WORKER_API_ORIGIN
+      - key: DQ_WORKER_API_ORIGIN
         fromService:
-          name: vozeb-pro
+          name: dq
           type: web
           property: hostport
 
 databases:
-  - name: vozeb-pro-postgres
+  - name: dq-postgres
     plan: basic-256mb
-    databaseName: vozeb_pro
-    user: vozeb_pro
+    databaseName: dq
+    user: dq
 
 envVarGroups:
-  - name: vozeb-pro-runtime
+  - name: dq-runtime
     envVars:
-      - key: VOZEB_PRO_MAINTENANCE_TOKEN
+      - key: DQ_MAINTENANCE_TOKEN
         generateValue: true

@@ -1,6 +1,7 @@
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
+import { canvasDrawingReferenceImage } from "./canvas-drawing-storage";
 
 type CanvasResourceKind = "image" | "video" | "audio" | "text";
 
@@ -58,11 +59,13 @@ function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[]
 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
     const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
+    let drawingCount = 0;
     return nodes.flatMap((node): CanvasResourceReference[] => {
         const kind = resourceKind(node);
         if (!kind) return [];
-        const index = counts[kind]++;
-        const label = labelForKind(kind, index);
+        const drawing = canvasDrawingReferenceImage(node);
+        const index = node.type === CanvasNodeType.Drawing ? drawingCount++ : counts[kind]++;
+        const label = node.type === CanvasNodeType.Drawing ? `绘图${index + 1}` : labelForKind(kind, index);
         return [
             {
                 id: node.id,
@@ -70,7 +73,7 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
                 kind,
                 label,
                 title: node.title || label,
-                previewUrl: node.metadata?.content,
+                previewUrl: drawing?.dataUrl || node.metadata?.content,
                 text: node.type === CanvasNodeType.Text ? node.metadata?.content || node.metadata?.prompt : undefined,
                 active,
             },
@@ -90,6 +93,7 @@ function isResourceNode(node: CanvasNodeData) {
 }
 
 function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
+    if (canvasDrawingReferenceImage(node)) return "image";
     if (isCanvasImageNodeType(node.type) && node.metadata?.content) return "image";
     if (node.type === CanvasNodeType.Video && node.metadata?.content) return "video";
     if (node.type === CanvasNodeType.Audio && node.metadata?.content) return "audio";

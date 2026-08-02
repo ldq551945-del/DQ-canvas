@@ -38,12 +38,16 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
             const isAgentNode = Boolean(op.metadata?.agentRunId) || op.id?.startsWith("output-agent-");
             const existing = op.id ? nodes.find((node) => node.id === op.id) : undefined;
             if (existing) {
-                nodes = nodes.map((node) => (node.id === op.id ? { ...node, type: nodeType, title: op.title || node.title, metadata: { ...node.metadata, ...op.metadata } } : node));
+                const metadata: CanvasNodeMetadata = { ...existing.metadata, ...op.metadata };
+                if (nodeType === CanvasNodeType.Drawing && !metadata.drawingId) metadata.drawingId = `${existing.id}-document`;
+                nodes = nodes.map((node) => (node.id === op.id ? { ...node, type: nodeType, title: op.title || node.title, metadata } : node));
                 if (!isAgentNode) selectedNodeIds = [existing.id];
                 return;
             }
             const requestedPosition = op.position || { x: op.x ?? index * 36, y: op.y ?? index * 36 };
-            const metadata = { ...spec.metadata, ...op.metadata };
+            const id = op.id || `${nodeType}-${Date.now()}-${index}`;
+            const metadata: CanvasNodeMetadata = { ...spec.metadata, ...op.metadata };
+            if (nodeType === CanvasNodeType.Drawing && !metadata.drawingId) metadata.drawingId = `${id}-document`;
             const naturalWidth = metadata.naturalWidth;
             const naturalHeight = metadata.naturalHeight;
             const baseSize = { width: op.width || spec.width, height: op.height || spec.height };
@@ -56,7 +60,7 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
                       : baseSize;
             const position = isAgentNode ? findFreeNodePosition(nodes, requestedPosition, size.width, size.height) : requestedPosition;
             const node: CanvasNodeData = {
-                id: op.id || `${nodeType}-${Date.now()}-${index}`,
+                id,
                 type: nodeType,
                 title: op.title || spec.title,
                 position,

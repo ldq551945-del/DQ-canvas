@@ -35,6 +35,8 @@ services:
         generateValue: true
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
+      - key: NEXT_PUBLIC_TLDRAW_LICENSE_KEY
+        sync: false
 
   - type: worker
     name: dq-generation-worker

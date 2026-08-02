@@ -14,7 +14,7 @@ Canvas 项目按登录用户保存在服务端。PostgreSQL 使用 `canvas_proje
 - `PATCH /api/canvas/projects/{id}`：保存节点、连线、视口、项目助手会话和外观设置。
 - `DELETE /api/canvas/projects`：批量删除当前用户拥有的项目。
 
-客户端 Store 登录后调用 `hydrate()` 从接口加载，编辑时先更新内存状态，再以 250ms 防抖写回服务端。服务端限制单个项目快照不超过 5MB，并剔除 `data:` 与 `blob:`，防止把浏览器临时媒体写入数据库。
+客户端 Store 登录后调用 `hydrate()` 从接口加载，编辑时先更新内存状态，再以 250ms 防抖写回服务端。服务端限制单个项目快照不超过 30MB，并剔除 `data:` 与 `blob:`，防止把浏览器临时媒体写入数据库。
 
 ## 项目结构
 

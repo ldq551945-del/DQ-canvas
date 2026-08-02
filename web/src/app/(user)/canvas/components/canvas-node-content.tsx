@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, Pencil, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -12,6 +12,7 @@ import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textare
 import { CanvasPanoramaViewer } from "./canvas-panorama-viewer";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
+import { drawingPreviewUrl } from "../utils/canvas-drawing-storage";
 
 export type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 export type NodeContentRendererProps = {
@@ -50,6 +51,7 @@ export const nodeContentRenderers = {
     [CanvasNodeType.Text]: TextContent,
     [CanvasNodeType.Image]: ImageNodeContent,
     [CanvasNodeType.Panorama]: PanoramaNodeContent,
+    [CanvasNodeType.Drawing]: DrawingNodeContent,
     [CanvasNodeType.Config]: EmptyImageContent,
     [CanvasNodeType.Video]: VideoNodeContent,
     [CanvasNodeType.Audio]: AudioNodeContent,
@@ -57,6 +59,42 @@ export const nodeContentRenderers = {
     [CanvasNodeType.Task]: TaskNodeContent,
     [CanvasNodeType.BrandKit]: BrandKitNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
+
+export function DrawingNodeContent({ node, theme }: NodeContentRendererProps) {
+    const preview = drawingPreviewUrl(node.metadata?.drawingPreview);
+    const shapeCount = node.metadata?.drawingDocument?.shapeCount || 0;
+    const pageCount = node.metadata?.drawingDocument?.pageCount || 1;
+    return (
+        <div className="relative flex h-full w-full flex-col overflow-hidden" style={{ background: theme.node.fill, color: theme.node.text }}>
+            <div className="relative min-h-0 flex-1 overflow-hidden" style={{ background: preview ? "#fff" : theme.node.fill }}>
+                {preview ? (
+                    <img
+                        src={preview}
+                        alt={node.title || "绘图预览"}
+                        className="h-full w-full object-contain"
+                        draggable={false}
+                        onWheel={(event) => event.stopPropagation()}
+                    />
+                ) : (
+                    <div className="flex h-full items-center justify-center" style={{ color: theme.node.placeholder }}>
+                        <span className="grid size-12 place-items-center rounded-xl border" style={{ borderColor: theme.node.stroke, background: theme.toolbar.panel }}>
+                            <Pencil className="size-5" />
+                        </span>
+                    </div>
+                )}
+            </div>
+            <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-t px-3" style={{ borderColor: theme.node.stroke, background: theme.node.panel }}>
+                <div className="min-w-0">
+                    <div className="truncate text-xs font-semibold">{node.title || "绘图"}</div>
+                    <div className="truncate text-[10px]" style={{ color: theme.node.placeholder }}>
+                        {shapeCount} 个图形 · {pageCount} 个页面
+                    </div>
+                </div>
+                <Pencil className="size-3.5 shrink-0" style={{ color: theme.node.activeStroke }} aria-hidden="true" />
+            </div>
+        </div>
+    );
+}
 
 export function BriefNodeContent({ node, theme }: NodeContentRendererProps) {
     const brief = node.metadata?.agentBrief;

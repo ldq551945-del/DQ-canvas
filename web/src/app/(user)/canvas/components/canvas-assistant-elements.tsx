@@ -24,6 +24,7 @@ import { formatAgentMessageText, friendlyAgentError } from "@/components/agent/a
 import { AgentChatComposer, AgentChatMessage, AgentPanelTabs, AgentWorkingMessage, type CanvasAgentChatMessage } from "./canvas-agent-chat-ui";
 import { CANVAS_AGENT_PANEL_MOTION_MS } from "./canvas-agent-panel-motion";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantMessage, type CanvasAssistantReference, type CanvasAssistantSession, type CanvasNodeData } from "../types";
+import { canvasDrawingReferenceImage } from "../utils/canvas-drawing-storage";
 import type { CanvasAgentOp, CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 
 const PANEL_MOTION_SECONDS = CANVAS_AGENT_PANEL_MOTION_MS / 1000;
@@ -147,9 +148,12 @@ export function AssistantReferenceChip({ item, label, onRemove }: { item: Canvas
 }
 
 export function assistantImageReferenceLabel(references: CanvasAssistantReference[], index: number) {
-    if (!references[index]?.dataUrl) return undefined;
-    const imageIndex = references.slice(0, index + 1).filter((item) => item.dataUrl).length - 1;
-    return imageIndex >= 0 ? imageReferenceLabel(imageIndex) : undefined;
+    const reference = references[index];
+    if (!reference?.dataUrl) return undefined;
+    const isDrawing = reference.type === CanvasNodeType.Drawing;
+    const sourceIndex = references.slice(0, index + 1).filter((item) => Boolean(item.dataUrl) && (item.type === CanvasNodeType.Drawing) === isDrawing).length - 1;
+    if (sourceIndex < 0) return undefined;
+    return isDrawing ? `绘图${sourceIndex + 1}` : imageReferenceLabel(sourceIndex);
 }
 
 export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
@@ -166,6 +170,10 @@ export function sessionPreview(session: CanvasAssistantSession) {
 }
 
 export function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
+    const drawing = canvasDrawingReferenceImage(node);
+    if (drawing) {
+        return { id: node.id, type: node.type, title: node.title, dataUrl: drawing.dataUrl, storageKey: drawing.storageKey };
+    }
     if (isCanvasImageNodeType(node.type) && node.metadata?.content) {
         return { id: node.id, type: node.type, title: node.title, dataUrl: node.metadata.content, storageKey: node.metadata.storageKey };
     }
@@ -204,7 +212,7 @@ export function compactSnapshot(snapshot: CanvasAgentSnapshot) {
 }
 
 export function canvasRunSelectedNodeIds(snapshot: CanvasAgentSnapshot, submittedReferenceIds: Set<string>) {
-    const mediaNodeIds = new Set(snapshot.nodes.filter((node) => isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio).map((node) => node.id));
+    const mediaNodeIds = new Set(snapshot.nodes.filter((node) => isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Drawing || node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio).map((node) => node.id));
     return Array.from(new Set([...snapshot.selectedNodeIds.filter((id) => !mediaNodeIds.has(id)), ...submittedReferenceIds]));
 }
 

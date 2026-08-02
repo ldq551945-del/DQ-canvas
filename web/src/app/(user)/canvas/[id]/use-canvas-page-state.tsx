@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
@@ -110,6 +110,7 @@ export function useCanvasPageState() {
     const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+    const [drawingNodeId, setDrawingNodeId] = useState<string | null>(null);
     const [assistantCollapsed, setAssistantCollapsed] = useState(true);
     const [assistantMounted, setAssistantMounted] = useState(false);
     const [assistantClosing, setAssistantClosing] = useState(false);
@@ -119,6 +120,18 @@ export function useCanvasPageState() {
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const [isNodeDragging, setIsNodeDragging] = useState(false);
+
+    const projectIdRef = useRef(projectId);
+    const drawingCreateRequestsRef = useRef(new Map<string, symbol>());
+
+    useLayoutEffect(() => {
+        projectIdRef.current = projectId;
+        drawingCreateRequestsRef.current.clear();
+    }, [projectId]);
+
+    useEffect(() => {
+        setDrawingNodeId(null);
+    }, [projectId]);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -240,6 +253,8 @@ export function useCanvasPageState() {
         setAngleNodeId,
         previewNodeId,
         setPreviewNodeId,
+        drawingNodeId,
+        setDrawingNodeId,
         assistantCollapsed,
         setAssistantCollapsed,
         assistantMounted,
@@ -258,6 +273,8 @@ export function useCanvasPageState() {
         setOpeningBatchIds,
         isNodeDragging,
         setIsNodeDragging,
+        projectIdRef,
+        drawingCreateRequestsRef,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,

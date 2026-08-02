@@ -5,6 +5,7 @@ import { AppProviders } from "@/components/layout/app-providers";
 import { absoluteSiteUrl, getPublicSiteSettings, siteMetadataBase } from "@/lib/server/site-metadata";
 import { buildWebsiteStructuredData, serializeStructuredData } from "@/lib/structured-data";
 import "antd/dist/reset.css";
+import "tldraw/tldraw.css";
 import "./globals.css";
 import React from "react";
 

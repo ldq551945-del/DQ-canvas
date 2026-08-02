@@ -33,6 +33,7 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
         setContextMenu,
         setToolbarNodeId,
         setDialogNodeId,
+        setDrawingNodeId,
         setIsNodeDragging,
         nodesRef,
         selectedNodeIdsRef,
@@ -151,7 +152,10 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
         dragRef.current.initialSelectedNodes = [];
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
-            if (clickedNode?.type === CanvasNodeType.Text) {
+            if (clickedNode?.type === CanvasNodeType.Drawing) {
+                setDialogNodeId(null);
+                setDrawingNodeId(clickedNodeId);
+            } else if (clickedNode?.type === CanvasNodeType.Text) {
                 setDialogNodeId((current) => (current === clickedNodeId ? current : null));
             } else {
                 setDialogNodeId(clickedNodeId);

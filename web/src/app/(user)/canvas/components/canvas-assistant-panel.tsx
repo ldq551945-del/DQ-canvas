@@ -10,7 +10,6 @@ import { nanoid } from "nanoid";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { DiaTextReveal } from "@/components/ui/dia-text-reveal";
 import { CreativeAgentControls, CreativeAgentSkillCard, type CreativeAgentModelOption } from "@/components/agent/creative-agent-controls";
 import { useCreativeAgentOptions } from "@/hooks/use-creative-agent-options";
@@ -49,6 +48,7 @@ type CanvasAssistantPanelProps = {
 import {
     AssistantHistory,
     AssistantReferenceChip,
+    assistantImageReferenceLabel,
     assistantMessageToChatMessage,
     formatSessionTime,
     sessionPreview,
@@ -128,7 +128,7 @@ export function CanvasAssistantPanel({
     const readyReferenceIds = useMemo(() => allSelectedReferences.map((item) => item.id), [allSelectedReferences]);
     const { uploads, addFiles, retryUpload, removeUpload } = useCanvasAgentAttachments(onPasteImage, readyReferenceIds);
     const composerAttachments = [
-        ...selectedImageReferences.map((item, index) => ({ id: item.id, name: item.title, url: item.dataUrl!, label: imageReferenceLabel(index), status: "ready" as const })),
+        ...selectedImageReferences.map((item, index) => ({ id: item.id, name: item.title, url: item.dataUrl!, label: assistantImageReferenceLabel(selectedImageReferences, index), status: "ready" as const })),
         ...uploads.filter((item) => !item.nodeId || !readyReferenceIds.includes(item.nodeId)),
     ];
     const messageScrollKey = messages.map((item) => `${item.id}:${item.text.length}`).join("|") + `:${isRunning}:${runStage.key}`;

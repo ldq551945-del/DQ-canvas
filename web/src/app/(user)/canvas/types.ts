@@ -12,6 +12,7 @@ export type ViewportTransform = {
 export enum CanvasNodeType {
     Image = "image",
     Panorama = "panorama",
+    Drawing = "drawing",
     Text = "text",
     Config = "config",
     Video = "video",
@@ -24,6 +25,28 @@ export enum CanvasNodeType {
 export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
     return type === CanvasNodeType.Image || type === CanvasNodeType.Panorama;
 }
+
+export function isCanvasDrawingNodeType(type: CanvasNodeType | null | undefined) {
+    return type === CanvasNodeType.Drawing;
+}
+
+export type CanvasDrawingPreview = {
+    storageKey?: string;
+    serverUrl?: string;
+    mimeType: string;
+    width: number;
+    height: number;
+    bytes?: number;
+};
+
+export type CanvasDrawingDocument = {
+    schemaVersion: 1;
+    snapshot: unknown;
+    revision: number;
+    updatedAt: string;
+    shapeCount: number;
+    pageCount: number;
+};
 
 type CanvasNodeStatus = "idle" | "success" | "loading" | "error" | "cancelled";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
@@ -38,6 +61,9 @@ export type CameraControlOptions = {
 };
 
 export type CanvasNodeMetadata = {
+    drawingId?: string;
+    drawingDocument?: CanvasDrawingDocument;
+    drawingPreview?: CanvasDrawingPreview;
     agentRunId?: string;
     agentTaskId?: string;
     agentGenerationTaskIds?: string[];

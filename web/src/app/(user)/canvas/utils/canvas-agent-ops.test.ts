@@ -65,6 +65,14 @@ describe("Agent 产物排版", () => {
         expect(created.nodes[0]).toMatchObject({ width: 340, height: 340 });
     });
 
+    it("assigns a stable drawing document id when the Agent creates a drawing node", () => {
+        const created = applyCanvasAgentOps(snapshot, [{ type: "add_node", id: "drawing-agent", nodeType: CanvasNodeType.Drawing, position: { x: 40, y: 20 } }]);
+        const replay = applyCanvasAgentOps(created, [{ type: "add_node", id: "drawing-agent", nodeType: CanvasNodeType.Drawing, title: "线稿" }]);
+
+        expect(created.nodes[0].metadata?.drawingId).toBe("drawing-agent-document");
+        expect(replay.nodes[0].metadata?.drawingId).toBe("drawing-agent-document");
+    });
+
     it("applies node, connection, selection, movement, resize, viewport, and delete ops", () => {
         const created = applyCanvasAgentOps(snapshot, [
             { type: "add_node", id: "one", nodeType: CanvasNodeType.Text, position: { x: 10, y: 20 } },

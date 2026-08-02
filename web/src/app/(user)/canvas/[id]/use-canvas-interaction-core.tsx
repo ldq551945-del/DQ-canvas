@@ -14,7 +14,8 @@ const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistan
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
-import { CONNECTION_HANDLE_HIT_RADIUS, CONNECTION_NODE_HIT_PADDING, ConnectionDropTarget, PendingConnectionCreate, type CanvasCreatableNodeType, createCanvasNode } from "./canvas-page-elements";
+import { CONNECTION_HANDLE_HIT_RADIUS, CONNECTION_NODE_HIT_PADDING, ConnectionDropTarget, PendingConnectionCreate, type CanvasCreatableNodeType, createCanvasNode, drawingSourceNodeForConnection } from "./canvas-page-elements";
+import { beginCanvasDrawingCreate, currentCanvasDrawingCreateSource, finishCanvasDrawingCreate } from "./canvas-drawing-connection-guard";
 import { getConnectionTargetAnchor, getGenerationCount, isHiddenBatchChild, normalizeConnection } from "./canvas-page-utils";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
@@ -48,6 +49,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         nodeImageSettingsOpen,
         dialogNodeId,
         setDialogNodeId,
+        setDrawingNodeId,
         infoNodeId,
         cropNodeId,
         maskEditNodeId,
@@ -63,6 +65,8 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         generateNodeRef,
         connectingParamsRef,
         connectionTargetNodeIdRef,
+        projectIdRef,
+        drawingCreateRequestsRef,
     } = state;
 
     const screenToCanvas = useCallback((clientX: number, clientY: number) => {
@@ -131,23 +135,56 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
     );
 
     const createConnectedNode = useCallback(
-        (type: CanvasCreatableNodeType, pending: PendingConnectionCreate) => {
+        async (type: CanvasCreatableNodeType, pending: PendingConnectionCreate) => {
             const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
             const newNode = createCanvasNode(type, pending.position, metadata);
-            const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
+            let connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
                 message.warning("配置节点之间不能连接");
                 return;
+            }
+            if (type === CanvasNodeType.Drawing) {
+                const sourceNode = drawingSourceNodeForConnection(pending, nodesRef.current);
+                if (!sourceNode) {
+                    message.error("只有已有图片内容的输出连线可以创建绘图");
+                    return;
+                }
+                const ticket = beginCanvasDrawingCreate(drawingCreateRequestsRef.current, projectId, sourceNode);
+                if (!ticket) return;
+                setPendingConnectionCreate(null);
+                setConnecting(null);
+                try {
+                    const { createCanvasDrawingFromImage } = await import("./canvas-drawing-from-image");
+                    const initialized = await createCanvasDrawingFromImage(sourceNode);
+                    const currentSource = currentCanvasDrawingCreateSource(drawingCreateRequestsRef.current, ticket, projectIdRef.current, nodesRef.current);
+                    if (!currentSource) return;
+                    connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
+                    if (!connection) return;
+                    newNode.title = `${currentSource.title || "图片"} · 绘图`;
+                    newNode.metadata = {
+                        ...newNode.metadata,
+                        drawingDocument: initialized.document,
+                        drawingPreview: initialized.preview,
+                    };
+                } catch (error) {
+                    if (projectIdRef.current === ticket.projectId && drawingCreateRequestsRef.current.get(ticket.key) === ticket.token) {
+                        message.error(error instanceof Error ? `创建绘图失败：${error.message}` : "创建绘图失败");
+                    }
+                    return;
+                } finally {
+                    finishCanvasDrawingCreate(drawingCreateRequestsRef.current, ticket);
+                }
             }
             setNodes((prev) => [...prev, newNode]);
             setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+            if (type === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);
+            else if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
             setPendingConnectionCreate(null);
             setConnecting(null);
         },
-        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, setConnecting],
+        [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message, projectId, setConnecting, setDrawingNodeId],
     );
 
     const cancelPendingConnectionCreate = useCallback(() => {

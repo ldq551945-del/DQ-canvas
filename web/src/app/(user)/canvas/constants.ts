@@ -12,6 +12,7 @@ type CanvasNodeSpec = {
 export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Image]: { width: 340, height: 240, title: "New Generation" },
     [CanvasNodeType.Panorama]: { ...PANORAMA_NODE_SIZE, title: "全景图" },
+    [CanvasNodeType.Drawing]: { width: 440, height: 300, title: "绘图" },
     [CanvasNodeType.Text]: { width: 340, height: 240, title: "Note" },
     [CanvasNodeType.Config]: { width: 340, height: 240, title: "生成配置" },
     [CanvasNodeType.Video]: { width: 420, height: 236, title: "Video" },
@@ -29,6 +30,10 @@ const NODE_SPECS = {
     [CanvasNodeType.Panorama]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Panorama],
         metadata: { content: "", status: "idle", size: "2048x1024", panoramaProjection: "equirectangular" },
+    },
+    [CanvasNodeType.Drawing]: {
+        ...NODE_DEFAULT_SIZE[CanvasNodeType.Drawing],
+        metadata: { status: "success" },
     },
     [CanvasNodeType.Text]: {
         ...NODE_DEFAULT_SIZE[CanvasNodeType.Text],

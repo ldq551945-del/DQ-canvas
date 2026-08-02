@@ -12,6 +12,7 @@ description: DQ-绘图 环境变量、模型渠道、服务器媒体与支付配
 | 变量                                       | 必填             | 说明                                                                                  |
 | ------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------- |
 | `NEXT_PUBLIC_SITE_URL`                     | 生产必填         | 外部可访问的站点地址，生产使用 HTTPS，不带尾部 `/`                                    |
+| `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`            | 商业部署可选     | tldraw 生产 License Key；必须在 Next.js 或 Docker 镜像构建阶段提供                     |
 | `DQ_DATABASE_PROVIDER`              | 是               | 生产使用 `postgres`；`file` 仅用于单机文件模式体验                                    |
 | `DATABASE_URL`                             | PostgreSQL 必填  | PostgreSQL 连接串；Docker 内数据库 Host 使用 `postgres`                               |
 | `DQ_DATABASE_POOL_MAX`              | 否               | 连接池上限，默认 10，低内存或托管数据库可设置 5                                       |
@@ -86,6 +87,8 @@ DQ_CONTENT_MODERATION_KEYWORDS=风险词一,风险词二
 ```dotenv
 NEXT_PUBLIC_SITE_URL=https://store.dqin-666zj.top
 ```
+
+画布绘图使用 tldraw。需要移除生产水印时，在源码构建或镜像构建阶段配置 `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`；它是浏览器公开配置，运行中的预构建镜像不会读取并重新编译该值。GitHub 镜像工作流从同名 Repository Secret 注入，本地 Compose 构建从 `.env` 注入。
 
 独立部署文档站时，可在文档容器设置主应用地址：
 

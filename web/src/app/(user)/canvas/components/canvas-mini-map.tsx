@@ -120,13 +120,15 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
                             ? "#10b981"
                             : node.type === CanvasNodeType.Panorama
                               ? "#06b6d4"
-                              : node.type === CanvasNodeType.Video
-                                ? "#f97316"
-                                : node.type === CanvasNodeType.Audio
-                                  ? "#a855f7"
-                                  : node.type === CanvasNodeType.Config
-                                    ? "#60a5fa"
-                                    : theme.node.muted;
+                              : node.type === CanvasNodeType.Drawing
+                                ? "#eab308"
+                                : node.type === CanvasNodeType.Video
+                                  ? "#f97316"
+                                  : node.type === CanvasNodeType.Audio
+                                    ? "#a855f7"
+                                    : node.type === CanvasNodeType.Config
+                                      ? "#60a5fa"
+                                      : theme.node.muted;
                     return (
                         <div
                             key={node.id}

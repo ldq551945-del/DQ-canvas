@@ -4,6 +4,7 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
+import { canvasDrawingReferenceImage } from "../utils/canvas-drawing-storage";
 import { getGenerationResourceNodes } from "../utils/canvas-resource-references";
 
 type NodeGenerationContext = {
@@ -20,6 +21,7 @@ type NodeGenerationContext = {
 export type NodeGenerationInput = {
     nodeId: string;
     type: "text" | "image" | "video" | "audio";
+    sourceKind?: "drawing";
     title: string;
     text?: string;
     image?: ReferenceImage;
@@ -59,7 +61,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     const selectedInputs: NodeGenerationInput[] = [];
     const labelByNodeId = new Map<string, string>();
     const textBlocks: string[] = [];
-    const counts = { image: 0, video: 0, audio: 0, text: 0 };
+    const counts = { image: 0, drawing: 0, video: 0, audio: 0, text: 0 };
     let hasToken = false;
     let lastIndex = 0;
     let nextPrompt = "";
@@ -72,7 +74,8 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
         if (input) {
             let label = labelByNodeId.get(input.nodeId);
             if (!label) {
-                label = generationLabel(input.type, counts[input.type]++);
+                const labelType = input.sourceKind || input.type;
+                label = generationLabel(labelType, counts[labelType]++);
                 labelByNodeId.set(input.nodeId, label);
                 if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
                 else selectedInputs.push(input);
@@ -116,7 +119,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
     return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
         const image = readReferenceImage(node);
-        if (image) return [{ nodeId: node.id, type: "image" as const, title: node.title, image }];
+        if (image) return [{ nodeId: node.id, type: "image" as const, ...(node.type === CanvasNodeType.Drawing ? { sourceKind: "drawing" as const } : {}), title: node.title, image }];
         const video = readReferenceVideo(node);
         if (video) return [{ nodeId: node.id, type: "video" as const, title: node.title, video }];
         const audio = readReferenceAudio(node);
@@ -150,7 +153,8 @@ function readNodeTextInput(node: CanvasNodeData) {
     return node.metadata?.prompt || "";
 }
 
-function generationLabel(type: NodeGenerationInput["type"], index: number) {
+function generationLabel(type: NodeGenerationInput["type"] | "drawing", index: number) {
+    if (type === "drawing") return `绘图${index + 1}`;
     if (type === "image") return imageReferenceLabel(index);
     if (type === "video") return seedanceReferenceLabel("video", index);
     if (type === "audio") return seedanceReferenceLabel("audio", index);
@@ -158,6 +162,8 @@ function generationLabel(type: NodeGenerationInput["type"], index: number) {
 }
 
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
+    const drawing = canvasDrawingReferenceImage(node);
+    if (drawing) return drawing;
     if (!isCanvasImageNodeType(node.type) || !node.metadata?.content) return null;
     const content = node.metadata.content;
     const remoteUrl = isRemoteGeneratedUrl(node.metadata.remoteUrl || "") ? node.metadata.remoteUrl || "" : isRemoteGeneratedUrl(content) ? content : "";

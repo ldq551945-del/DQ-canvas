@@ -15,7 +15,7 @@ import type { CanvasExportFile } from "./export-types";
 import { useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasUiStore } from "./stores/use-canvas-ui-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { exportCanvasProjects } from "./utils/canvas-export";
+import { exportCanvasProjects, remapImportedProjectMedia } from "./utils/canvas-export";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -181,23 +181,4 @@ export default function CanvasPage() {
             <CanvasDeleteProjectsDialog />
         </main>
     );
-}
-
-function remapImportedProjectMedia(project: CanvasExportFile["projects"][number]["project"], uploaded: Map<string, { storageKey: string; url: string }>) {
-    const visit = (value: unknown): unknown => {
-        if (Array.isArray(value)) return value.map(visit);
-        if (!value || typeof value !== "object") return value;
-        const source = value as Record<string, unknown>;
-        const next = Object.fromEntries(Object.entries(source).map(([key, item]) => [key, visit(item)]));
-        const media = typeof source.storageKey === "string" ? uploaded.get(source.storageKey) : undefined;
-        if (!media) return next;
-        next.storageKey = media.storageKey;
-        next.serverUrl = media.url;
-        delete next.remoteUrl;
-        if ("content" in source) next.content = media.url;
-        if ("dataUrl" in source) next.dataUrl = media.url;
-        if ("url" in source) next.url = media.url;
-        return next;
-    };
-    return visit(project) as typeof project;
 }

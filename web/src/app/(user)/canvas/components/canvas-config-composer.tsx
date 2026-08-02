@@ -356,11 +356,12 @@ function parseComposerTokens(value: string): Token[] {
 }
 
 function resourceLabel(input: NodeGenerationInput, inputs: NodeGenerationInput[]) {
-    const sameTypeInputs = inputs.filter((item) => item.type === input.type);
+    const sameTypeInputs = inputs.filter((item) => item.type === input.type && item.sourceKind === input.sourceKind);
     const index = Math.max(
         0,
         sameTypeInputs.findIndex((item) => item.nodeId === input.nodeId),
     );
+    if (input.sourceKind === "drawing") return `绘图${index + 1}`;
     if (input.type === "image") return `图片${index + 1}`;
     if (input.type === "video") return `视频${index + 1}`;
     if (input.type === "audio") return `音频${index + 1}`;

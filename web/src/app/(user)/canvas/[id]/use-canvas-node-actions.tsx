@@ -12,6 +12,7 @@ const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: ()
 
 import { createCanvasNode } from "./canvas-page-elements";
 import { getGenerationCount } from "./canvas-page-utils";
+import { cloneCanvasDrawingDocument } from "../utils/canvas-drawing-storage";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 
@@ -41,6 +42,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setMaskEditNodeId,
         setAngleNodeId,
         setPreviewNodeId,
+        setDrawingNodeId,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,
@@ -63,7 +65,8 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
             setNodes((prev) => [...prev, newNode]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
-            if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
+            if (type === CanvasNodeType.Drawing) setDrawingNodeId(newNode.id);
+            else if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio) setDialogNodeId(newNode.id);
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, getCanvasCenter],
     );
@@ -106,6 +109,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setMaskEditNodeId((current) => (current && allIds.has(current) ? null : current));
         setAngleNodeId((current) => (current && allIds.has(current) ? null : current));
         setPreviewNodeId((current) => (current && allIds.has(current) ? null : current));
+        setDrawingNodeId((current) => (current && allIds.has(current) ? null : current));
         setRunningNodeId((current) => (current && allIds.has(current) ? null : current));
         setContextMenu((current) => (current?.type === "node" && allIds.has(current.nodeId) ? null : current));
     }, []);
@@ -149,6 +153,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setMaskEditNodeId(null);
         setAngleNodeId(null);
         setPreviewNodeId(null);
+        setDrawingNodeId(null);
         setRunningNodeId(null);
         deselectCanvas();
         setClearConfirmOpen(false);
@@ -164,12 +169,14 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
             id,
             title: `${source.title} Copy`,
             position: { x: source.position.x + 36, y: source.position.y + 36 },
+            metadata: cloneNodeMetadata(source.metadata),
         };
+        if (next.type === CanvasNodeType.Drawing && next.metadata) next.metadata.drawingId = `${id}-document`;
 
         setNodes((prev) => [...prev, next]);
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
-        setDialogNodeId(id);
+        setDialogNodeId(next.type === CanvasNodeType.Drawing ? null : id);
     }, []);
 
     const copySelectedNodes = useCallback(() => {
@@ -181,7 +188,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
             .map((node) => ({
                 ...node,
                 position: { ...node.position },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
+                metadata: cloneNodeMetadata(node.metadata),
             }));
 
         if (!copiedNodes.length) return;
@@ -212,6 +219,8 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         const nextNodes = clipboard.nodes.map((node, index) => {
             const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
             idMap.set(node.id, id);
+            const metadata = cloneNodeMetadata(node.metadata);
+            if (node.type === CanvasNodeType.Drawing && metadata) metadata.drawingId = `${id}-document`;
             return {
                 ...node,
                 id,
@@ -220,7 +229,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
                     x: node.position.x + dx,
                     y: node.position.y + dy,
                 },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
+                metadata,
             };
         });
 
@@ -243,7 +252,7 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setSelectedNodeIds(new Set(nextNodes.map((node) => node.id)));
         setSelectedConnectionId(null);
         setContextMenu(null);
-        setDialogNodeId(nextNodes[0]?.id || null);
+        setDialogNodeId(nextNodes[0] && nextNodes[0].type !== CanvasNodeType.Drawing ? nextNodes[0].id : null);
         return true;
     }, [getCanvasCenter]);
     return {
@@ -256,6 +265,15 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         duplicateNode,
         copySelectedNodes,
         pasteCopiedNodes,
+    };
+}
+
+function cloneNodeMetadata(metadata: CanvasNodeData["metadata"]) {
+    if (!metadata) return undefined;
+    return {
+        ...metadata,
+        drawingDocument: cloneCanvasDrawingDocument(metadata.drawingDocument),
+        drawingPreview: metadata.drawingPreview ? { ...metadata.drawingPreview } : undefined,
     };
 }
 

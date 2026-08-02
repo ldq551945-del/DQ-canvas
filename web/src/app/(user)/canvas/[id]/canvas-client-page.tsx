@@ -27,8 +27,9 @@ import { CanvasNodeType, type Position } from "../types";
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
+const CanvasDrawingEditorModal = dynamic(() => import("../components/canvas-drawing-editor-modal").then((mod) => mod.CanvasDrawingEditorModal), { ssr: false, loading: () => null });
 
-import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu } from "./canvas-page-elements";
+import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu, drawingSourceNodeForConnection } from "./canvas-page-elements";
 import { getInputSummary, isHiddenBatchConnectionEndpoint } from "./canvas-page-utils";
 
 export default function CanvasPage() {
@@ -151,6 +152,8 @@ function DQCanvasPage() {
         setAngleNodeId,
         previewNodeId,
         setPreviewNodeId,
+        drawingNodeId,
+        setDrawingNodeId,
         assistantCollapsed,
         setAssistantCollapsed,
         assistantMounted,
@@ -294,6 +297,7 @@ function DQCanvasPage() {
         closeAgent,
     } = controller;
     if (!projectLoaded) return <CanvasRefreshShell />;
+    const drawingNode = drawingNodeId ? nodes.find((node) => node.id === drawingNodeId) || null : null;
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.backdrop, color: theme.node.text }}>
             <section className="relative min-w-0 flex-1 overflow-hidden">
@@ -446,6 +450,7 @@ function DQCanvasPage() {
                             onConnectStart={handleConnectStart}
                             onResize={handleNodeResize}
                             onImageDimensions={handleImageDimensions}
+                            onEditDrawing={(node) => setDrawingNodeId(node.id)}
                             onContentChange={handleNodeContentChange}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
@@ -480,7 +485,14 @@ function DQCanvasPage() {
                             }}
                         />
                     ) : null}
-                    {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
+                    {pendingConnectionCreate ? (
+                        <ConnectionCreateMenu
+                            pending={pendingConnectionCreate}
+                            allowDrawing={Boolean(drawingSourceNodeForConnection(pendingConnectionCreate, nodes))}
+                            onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)}
+                            onClose={cancelPendingConnectionCreate}
+                        />
+                    ) : null}
                     {nodeCreatePosition ? (
                         <NodeCreateMenu
                             position={nodeCreatePosition}
@@ -500,6 +512,7 @@ function DQCanvasPage() {
                     onLeave={hideNodeToolbar}
                     onInfo={(node) => setInfoNodeId(node.id)}
                     onEditText={openTextEditor}
+                    onEditDrawing={(node) => setDrawingNodeId(node.id)}
                     onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
                     onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
                     onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
@@ -529,6 +542,7 @@ function DQCanvasPage() {
                     showImageInfo={showImageInfo}
                     onAddImage={() => createNode(CanvasNodeType.Image)}
                     onAddPanorama={() => createNode(CanvasNodeType.Panorama)}
+                    onAddDrawing={() => createNode(CanvasNodeType.Drawing)}
                     onAddVideo={() => createNode(CanvasNodeType.Video)}
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
                     onAddText={() => createNode(CanvasNodeType.Text)}
@@ -619,6 +633,14 @@ function DQCanvasPage() {
                 </Modal>
 
                 {assetPickerOpen ? <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} /> : null}
+                <CanvasDrawingEditorModal
+                    open={Boolean(drawingNode)}
+                    node={drawingNode}
+                    onClose={() => setDrawingNodeId(null)}
+                    onSaved={(nodeId, summary) => {
+                        setNodes((current) => current.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, drawingDocument: summary.document, drawingPreview: summary.preview } } : item)));
+                    }}
+                />
             </section>
             {assistantMounted ? (
                 <CanvasAssistantPanel

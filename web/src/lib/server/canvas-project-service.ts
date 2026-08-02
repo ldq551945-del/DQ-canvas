@@ -6,7 +6,7 @@ import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-reference
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 import { createCreativeConversation, updateCreativeConversation } from "@/lib/server/creative-runtime-store";
 
-const MAX_PROJECT_BYTES = 5 * 1024 * 1024;
+const MAX_PROJECT_BYTES = 30 * 1024 * 1024;
 
 export class CanvasProjectServiceError extends Error {
     constructor(
@@ -89,7 +89,7 @@ export async function deleteCanvasProjectsForUser(userId: string, value: unknown
 
 function normalizeProject(value: Record<string, unknown>, current: CanvasProject): CanvasProject {
     const sanitized = JSON.parse(JSON.stringify(value, (_key, item) => (typeof item === "string" && (item.startsWith("data:") || item.startsWith("blob:")) ? "" : item))) as Record<string, unknown>;
-    if (Buffer.byteLength(JSON.stringify(sanitized)) > MAX_PROJECT_BYTES) throw new CanvasProjectServiceError("画布项目数据过大", 413);
+    if (Buffer.byteLength(JSON.stringify(sanitized)) > MAX_PROJECT_BYTES) throw new CanvasProjectServiceError("画布项目数据过大（上限 30MB）", 413);
     const nodes = Array.isArray(sanitized.nodes) ? sanitized.nodes.slice(0, 2000) : current.nodes;
     const connections = Array.isArray(sanitized.connections) ? sanitized.connections.slice(0, 5000) : current.connections;
     const chatSessions = Array.isArray(sanitized.chatSessions) ? sanitized.chatSessions.slice(0, 100) : current.chatSessions;

@@ -26,7 +26,9 @@ vi.mock("@/lib/server/canvas-project-store", () => ({
 }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteUserLocalMediaAssets: mocks.deleteUserLocalMediaAssets }));
 
-import { createCanvasProjectForUser, deleteCanvasProjectsForUser } from "./canvas-project-service";
+import { createCanvasProjectForUser, deleteCanvasProjectsForUser, updateCanvasProjectForUser } from "./canvas-project-service";
+
+const MAX_PROJECT_BYTES = 30 * 1024 * 1024;
 
 describe("canvas project service lifecycle", () => {
     beforeEach(() => {
@@ -53,6 +55,25 @@ describe("canvas project service lifecycle", () => {
 
         expect(mocks.updateCreativeConversation).toHaveBeenCalledWith("conversation-one", "user-one", { status: "archived" });
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalled();
+    });
+
+    it("accepts a canvas snapshot that is exactly 30MB", async () => {
+        const current = project();
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.updateCanvasProject.mockResolvedValue(current);
+        const padding = "x".repeat(MAX_PROJECT_BYTES - Buffer.byteLength(JSON.stringify({ padding: "" })));
+
+        await expect(updateCanvasProjectForUser("user-one", current.id, { padding })).resolves.toBe(current);
+        expect(mocks.updateCanvasProject).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a canvas snapshot one byte over the 30MB limit", async () => {
+        const current = project();
+        mocks.getCanvasProject.mockResolvedValue(current);
+        const padding = "x".repeat(MAX_PROJECT_BYTES - Buffer.byteLength(JSON.stringify({ padding: "" })) + 1);
+
+        await expect(updateCanvasProjectForUser("user-one", current.id, { padding })).rejects.toMatchObject({ status: 413, message: "画布项目数据过大（上限 30MB）" });
+        expect(mocks.updateCanvasProject).not.toHaveBeenCalled();
     });
 });
 

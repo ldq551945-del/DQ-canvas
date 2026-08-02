@@ -72,6 +72,8 @@ docker compose -f docker-compose.baota.yml up -d
 
 ## 本地构建镜像
 
+如有 tldraw 生产 License Key，先在 `.env` 设置 `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`。该值必须在镜像构建阶段注入，不能在预构建镜像启动后替换。
+
 ```bash
 docker compose -f docker-compose.local.yml up -d --build
 ```
@@ -101,7 +103,13 @@ Token 不得写入仓库或公开日志。
 
 ## HTTPS 反向代理
 
-反向代理应保留 `Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`。站点地址使用真实 HTTPS 域名：
+反向代理应保留 `Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`，并允许至少 32MB 请求体，确保 30MB 画布项目可以保存。Nginx/宝塔站点配置示例：
+
+```nginx
+client_max_body_size 32m;
+```
+
+站点地址使用真实 HTTPS 域名：
 
 ```dotenv
 NEXT_PUBLIC_SITE_URL=https://store.dqin-666zj.top

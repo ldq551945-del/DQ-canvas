@@ -1,6 +1,6 @@
 "use client";
 
-import { Globe2, ImageIcon, List, Music2, Settings2, Video } from "lucide-react";
+import { Globe2, ImageIcon, List, Music2, Pencil, Settings2, Video } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -27,7 +27,13 @@ export type ConnectionDropTarget = {
     isNearNode: boolean;
 };
 
-export type CanvasCreatableNodeType = CanvasNodeType.Image | CanvasNodeType.Panorama | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio;
+export type CanvasCreatableNodeType = CanvasNodeType.Image | CanvasNodeType.Panorama | CanvasNodeType.Drawing | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio;
+
+export function drawingSourceNodeForConnection(pending: PendingConnectionCreate, nodes: CanvasNodeData[]) {
+    if (pending.connection.handleType !== "source") return null;
+    const source = nodes.find((node) => node.id === pending.connection.nodeId);
+    return source?.type === CanvasNodeType.Image && source.metadata?.content?.trim() ? source : null;
+}
 
 export type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     chatSessions: CanvasAssistantSession[];
@@ -63,6 +69,9 @@ export function createCanvasNode(type: CanvasNodeType, position: Position, metad
     const spec = getNodeSpec(type);
     const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
+    const nextMetadata = { ...spec.metadata, ...metadata };
+    if (type === CanvasNodeType.Drawing && !nextMetadata.drawingId) nextMetadata.drawingId = `${id}-document`;
+
     return {
         id,
         type,
@@ -73,7 +82,7 @@ export function createCanvasNode(type: CanvasNodeType, position: Position, metad
         },
         width: spec.width,
         height: spec.height,
-        metadata: { ...spec.metadata, ...metadata },
+        metadata: nextMetadata,
     };
 }
 
@@ -141,6 +150,7 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
             <div className="grid gap-1">
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片" onClick={() => onCreate(CanvasNodeType.Image)} />
+                <ConnectionCreateOption theme={theme} icon={<Pencil className="size-5" />} title="绘图" description="自由绘制、标注和导出参考图" onClick={() => onCreate(CanvasNodeType.Drawing)} />
                 <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景图" description="生成 2:1 环境全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频" onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频" onClick={() => onCreate(CanvasNodeType.Audio)} />
@@ -150,7 +160,7 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
     );
 }
 
-export function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: CanvasCreatableNodeType) => void; onClose: () => void }) {
+export function ConnectionCreateMenu({ pending, allowDrawing, onCreate, onClose }: { pending: PendingConnectionCreate; allowDrawing: boolean; onCreate: (type: CanvasCreatableNodeType) => void; onClose: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     return (
         <div
@@ -178,6 +188,7 @@ export function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: 
             <div className="grid gap-1">
                 <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本生成" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
                 <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
+                {allowDrawing ? <ConnectionCreateOption theme={theme} icon={<Pencil className="size-5" />} title="绘图参考" description="在来源图片上继续绘制" onClick={() => onCreate(CanvasNodeType.Drawing)} /> : null}
                 <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景生成" description="生成 2:1 环境全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频参考" onClick={() => onCreate(CanvasNodeType.Audio)} />

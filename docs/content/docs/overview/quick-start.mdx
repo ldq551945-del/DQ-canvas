@@ -18,7 +18,7 @@ DQ-绘图 默认使用 PostgreSQL。推荐通过 Docker Compose 启动主应用�
 | 推荐日常使用               | 2–4 vCPU | 4GB            | 40GB+ SSD  | 支持主要工作台、后台和少量并发，建议使用对象存储承载长期视频              |
 | 短剧合成/频繁本地视频处理  | 4+ vCPU  | 8GB+           | 80GB+ SSD  | FFmpeg 转码、字幕、配音混合和长视频临时文件需要额外 CPU、内存与磁盘空间   |
 
-基础环境：64 位 Linux（amd64 或 arm64）、Docker Engine 与 Compose v2、PostgreSQL 16、80/443 端口、HTTPS 域名，以及能访问模型、对象存储、SMTP 和支付服务的出站网络。源码运行需要 Node.js 22 与 pnpm 10+。
+基础环境：64 位 Linux（amd64 或 arm64）、Docker Engine 与 Compose v2、PostgreSQL 16、80/443 端口、HTTPS 域名，以及能访问模型、对象存储、SMTP 和支付服务的出站网络。源码运行需要 Node.js 22 与 pnpm 10.34.5，建议先执行 `corepack enable`。
 
 最低配置代表“能够启动和体验”，不代表可以稳定处理并发视频或短剧。使用本地媒体存储时，磁盘容量应按作品数量和保留周期单独估算。
 
@@ -94,7 +94,7 @@ docker compose -f docker-compose.baota.yml up -d
 
 ## 源码启动
 
-要求 Node.js 22、pnpm 10+ 和 PostgreSQL 16。
+要求 Node.js 22、pnpm 10.34.5 和 PostgreSQL 16；pnpm 版本已由 `package.json` 固定，建议先执行 `corepack enable`。
 
 ```bash
 git clone https://github.com/DAO-QIN/DQ-canvas.git DQ

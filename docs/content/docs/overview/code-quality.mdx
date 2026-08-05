@@ -18,12 +18,12 @@ description: DQ-绘图 的代码风险分区、当前质量基线与渐进治理
 | Web TypeScript | `pnpm run typecheck` 通过 |
 | Web 单元与契约测试 | 413 个文件、1858 项测试通过；1 个文件、2 项测试跳过 |
 | Web 格式与生产构建 | Prettier 通过；Next.js 生产构建通过并生成 62 个静态页面 |
-| 文档站 | 类型检查通过；生产构建通过并生成 36 个页面 |
+| 文档站 | 类型检查通过；生产构建通过并生成 37 个页面 |
 | rembg sidecar | Python 3.12 下 37 项单元测试通过 |
 | 部署契约 | 6 套 Compose 可解析；Compose 专项 13 项测试通过 |
 | 依赖审计 | Web 与 Docs 均未发现中危及以上已知漏洞 |
 
-本机使用 Node.js 24 与 pnpm 11；仓库 CI 使用 Node.js 22 与 pnpm 10。GitHub Actions 的通过结果仍是合并与发布前的最终环境证据。
+本轮在本机 Node.js 24.16.0 下使用仓库统一的 pnpm 10.34.5 完成冻结安装与全部检查；仓库 CI 使用 Node.js 22 与同版 pnpm。GitHub Actions 的通过结果仍是合并与发布前的最终环境证据。
 
 ## 分类结果
 

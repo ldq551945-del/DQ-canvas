@@ -463,7 +463,7 @@ DQ_TRUSTED_PROXY_HOPS=1
 
 ### 源码开发
 
-环境要求：Node.js 22、pnpm 10+、PostgreSQL 16；短剧合成和本地转码还需要 FFmpeg。
+环境要求：Node.js 22、pnpm 10.34.5、PostgreSQL 16；短剧合成和本地转码还需要 FFmpeg。建议先执行 `corepack enable`，让 `package.json` 中固定的 pnpm 版本生效。
 
 ```bash
 cp .env.example web/.env.local

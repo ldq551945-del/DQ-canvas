@@ -2,6 +2,7 @@
   "name": "dq-docs",
   "version": "0.0.3",
   "private": true,
+  "packageManager": "pnpm@10.34.5",
   "scripts": {
     "build": "next build",
     "dev": "next dev -p 3001",

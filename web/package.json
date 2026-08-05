@@ -2,6 +2,7 @@
     "name": "dq",
     "version": "0.0.3",
     "private": true,
+    "packageManager": "pnpm@10.34.5",
     "type": "module",
     "scripts": {
         "dev": "node --env-file-if-exists=.env.local scripts/run-app.mjs dev",

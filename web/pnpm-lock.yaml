@@ -15,7 +15,9 @@ overrides:
   undici@>=7 <8: 7.29.0
 
 patchedDependencies:
-  '@tldraw/editor@5.2.5': c3d362f5e1780331d72f75424d9466722b4d2952912d0149c2cf1ad43dcb882b
+  '@tldraw/editor@5.2.5':
+    hash: c3d362f5e1780331d72f75424d9466722b4d2952912d0149c2cf1ad43dcb882b
+    path: patches/@tldraw__editor@5.2.5.patch
 
 importers:
 

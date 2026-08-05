@@ -1,7 +1,7 @@
 FROM node:22-bookworm-slim AS docs-build
 
 WORKDIR /app
-RUN npm install --global pnpm@11.9.0
+RUN npm install --global pnpm@10.34.5
 COPY docs/package.json docs/pnpm-lock.yaml docs/pnpm-workspace.yaml ./
 RUN --mount=type=cache,target=/pnpm/store pnpm config set store-dir /pnpm/store \
     && pnpm install --frozen-lockfile --ignore-scripts

@@ -41,8 +41,15 @@ services:
       DQ_DATABASE_SSL: "0"
       DQ_ENCRYPTION_KEY: ${DQ_ENCRYPTION_KEY:?请在 .env 中配置 DQ_ENCRYPTION_KEY}
       DQ_MAINTENANCE_TOKEN: ${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      DQ_REMBG_URL: ${DQ_REMBG_URL:-http://rembg:7000}
+      DQ_REMBG_INTERNAL_TOKEN: ${DQ_REMBG_INTERNAL_TOKEN:-}
+      DQ_REMBG_MODEL: ${DQ_REMBG_MODEL:-silueta}
+      DQ_REMBG_CONCURRENCY: ${DQ_REMBG_CONCURRENCY:-1}
+      DQ_REMBG_TIMEOUT_SECONDS: ${DQ_REMBG_TIMEOUT_SECONDS:-120}
     depends_on:
       postgres:
+        condition: service_healthy
+      rembg:
         condition: service_healthy
     healthcheck:
       test:
@@ -56,6 +63,52 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    restart: unless-stopped
+
+  rembg:
+    image: dq-rembg:local
+    build:
+      context: ./services/rembg
+      dockerfile: Dockerfile
+      args:
+        DQ_REMBG_MODEL: ${DQ_REMBG_MODEL:-silueta}
+        DQ_REMBG_MODELS: u2net,isnet-general-use,u2net_human_seg,isnet-anime,silueta
+    container_name: dq-rembg
+    env_file:
+      - .env
+    environment:
+      DQ_REMBG_MODEL: ${DQ_REMBG_MODEL:-silueta}
+      DQ_REMBG_CONCURRENCY: ${DQ_REMBG_CONCURRENCY:-1}
+      DQ_REMBG_ALPHA_MATTING_TILE_PIXELS: ${DQ_REMBG_ALPHA_MATTING_TILE_PIXELS:-1048576}
+      DQ_REMBG_TIMEOUT_SECONDS: ${DQ_REMBG_TIMEOUT_SECONDS:-120}
+      DQ_REMBG_QUEUE_TIMEOUT_SECONDS: ${DQ_REMBG_QUEUE_TIMEOUT_SECONDS:-30}
+      DQ_REMBG_INTERNAL_TOKEN: ${DQ_REMBG_INTERNAL_TOKEN:-}
+      DQ_REMBG_OMP_NUM_THREADS: ${DQ_REMBG_OMP_NUM_THREADS:-2}
+      DQ_REMBG_ONNX_INTER_OP_THREADS: ${DQ_REMBG_ONNX_INTER_OP_THREADS:-1}
+      OMP_NUM_THREADS: ${DQ_REMBG_OMP_NUM_THREADS:-2}
+      OPENBLAS_NUM_THREADS: ${DQ_REMBG_OMP_NUM_THREADS:-2}
+      MKL_NUM_THREADS: ${DQ_REMBG_OMP_NUM_THREADS:-2}
+    cpus: "${DQ_REMBG_CPUS:-2.0}"
+    mem_limit: "${DQ_REMBG_MEMORY_LIMIT:-5g}"
+    deploy:
+      resources:
+        limits:
+          cpus: "${DQ_REMBG_CPUS:-2.0}"
+          memory: "${DQ_REMBG_MEMORY_LIMIT:-5g}"
+    expose:
+      - "7000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/readyz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 180s
     restart: unless-stopped
 
   generation-worker:

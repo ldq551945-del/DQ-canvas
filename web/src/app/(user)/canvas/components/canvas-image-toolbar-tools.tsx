@@ -1,17 +1,22 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Brush, Camera, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Scissors, Sparkles, Upload, ZoomIn } from "lucide-react";
+import { Brush, Camera, CircleDashed, Copy, FileText, Grid2x2, Lock, LockOpen, Maximize2, Pencil, PencilLine, Scissors, SlidersHorizontal, Smile, Sparkles, Upload, ZoomIn } from "lucide-react";
 
+import { DEFAULT_BACKGROUND_REMOVAL_OPTIONS, normalizeBackgroundRemovalOptions, type BackgroundRemovalOptionsV1 } from "@/lib/background-removal-options";
 import type { CanvasNodeData } from "../types";
 
-type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
+type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "annotation" | "maskEdit" | "emotion" | "portraitTexture" | "removeBackground" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
 export type ImageQuickToolId = "info" | "delete" | "saveAsset" | "download" | "edit" | ImageNodeActionToolId;
 
 type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
+    onAnnotate: (node: CanvasNodeData) => void;
     onMaskEdit: (node: CanvasNodeData) => void;
+    onEmotion: (node: CanvasNodeData) => void;
+    onPortraitTexture: (node: CanvasNodeData) => void;
+    onRemoveBackground: (node: CanvasNodeData, options: BackgroundRemovalOptionsV1) => void;
     onCrop: (node: CanvasNodeData) => void;
     onSplit: (node: CanvasNodeData) => void;
     onUpscale: (node: CanvasNodeData) => void;
@@ -30,14 +35,27 @@ type ImageToolDefinition = {
     title: string | ((node: CanvasNodeData) => string);
     icon: (node: CanvasNodeData) => ReactNode;
     active?: (node: CanvasNodeData) => boolean;
-    run: (node: CanvasNodeData, handlers: ImageToolHandlers) => void;
+    run: (node: CanvasNodeData, handlers: ImageToolHandlers, backgroundRemovalOptions: BackgroundRemovalOptionsV1) => void;
 };
 
-type ImageQuickToolsConfig = {
+export type ImageQuickToolsConfig = {
     ids: ImageQuickToolId[];
+    backgroundRemoval: BackgroundRemovalOptionsV1;
+    showLabels: boolean;
+    version: 3;
 };
 
 export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v6";
+export const MAX_IMAGE_QUICK_TOOLS = 8;
+
+export function BackgroundRemovalIcon() {
+    return (
+        <span className="relative block size-4 shrink-0" aria-hidden="true">
+            <CircleDashed className="absolute inset-0 size-4" strokeWidth={1.8} />
+            <Pencil className="absolute bottom-0 right-0 size-2.5" strokeWidth={2.2} />
+        </span>
+    );
+}
 
 const defaultBaseToolIds: ImageQuickToolId[] = ["info", "delete", "saveAsset", "download", "edit"];
 
@@ -80,6 +98,15 @@ const imageToolDefinitions: ImageToolDefinition[] = [
         run: (node, handlers) => handlers.onToggleFreeResize(node),
     },
     {
+        id: "annotation",
+        defaultVisible: false,
+        panelLabel: "标注",
+        label: "标注",
+        title: "在图片上绘制标记并保存为新节点",
+        icon: () => <PencilLine className="size-4" />,
+        run: (node, handlers) => handlers.onAnnotate(node),
+    },
+    {
         id: "maskEdit",
         defaultVisible: true,
         panelLabel: "局部编辑",
@@ -87,6 +114,33 @@ const imageToolDefinitions: ImageToolDefinition[] = [
         title: "添加蒙版遮罩后局部修改",
         icon: () => <Brush className="size-4" />,
         run: (node, handlers) => handlers.onMaskEdit(node),
+    },
+    {
+        id: "emotion",
+        defaultVisible: true,
+        panelLabel: "表情与情绪",
+        label: "情绪",
+        title: "调整人物表情与情绪",
+        icon: () => <Smile className="size-4" />,
+        run: (node, handlers) => handlers.onEmotion(node),
+    },
+    {
+        id: "portraitTexture",
+        defaultVisible: true,
+        panelLabel: "人物质感调节",
+        label: "人物质感",
+        title: "调节人景融合、光影、皮肤、纹理与锐度",
+        icon: () => <SlidersHorizontal className="size-4" />,
+        run: (node, handlers) => handlers.onPortraitTexture(node),
+    },
+    {
+        id: "removeBackground",
+        defaultVisible: true,
+        panelLabel: "抠图",
+        label: "抠图",
+        title: "抠图（移除背景）",
+        icon: () => <BackgroundRemovalIcon />,
+        run: (node, handlers, backgroundRemovalOptions) => handlers.onRemoveBackground(node, backgroundRemovalOptions),
     },
     {
         id: "crop",
@@ -126,10 +180,10 @@ const imageToolDefinitions: ImageToolDefinition[] = [
     },
     {
         id: "angle",
-        defaultVisible: false,
-        panelLabel: "多角度",
-        label: "多角度",
-        title: "生成角度",
+        defaultVisible: true,
+        panelLabel: "多视角",
+        label: "多视角",
+        title: "基于原图生成新的观察视角",
         icon: () => <Camera className="size-4" />,
         run: (node, handlers) => handlers.onAngle(node),
     },
@@ -144,32 +198,49 @@ const imageToolDefinitions: ImageToolDefinition[] = [
     },
 ];
 
-export const defaultImageQuickToolIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.filter((tool) => tool.defaultVisible).map((tool) => tool.id)];
+export const defaultImageQuickToolIds: ImageQuickToolId[] = ["info", "download", "maskEdit", "emotion", "portraitTexture", "crop", "angle"];
 
-export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageToolHandlers) {
+export function buildImageToolbarTools(node: CanvasNodeData, handlers: ImageToolHandlers, backgroundRemovalOptions: BackgroundRemovalOptionsV1 = DEFAULT_BACKGROUND_REMOVAL_OPTIONS) {
     return imageToolDefinitions.map((tool) => ({
         id: tool.id,
         label: resolveToolText(tool.label, node),
         title: resolveToolText(tool.title, node),
         icon: tool.icon(node),
         active: tool.active?.(node),
-        onClick: () => tool.run(node, handlers),
+        onClick: () => tool.run(node, handlers, backgroundRemovalOptions),
     }));
 }
 
-function normalizeImageQuickToolIds(value: unknown[]) {
+export function isImageQuickToolId(value: string): value is ImageQuickToolId {
+    return defaultBaseToolIds.some((id) => id === value) || imageToolDefinitions.some((tool) => tool.id === value);
+}
+
+function normalizeImageQuickToolIds(value: unknown[], migrateBackgroundRemoval = false) {
     const allIds: ImageQuickToolId[] = [...defaultBaseToolIds, ...imageToolDefinitions.map((tool) => tool.id)];
     const ids = new Set(allIds);
-    return allIds.filter((id) => value.includes(id) && ids.has(id));
+    const values = migrateBackgroundRemoval && !value.includes("removeBackground") ? [...value, "removeBackground"] : value;
+    return allIds.filter((id) => values.includes(id) && ids.has(id)).slice(0, MAX_IMAGE_QUICK_TOOLS);
 }
 
 export function readImageQuickToolsConfig(value: unknown): ImageQuickToolsConfig {
-    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value) };
-    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds };
-    const data = value as Partial<ImageQuickToolsConfig>;
+    if (Array.isArray(value)) return { ids: normalizeImageQuickToolIds(value, true), backgroundRemoval: { ...DEFAULT_BACKGROUND_REMOVAL_OPTIONS }, showLabels: false, version: 3 };
+    if (!value || typeof value !== "object") return { ids: defaultImageQuickToolIds, backgroundRemoval: { ...DEFAULT_BACKGROUND_REMOVAL_OPTIONS }, showLabels: false, version: 3 };
+    const data = value as { ids?: unknown; version?: unknown; backgroundRemoval?: unknown; showLabels?: unknown };
+    const migrating = data.version !== 1 && data.version !== 2 && data.version !== 3;
     return {
-        ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids) : defaultImageQuickToolIds,
+        ids: Array.isArray(data.ids) ? normalizeImageQuickToolIds(data.ids, migrating) : defaultImageQuickToolIds,
+        backgroundRemoval: safeBackgroundRemovalOptions(data.backgroundRemoval),
+        showLabels: data.showLabels === true,
+        version: 3,
     };
+}
+
+function safeBackgroundRemovalOptions(value: unknown) {
+    try {
+        return { ...normalizeBackgroundRemovalOptions(value), outputMode: "transparent" as const };
+    } catch {
+        return { ...DEFAULT_BACKGROUND_REMOVAL_OPTIONS };
+    }
 }
 
 function resolveToolText(value: string | ((node: CanvasNodeData) => string), node: CanvasNodeData) {

@@ -74,7 +74,7 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
     restart: unless-stopped
 
   app:
-    image: ghcr.io/ldq551945-del/dq:latest
+    image: ghcr.io/dao-qin/dq:latest
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -101,7 +101,7 @@ volumes:
 function externalCompose(config: DatabaseConfig, databaseUrl: string) {
     return `services:
   app:
-    image: ghcr.io/ldq551945-del/dq:latest
+    image: ghcr.io/dao-qin/dq:latest
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
@@ -124,7 +124,7 @@ volumes:
 function baotaCompose(config: DatabaseConfig, databaseUrl: string) {
     return `services:
   app:
-    image: ghcr.io/ldq551945-del/dq:latest
+    image: ghcr.io/dao-qin/dq:latest
     network_mode: host
     volumes:
       - dq-data:/app/web/.data
@@ -155,7 +155,7 @@ function appHealthcheck() {
 
 function workerService(maintenanceToken: string, origin: string, hostNetwork = false) {
     return `  generation-worker:
-    image: ghcr.io/ldq551945-del/dq:latest
+    image: ghcr.io/dao-qin/dq:latest
     command: ["node", "/app/web/scripts/generation-worker.mjs"]${hostNetwork ? "\n    network_mode: host" : ""}
     environment:
       DQ_WORKER_API_ORIGIN: ${origin}

@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({ safeExternalFetch: vi.fn() }));
+
+vi.mock("@/lib/server/media-download", () => ({ fetchSafeExternalMedia: mocks.safeExternalFetch }));
+
 import { GenerationSubmissionSafeFailure } from "@/lib/server/generation-submission-error";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import {
@@ -13,6 +17,7 @@ import {
     shouldFallbackToJsonImageEdit,
     shouldRetryJsonImageEditPayload,
     taskHeaders,
+    imageReferenceToDataUrl,
 } from "./image-task-support";
 
 const config = {
@@ -150,5 +155,53 @@ describe("GlobalAiOpc image task paths", () => {
 
         expect(shouldFallbackToJsonImageEdit(422, message)).toBe(true);
         expect(shouldRetryJsonImageEditPayload(422, message)).toBe(true);
+    });
+});
+
+describe("image reference hydration", () => {
+    it("reads an internal reference with the worker identity and converts it back to a data url", async () => {
+        const token = "m".repeat(32);
+        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(Uint8Array.from([1, 2, 3]), { status: 200, headers: { "content-type": "image/png", "content-length": "3" } }));
+
+        await expect(imageReferenceToDataUrl({ dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/reference.png", type: "image/png" }, "reference.png", "http://internal", maintenanceWorkerContext("user-one"))).resolves.toBe(
+            "data:image/png;base64,AQID",
+        );
+        expect(fetchMock).toHaveBeenCalledWith(
+            "http://internal/api/reference-assets/temporary/2026/08/03/images/reference.png",
+            expect.objectContaining({ headers: expect.objectContaining({ authorization: `Bearer ${token}`, "x-dq-worker-user-id": "user-one" }) }),
+        );
+        fetchMock.mockRestore();
+    });
+
+    it("prefers a persisted internal reference over a stale external candidate", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(Uint8Array.from([1, 2, 3]), { status: 200, headers: { "content-type": "image/png" } }));
+
+        await imageReferenceToDataUrl(
+            {
+                dataUrl: "",
+                remoteUrl: "https://stale.example/reference.png",
+                url: "/api/reference-assets/temporary/2026/08/03/images/reference.png",
+                type: "image/png",
+            },
+            "reference.png",
+            "http://internal",
+            "session=one",
+        );
+
+        expect(fetchMock).toHaveBeenCalledWith("http://internal/api/reference-assets/temporary/2026/08/03/images/reference.png", expect.objectContaining({ headers: { cookie: "session=one" } }));
+        expect(mocks.safeExternalFetch).not.toHaveBeenCalled();
+        fetchMock.mockRestore();
+    });
+
+    it("hydrates legacy external-only references through the checked downloader", async () => {
+        mocks.safeExternalFetch.mockResolvedValueOnce(new Response(Uint8Array.from([4, 5, 6]), { status: 200, headers: { "content-type": "image/png" } }));
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+
+        await expect(imageReferenceToDataUrl({ dataUrl: "", remoteUrl: "https://cdn.example/reference.png", type: "image/png" }, "reference.png", "http://internal", "")).resolves.toBe("data:image/png;base64,BAUG");
+
+        expect(mocks.safeExternalFetch).toHaveBeenCalledWith("https://cdn.example/reference.png", 30_000, { allowPrivateUpstreams: false });
+        expect(fetchMock).not.toHaveBeenCalled();
+        fetchMock.mockRestore();
     });
 });

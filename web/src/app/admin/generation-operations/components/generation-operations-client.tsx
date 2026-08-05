@@ -62,7 +62,9 @@ export function GenerationOperationsClient() {
                       ? `/api/agent/runs/${encodeURIComponent(task.id)}/cancel`
                       : task.type === "render"
                         ? `/api/drama/render/${encodeURIComponent(task.id)}`
-                        : `/api/${task.type}-tasks/${encodeURIComponent(task.id)}`;
+                        : task.type === "image_process"
+                          ? `/api/background-removal-tasks/${encodeURIComponent(task.id)}`
+                          : `/api/${task.type}-tasks/${encodeURIComponent(task.id)}`;
             const response = await fetch(url, action === "retry" || task.type === "agent" ? { method: "POST" } : { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "cancelled" }) });
             const payload = (await response.json().catch(() => ({}))) as { msg?: string; error?: string };
             if (!response.ok) throw new Error(payload.msg || payload.error || "任务操作失败");
@@ -269,7 +271,7 @@ export function GenerationOperationsClient() {
                                     value={type || undefined}
                                     allowClear
                                     placeholder="任务类型"
-                                    options={["agent", "text", "image", "video", "audio", "render"].map((value) => ({ value, label: taskTypeLabel(value) }))}
+                                    options={["agent", "text", "image", "video", "audio", "render", "image_process"].map((value) => ({ value, label: taskTypeLabel(value) }))}
                                     onChange={(value) => {
                                         setPage(1);
                                         setType(value || "");
@@ -522,6 +524,7 @@ function ReviewTag() {
 }
 
 function taskTypeLabel(value: string) {
+    if (value === "image_process") return "抠图";
     return ({ agent: "Agent", text: "文本", image: "图片", video: "视频", audio: "音频", render: "合成" } as Record<string, string>)[value] || value;
 }
 function statusLabel(value: string) {

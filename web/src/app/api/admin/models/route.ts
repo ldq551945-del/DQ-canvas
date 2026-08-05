@@ -24,7 +24,7 @@ import {
 } from "@/lib/server/admin-model-catalog";
 import { isProviderBusinessError, readProviderError } from "@/lib/server/provider-task-config";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
-import { isSafeOutboundUrl } from "@/lib/server/security";
+import { fetchSafeOutboundUrl, isSafeOutboundUrl } from "@/lib/server/security";
 import { channelProtocolDefinition, protocolAuthHeaders, protocolModelConfig, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
 import type { SystemChannelAdvancedConfig, SystemChannelProtocol } from "@/lib/auth/store";
 
@@ -150,7 +150,7 @@ export async function POST(request: Request) {
             for (let page = 0; nextUrl && page < MODEL_FETCH_MAX_PAGES && !visited.has(nextUrl); page += 1) {
                 visited.add(nextUrl);
                 if (!(await isSafeOutboundUrl(nextUrl))) throw new Error("模型分页地址不允许访问内网或保留地址");
-                const response = await fetch(nextUrl, {
+                const response = await fetchSafeOutboundUrl(nextUrl, {
                     headers: protocolAuthHeaders(apiKey, advancedConfig, apiFormat),
                     cache: "no-store",
                     signal: AbortSignal.timeout(MODEL_FETCH_TIMEOUT_MS),

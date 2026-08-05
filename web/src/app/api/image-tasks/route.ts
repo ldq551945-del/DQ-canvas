@@ -14,15 +14,14 @@ import { generationModelId, toSystemGenerationChannel } from "@/lib/server/gener
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
 import { assertReferenceCapabilities } from "@/lib/server/provider-task-config";
-import { createImageTask, getImageTask, touchImageTask, transitionImageTask, type ImageTask, type ImageTaskConfig, type ImageTaskReference, updateImageTask } from "@/lib/server/image-task-store";
+import { createImageTask, createImageTaskId, failImageTaskSetup, getImageTask, touchImageTask, transitionImageTask, type ImageTask, type ImageTaskConfig, type ImageTaskReference, updateImageTask } from "@/lib/server/image-task-store";
 import { isGenerationSource, recordGenerationLog } from "@/lib/server/generation-log-store";
-import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { resolveImageTaskOptions } from "@/lib/server/image-task-config";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
-import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { cleanupImageTaskReferencePayload, persistImageTaskReferencePayload } from "@/lib/server/image-task-reference-payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -170,25 +169,66 @@ export async function POST(request: Request) {
             if (existing) return NextResponse.json({ task: publicTask(existing) });
         }
 
-        const task = await createImageTask({
-            ...(resolvedBody.context || {}),
-            userId: currentUser.id,
-            username: currentUser.username,
-            displayName: currentUser.displayName,
-            kind,
-            source: isGenerationSource(resolvedBody.source) ? resolvedBody.source : "image-workbench",
-            title: typeof resolvedBody.title === "string" ? resolvedBody.title : "",
-            config,
-            candidateConfigs: compatibleConfigs.slice(1),
-            prompt,
-            references,
-            mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
-        });
-        await linkStoredGenerationTask("image", task.id, resolvedBody.context || {});
+        const taskId = createImageTaskId();
+        const requestMask = resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined;
+        let storedReferences;
+        try {
+            storedReferences = await persistImageTaskReferencePayload(references, requestMask, {
+                ownerUserId: currentUser.id,
+                taskId,
+                conversationId: resolvedBody.context?.conversationId,
+                runId: resolvedBody.context?.runId,
+                projectId: resolvedBody.context?.projectId,
+            });
+        } catch (error) {
+            return NextResponse.json({ error: error instanceof Error ? error.message : "参考图临时保存失败" }, { status: 400 });
+        }
+        let task: ImageTask;
+        try {
+            task = await createImageTask(
+                {
+                    ...(resolvedBody.context || {}),
+                    userId: currentUser.id,
+                    username: currentUser.username,
+                    displayName: currentUser.displayName,
+                    kind,
+                    source: isGenerationSource(resolvedBody.source) ? resolvedBody.source : "image-workbench",
+                    title: typeof resolvedBody.title === "string" ? resolvedBody.title : "",
+                    config,
+                    candidateConfigs: compatibleConfigs.slice(1),
+                    prompt,
+                    references: storedReferences.references,
+                    mask: storedReferences.mask,
+                },
+                taskId,
+            );
+            if (task.id !== taskId) {
+                await cleanupImageTaskReferencePayload(storedReferences.storageKeys);
+            } else {
+                await linkStoredGenerationTask("image", task.id, resolvedBody.context || {});
+                await scheduleGenerationTask("image", task.id, {
+                    executionPhase: "created",
+                    channelId: task.config.channelId,
+                    provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
+                    nextPollAt: Date.now(),
+                    lastUpstreamStatus: "created",
+                });
+            }
+        } catch (error) {
+            let cleanupKeys: string[] = [];
+            try {
+                const setupFailure = await failImageTaskSetup(taskId, currentUser.id);
+                if (setupFailure.outcome === "failed") cleanupKeys = setupFailure.storageKeys;
+                else if (setupFailure.outcome === "missing") cleanupKeys = storedReferences.storageKeys;
+            } catch (setupError) {
+                console.error("Image task setup failure could not be persisted", { taskId, error: setupError });
+            }
+            await cleanupImageTaskReferencePayload(cleanupKeys);
+            throw error;
+        }
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const publicOrigin = requestPublicOrigin(request);
-        await scheduleGenerationTask("image", task.id, { executionPhase: "created", channelId: task.config.channelId, provider: task.config.advancedConfig?.protocol || task.config.apiFormat, nextPollAt: Date.now(), lastUpstreamStatus: "created" });
         after(() => runGenerationTaskRecoveryBatch({ origin, publicOrigin, cookie, limit: 1, taskIds: [task.id] }));
 
         return NextResponse.json({ task: publicTask(task) });

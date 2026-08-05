@@ -32,8 +32,11 @@ export type NodeGenerationInput = {
 export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string): NodeGenerationContext {
     const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
     const sourceNode = nodes.find((node) => node.id === nodeId);
-    if (sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) {
-        return buildComposerGenerationContext(inputs, prompt);
+    const hasExplicitNodeMention = /@\[node:[^\]]+\]/.test(prompt);
+    if ((sourceNode?.type === CanvasNodeType.Config && Boolean(sourceNode.metadata?.composerContent?.trim())) || hasExplicitNodeMention) {
+        // Video frame selections are structural inputs. They remain available even
+        // when the author narrows ordinary references with explicit @ mentions.
+        return buildComposerGenerationContext(inputs, prompt, [sourceNode?.metadata?.videoStartFrameNodeId, sourceNode?.metadata?.videoEndFrameNodeId]);
     }
 
     const upstreamText = inputs
@@ -56,7 +59,7 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     };
 }
 
-function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
+function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string, structuralImageNodeIds: Array<string | undefined> = []): NodeGenerationContext {
     const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
     const selectedInputs: NodeGenerationInput[] = [];
     const labelByNodeId = new Map<string, string>();
@@ -81,11 +84,15 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
                 else selectedInputs.push(input);
             }
             nextPrompt += input.type === "text" ? `【${label}】` : label;
-        }
+        } else nextPrompt += match[0];
         lastIndex = match.index + match[0].length;
     }
 
     nextPrompt += prompt.slice(lastIndex);
+    structuralImageNodeIds.forEach((nodeId) => {
+        const input = nodeId ? inputByNodeId.get(nodeId) : undefined;
+        if (input?.image && !selectedInputs.some((selected) => selected.nodeId === input.nodeId)) selectedInputs.push(input);
+    });
     if (textBlocks.length) nextPrompt = `${nextPrompt.trim()}\n\n${textBlocks.join("\n\n")}`;
     const referenceImages = selectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
     const referenceVideos = selectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
@@ -94,13 +101,16 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     if (!hasToken) {
         return {
             prompt,
-            referenceImages: [],
-            referenceVideos: [],
-            referenceAudios: [],
+            // Structural inputs (for example video start/end frames) are
+            // collected before token filtering and must remain available even
+            // when the composer prompt contains no explicit node mention.
+            referenceImages,
+            referenceVideos,
+            referenceAudios,
             textCount: 0,
-            imageCount: 0,
-            videoCount: 0,
-            audioCount: 0,
+            imageCount: referenceImages.length,
+            videoCount: referenceVideos.length,
+            audioCount: referenceAudios.length,
         };
     }
 

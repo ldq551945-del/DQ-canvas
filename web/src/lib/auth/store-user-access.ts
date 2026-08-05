@@ -159,7 +159,11 @@ export async function authenticateUser(input: { username: string; password: stri
     return toPublicUser({ ...user, lastLoginAt: new Date().toISOString() }, db);
 }
 
-export async function createEmailVerificationCode(input: { purpose: EmailCodePurpose; email: string; userId?: string }) {
+type EmailVerificationCodeInput = { purpose: EmailCodePurpose; email: string; userId?: string };
+
+export function createEmailVerificationCode(input: EmailVerificationCodeInput & { silentPasswordResetMissing: true }): Promise<{ code?: string; email: string }>;
+export function createEmailVerificationCode(input: EmailVerificationCodeInput): Promise<{ code: string; email: string }>;
+export async function createEmailVerificationCode(input: EmailVerificationCodeInput & { silentPasswordResetMissing?: boolean }) {
     return mutateAuthDb((db) => {
         const email = normalizeEmail(input.email);
         validateEmail(email);
@@ -176,6 +180,7 @@ export async function createEmailVerificationCode(input: { purpose: EmailCodePur
         }
 
         if (input.purpose === "password-reset" && !db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) {
+            if (input.silentPasswordResetMissing) return { email };
             throw new AuthInputError("没有找到绑定该邮箱的账号");
         }
 

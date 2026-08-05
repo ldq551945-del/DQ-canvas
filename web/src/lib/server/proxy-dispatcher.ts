@@ -5,25 +5,15 @@ let configuredProxy = "";
 let windowsProxyCache: string | null | undefined;
 
 export function configureServerProxyDispatcher() {
-    const proxy = resolveProxyUrl();
+    const proxy = getOutboundProxyUrl();
     if (!proxy || proxy === configuredProxy) return;
     setGlobalDispatcher(new ProxyAgent(proxy));
     configuredProxy = proxy;
 }
 
-function resolveProxyUrl() {
-    return (
-        process.env.HTTPS_PROXY ||
-        process.env.HTTP_PROXY ||
-        process.env.ALL_PROXY ||
-        process.env.https_proxy ||
-        process.env.http_proxy ||
-        process.env.all_proxy ||
-        process.env.npm_config_https_proxy ||
-        process.env.npm_config_proxy ||
-        readWindowsSystemProxy() ||
-        ""
-    );
+export function getOutboundProxyUrl() {
+    const env = (globalThis as typeof globalThis & { process: NodeJS.Process }).process.env;
+    return env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || env.https_proxy || env.http_proxy || env.all_proxy || env.npm_config_https_proxy || env.npm_config_proxy || readWindowsSystemProxy() || "";
 }
 
 function readWindowsSystemProxy() {

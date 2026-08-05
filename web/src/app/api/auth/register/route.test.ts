@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
     createSession: vi.fn(),
     createUser: vi.fn(),
     getInstallStatus: vi.fn(),
+    maintenanceConfigured: vi.fn(),
+    maintenanceAuthorized: vi.fn(),
     readJsonBody: vi.fn(),
 }));
 
@@ -20,6 +22,10 @@ vi.mock("@/lib/auth/session", () => ({
     setSessionCookie: vi.fn(),
 }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.getInstallStatus }));
+vi.mock("@/lib/server/maintenance-auth", () => ({
+    isMaintenanceTokenConfigured: mocks.maintenanceConfigured,
+    isAuthorizedMaintenanceRequest: mocks.maintenanceAuthorized,
+}));
 vi.mock("@/lib/server/security", () => ({
     checkRateLimit: mocks.checkRateLimit,
     getClientIp: vi.fn(() => "203.0.113.8"),
@@ -39,6 +45,8 @@ describe("POST /api/auth/register referral attribution", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getInstallStatus.mockResolvedValue({ ready: true, firstAdminRequired: false });
+        mocks.maintenanceConfigured.mockReturnValue(true);
+        mocks.maintenanceAuthorized.mockReturnValue(true);
         mocks.checkRateLimit.mockResolvedValue({ allowed: true });
         mocks.createUser.mockResolvedValue({ id: "user-one", role: "user" });
         mocks.createSession.mockResolvedValue("session-token");
@@ -62,6 +70,26 @@ describe("POST /api/auth/register referral attribution", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.createUser).toHaveBeenCalledWith(expect.objectContaining({ referralCode: undefined, referralSource: undefined }));
+    });
+
+    it("requires the maintenance token before creating the first administrator", async () => {
+        mocks.getInstallStatus.mockResolvedValue({ ready: false, firstAdminRequired: true });
+        mocks.maintenanceAuthorized.mockReturnValue(false);
+
+        const response = await POST(registerRequest());
+
+        expect(response.status).toBe(401);
+        expect(mocks.createUser).not.toHaveBeenCalled();
+    });
+
+    it("requires maintenance token configuration before creating the first administrator", async () => {
+        mocks.getInstallStatus.mockResolvedValue({ ready: false, firstAdminRequired: true });
+        mocks.maintenanceConfigured.mockReturnValue(false);
+
+        const response = await POST(registerRequest());
+
+        expect(response.status).toBe(503);
+        expect(mocks.createUser).not.toHaveBeenCalled();
     });
 
     it("uses the referral cookie when the form does not provide the field", async () => {

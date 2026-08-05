@@ -5,6 +5,17 @@ import { describe, expect, it } from "vitest";
 import createNextConfig from "../next.config";
 
 describe("Next response headers", () => {
+    it("allows the local MediaPipe face detector to compile WebAssembly", async () => {
+        const config = createNextConfig("phase-production-build");
+        const rules = (await config.headers?.()) || [];
+        const globalRule = rules.find((rule) => rule.source === "/(.*)");
+        const csp = globalRule?.headers.find((header) => header.key === "Content-Security-Policy")?.value || "";
+
+        expect(csp).toContain("script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'");
+        expect(csp).toContain("connect-src 'self' blob: http: https:");
+        expect(csp).not.toContain("'unsafe-eval'");
+    });
+
     it("prevents private pages and APIs from being indexed", async () => {
         const config = createNextConfig("phase-production-build");
         const rules = (await config.headers?.()) || [];

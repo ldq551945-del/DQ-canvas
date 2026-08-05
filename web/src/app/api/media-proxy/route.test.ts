@@ -5,13 +5,14 @@ const mocks = vi.hoisted(() => ({
     acquire: vi.fn(),
     wrap: vi.fn(),
     release: vi.fn(),
+    safeFetch: vi.fn(),
 }));
 
 vi.mock("node:dns/promises", () => ({ lookup: vi.fn(async () => [{ address: "203.0.113.10", family: 4 }]) }));
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
-    isPublicIpAddress: vi.fn(() => true),
+    fetchSafeOutboundUrl: mocks.safeFetch,
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 vi.mock("@/lib/server/media-concurrency", () => ({ acquireMediaConcurrency: mocks.acquire, withMediaConcurrency: mocks.wrap }));
@@ -24,6 +25,7 @@ describe("media proxy", () => {
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
         mocks.acquire.mockReturnValue({ release: mocks.release });
         mocks.wrap.mockImplementation((response: Response) => response);
+        mocks.safeFetch.mockImplementation((url: string | URL, init?: RequestInit) => fetch(url, init));
     });
 
     it("blocks excess concurrent proxy reads before fetching upstream", async () => {

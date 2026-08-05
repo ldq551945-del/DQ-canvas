@@ -6,7 +6,7 @@ import { Check, Copy, Database, FileCode2, KeyRound, RefreshCw, Server, Terminal
 
 import { buildDeploymentSnippets, generateDeploymentSecret, modeOptions, type DeployMode } from "./database-config";
 
-export function DatabaseConfigBuilder() {
+export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChange }: { maintenanceToken?: string; onMaintenanceTokenChange?: (value: string) => void }) {
     const [mode, setMode] = useState<DeployMode>("local");
     const [host, setHost] = useState("localhost");
     const [port, setPort] = useState("5432");
@@ -15,11 +15,13 @@ export function DatabaseConfigBuilder() {
     const [password, setPassword] = useState("");
     const [ssl, setSsl] = useState(false);
     const [encryptionKey, setEncryptionKey] = useState("");
-    const [maintenanceToken, setMaintenanceToken] = useState("");
+    const [generatedMaintenanceToken, setGeneratedMaintenanceToken] = useState("");
     const [copiedKey, setCopiedKey] = useState("");
     const [activeSnippet, setActiveSnippet] = useState<SnippetKey>("env");
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const configurationReady = Boolean(password && encryptionKey && maintenanceToken);
+    const effectiveMaintenanceToken = maintenanceToken ?? generatedMaintenanceToken;
+    const setMaintenanceToken = onMaintenanceTokenChange || setGeneratedMaintenanceToken;
+    const configurationReady = Boolean(password && encryptionKey && effectiveMaintenanceToken);
     const snippets = useMemo(
         () =>
             buildDeploymentSnippets({
@@ -31,9 +33,9 @@ export function DatabaseConfigBuilder() {
                 password,
                 ssl,
                 encryptionKey,
-                maintenanceToken,
+                maintenanceToken: effectiveMaintenanceToken,
             }),
-        [database, encryptionKey, host, maintenanceToken, mode, password, port, ssl, username],
+        [database, effectiveMaintenanceToken, encryptionKey, host, mode, password, port, ssl, username],
     );
     const snippetOptions: SnippetOption[] = [
         { key: "env", label: "环境变量", title: mode === "local" ? "web/.env.local" : "项目根目录 .env", description: "数据库、加密密钥与 App/Worker 共享令牌", icon: FileCode2, text: snippets.envText },
@@ -132,7 +134,12 @@ export function DatabaseConfigBuilder() {
                     <label className="block space-y-1.5 sm:col-span-2">
                         <span className="text-xs font-medium text-slate-500">Maintenance Token</span>
                         <span className="flex gap-2">
-                            <input className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none" value={maintenanceToken} readOnly aria-label="App 与 Worker 共享维护令牌" />
+                            <input
+                                className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none"
+                                value={effectiveMaintenanceToken}
+                                onChange={(event) => setMaintenanceToken(event.target.value)}
+                                aria-label="App 与 Worker 共享维护令牌"
+                            />
                             <button
                                 type="button"
                                 onClick={() => setMaintenanceToken(generateDeploymentSecret())}

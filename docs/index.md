@@ -1,11 +1,12 @@
 # DQ-绘图 文档索引
 
-DQ-绘图 是面向图片、视频、短剧与品牌物料生产的 AI 创作工作台。当前仓库：`ldq551945-del/DQ-canvas`。
+DQ-绘图 是面向 Agent、图片、视频、Canvas 与短剧生产的 AI 创作工作台。当前仓库：`DAO-QIN/DQ-canvas`。
 
 ## 产品与安装
 
 - [功能总览](/docs/overview/features)
 - [项目结构与流程](/docs/overview/project-structure)
+- [代码质量分类](/docs/overview/code-quality)
 - [页面功能图册](/docs/overview/page-gallery)
 - [快速开始](/docs/overview/quick-start)
 - [配置说明](/docs/overview/configuration)
@@ -46,5 +47,5 @@ DQ-绘图 是面向图片、视频、短剧与品牌物料生产的 AI 创作工
 - 创作会话、Canvas、我的素材、短剧和工作台记录保存在服务端；登录后可跨设备恢复，不依赖浏览器业务缓存。
 - 图片、视频和音频按媒体登记保存在服务器数据目录或可选 S3 兼容对象存储，并由后台“本地媒体”和“外部存储”管理。
 - 模型与支付密钥由服务端读取或加密保存，不通过普通用户接口下发。
-- 应用镜像为 `ghcr.io/ldq551945-del/dq`，文档镜像为 `ghcr.io/ldq551945-del/dq-docs`。
+- 应用、文档和抠图镜像分别为 `ghcr.io/dao-qin/dq`、`ghcr.io/dao-qin/dq-docs`、`ghcr.io/dao-qin/dq-rembg`。
 - 环境变量统一使用 `DQ_` 前缀；数据库默认名称与用户为 `dq`。

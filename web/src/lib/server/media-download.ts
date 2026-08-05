@@ -1,7 +1,7 @@
 import { open } from "node:fs/promises";
 
 import { fetchInternalApi } from "@/lib/server/internal-origin";
-import { isSafeOutboundUrl } from "@/lib/server/security";
+import { fetchSafeOutboundUrl } from "@/lib/server/security";
 
 export async function downloadMediaToFile(url: string, path: string, input: { origin: string; cookie?: string; internalHeaders?: HeadersInit; maxBytes: number; timeoutMs?: number }) {
     const source = url.trim();
@@ -10,7 +10,7 @@ export async function downloadMediaToFile(url: string, path: string, input: { or
     const target = internal ? `${input.origin.replace(/\/+$/, "")}${source}` : source;
     const internalHeaders = new Headers(input.internalHeaders);
     if (input.cookie) internalHeaders.set("cookie", input.cookie);
-    const response = internal ? await fetchInternalApi(target, { headers: internalHeaders, signal: AbortSignal.timeout(input.timeoutMs || 3 * 60_000) }) : await fetchExternalMedia(target, input.timeoutMs || 3 * 60_000);
+    const response = internal ? await fetchInternalApi(target, { headers: internalHeaders, signal: AbortSignal.timeout(input.timeoutMs || 3 * 60_000) }) : await fetchSafeExternalMedia(target, input.timeoutMs || 3 * 60_000);
     if (!response.ok) throw new Error(`媒体下载失败（${response.status}）`);
     if (!response.body) throw new Error("媒体文件为空");
     const contentLength = Number(response.headers.get("content-length"));
@@ -37,11 +37,10 @@ export async function downloadMediaToFile(url: string, path: string, input: { or
     return { bytes, mimeType: response.headers.get("content-type")?.split(";", 1)[0] || "video/mp4" };
 }
 
-async function fetchExternalMedia(initialUrl: string, timeoutMs: number) {
+export async function fetchSafeExternalMedia(initialUrl: string, timeoutMs: number, options?: { allowPrivateUpstreams?: boolean }) {
     let target = initialUrl;
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-        if (!(await isSafeOutboundUrl(target))) throw new Error("媒体地址不安全");
-        const response = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+        const response = await fetchSafeOutboundUrl(target, { redirect: "manual", signal: AbortSignal.timeout(timeoutMs) }, options);
         if (![301, 302, 303, 307, 308].includes(response.status)) return response;
         const location = response.headers.get("location");
         if (!location) throw new Error("媒体重定向地址无效");

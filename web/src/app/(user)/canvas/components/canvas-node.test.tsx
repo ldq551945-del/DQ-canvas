@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -69,6 +69,74 @@ describe("CanvasNode image border", () => {
 
         expect(markup).toContain(`class="relative h-full w-full overflow-visible rounded-3xl border-2" style="background:transparent;border-color:${canvasThemes.light.node.stroke}"`);
     });
+
+    it("shows the themed lock badge and removes resize handles for a locked node", () => {
+        const markup = renderImageNode({ data: { ...imageNode, metadata: { ...imageNode.metadata, locked: true } }, isSelected: true, scale: 0.5 });
+
+        expect(markup).toContain('aria-label="节点已锁定"');
+        expect(markup).toContain(`background:${canvasThemes.light.toolbar.panel}`);
+        expect(markup).toContain("data-canvas-node-lock-badge");
+        expect(markup).toContain('data-lock-badge-screen-size="28.8"');
+        expect(markup).toContain('stroke-width="2.25"');
+        expect(markup).toContain("width:28.8px;height:28.8px;right:12.8px;top:12.8px;transform:scale(2);transform-origin:top right");
+        expect(markup).not.toContain("cursor-nwse-resize");
+        expect(markup).not.toContain("cursor-nesw-resize");
+    });
+});
+
+describe("CanvasNode connection handles", () => {
+    beforeEach(() => useThemeStore.setState({ theme: "light" }));
+
+    it("uses generous hit areas around restrained vertical capsule handles", () => {
+        const markup = renderImageNode({ isSelected: true, isConnecting: true });
+
+        expect(markup).toContain('data-canvas-connection-handle="left"');
+        expect(markup).toContain('data-canvas-connection-handle="right"');
+        expect(markup).toContain('data-canvas-connection-plus="left"');
+        expect(markup).toContain('data-canvas-connection-plus="right"');
+        expect(markup).toContain("h-[72px] w-[56px]");
+        expect(markup).toContain("h-[38px] w-[7px] rounded-full");
+        expect(markup).toContain('aria-label="连接到此节点"');
+        expect(markup).toContain('aria-label="从此节点连接"');
+    });
+
+    it("keeps rail hit targets screen-sized and respects node connection capabilities", () => {
+        const scaled = renderImageNode({ isSelected: true, scale: 0.5 });
+        const inputOnly = renderImageNode({ isSelected: true, showSourceHandle: false });
+
+        expect(scaled).toContain("width:112px;height:min(100%, 144px)");
+        expect(inputOnly).toContain('data-canvas-connection-handle="left"');
+        expect(inputOnly).toContain("pointer-events-none opacity-0");
+    });
+
+    it("keeps only the active source or target plus linked to a live connection", () => {
+        const source = renderImageNode({ isConnecting: true, isConnectionSource: true, connectingHandleType: "source" });
+        const target = renderImageNode({ isConnecting: true, isConnectionTarget: true, connectingHandleType: "source" });
+        const pulledAway = renderImageNode({ isConnecting: true, isConnectionSource: true, connectionSourceFeedbackVisible: false, connectingHandleType: "source" });
+
+        expect(source).toMatch(/data-canvas-connection-handle="left"[^>]+pointer-events-none opacity-0/);
+        expect(source).toMatch(/data-canvas-connection-handle="right"[^>]+pointer-events-auto opacity-100/);
+        expect(target).toMatch(/data-canvas-connection-handle="left"[^>]+pointer-events-auto opacity-100/);
+        expect(target).toMatch(/data-canvas-connection-handle="right"[^>]+pointer-events-none opacity-0/);
+        expect(pulledAway).toMatch(/data-canvas-connection-handle="left"[^>]+pointer-events-none opacity-0/);
+        expect(pulledAway).toMatch(/data-canvas-connection-handle="right"[^>]+pointer-events-none opacity-0/);
+    });
+});
+
+describe("CanvasNode media replacement", () => {
+    beforeEach(() => useThemeStore.setState({ theme: "light" }));
+
+    it("shows a restrained replacement action only for selected media with content", () => {
+        const replace = vi.fn();
+        const image = renderImageNode({ isSelected: true, onReplaceMedia: replace });
+        const empty = renderImageNode({ data: { ...imageNode, metadata: {} }, isSelected: true, onReplaceMedia: replace });
+        const text = renderImageNode({ data: { ...imageNode, type: CanvasNodeType.Text, metadata: { content: "text" } }, isSelected: true, onReplaceMedia: replace });
+
+        expect(image).toContain('aria-label="替换图片"');
+        expect(image).toContain("motion-reduce:transition-none");
+        expect(empty).not.toContain('aria-label="替换图片"');
+        expect(text).not.toContain('aria-label="替换');
+    });
 });
 
 describe("CanvasNode task content", () => {
@@ -86,6 +154,19 @@ describe("CanvasNode task content", () => {
 
         expect(markup).toContain("thin-scrollbar min-h-0 flex-1 overflow-y-auto");
         expect(markup).toContain("mt-3 flex shrink-0");
+    });
+});
+
+describe("CanvasNode generation progress", () => {
+    it("renders the real percentage or an indeterminate progress bar while a node is loading", () => {
+        const loadingNode: CanvasNodeData = {
+            ...imageNode,
+            id: "loading-image",
+            metadata: { status: "loading", taskStage: "submitting", taskProgress: 47 },
+        };
+
+        expect(renderImageNode({ data: loadingNode })).toContain("47%");
+        expect(renderImageNode({ data: { ...loadingNode, metadata: { status: "loading" } } })).toContain("canvas-task-progress-indeterminate");
     });
 });
 

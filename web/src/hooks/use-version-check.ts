@@ -5,8 +5,8 @@ import { App } from "antd";
 import { APP_VERSION } from "@/constant/env";
 import { parseChangelog, type ReleaseInfo } from "@/lib/release";
 
-const latestVersionUrl = "https://raw.githubusercontent.com/ldq551945-del/DQ-canvas/main/VERSION";
-const latestChangelogUrl = "https://raw.githubusercontent.com/ldq551945-del/DQ-canvas/main/CHANGELOG.md";
+const latestVersionUrl = "https://raw.githubusercontent.com/DAO-QIN/DQ-canvas/main/VERSION";
+const latestChangelogUrl = "https://raw.githubusercontent.com/DAO-QIN/DQ-canvas/main/CHANGELOG.md";
 const currentReleaseMajor = toVersionParts(APP_VERSION)?.[0] ?? 0;
 
 function readLocalReleases(): ReleaseInfo[] {

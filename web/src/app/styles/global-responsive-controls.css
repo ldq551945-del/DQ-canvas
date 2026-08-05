@@ -255,4 +255,73 @@
             transform: translate(var(--batch-from-x), var(--batch-from-y)) rotate(var(--batch-from-rotate)) scale(0.72);
         }
     }
+
+    @keyframes canvas-task-progress-indeterminate {
+        from {
+            transform: translateX(-120%);
+        }
+
+        to {
+            transform: translateX(280%);
+        }
+    }
+
+    @keyframes canvas-task-progress-shimmer {
+        from {
+            transform: translateX(-100%);
+        }
+
+        to {
+            transform: translateX(100%);
+        }
+    }
+
+    .canvas-task-progress-indeterminate {
+        animation: canvas-task-progress-indeterminate 1.1s ease-in-out infinite;
+    }
+
+    .canvas-task-progress-shimmer {
+        animation: canvas-task-progress-shimmer 1.5s ease-in-out infinite;
+        background: linear-gradient(90deg, transparent, rgb(255 255 255 / 35%), transparent);
+    }
+
+    .canvas-connection-flow {
+        animation: canvas-connection-flow 1.25s linear infinite;
+    }
+
+    @keyframes canvas-connection-flow {
+        to {
+            stroke-dashoffset: -44;
+        }
+    }
+
+    .canvas-performance-mode .node-element,
+    .canvas-performance-mode .node-element * {
+        transition-duration: 0s !important;
+    }
+
+    .canvas-performance-mode [data-node-id] > div {
+        box-shadow: none !important;
+    }
+
+    .canvas-performance-mode [data-node-id] .backdrop-blur,
+    .canvas-performance-mode [data-node-id] .backdrop-blur-md,
+    .canvas-performance-mode [data-node-id] .backdrop-blur-sm {
+        backdrop-filter: none !important;
+    }
+
+    .canvas-performance-mode video,
+    .canvas-performance-mode audio {
+        contain: paint;
+    }
+
+    .canvas-performance-mode .canvas-connection-flow {
+        animation: none !important;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .canvas-connection-flow {
+            animation: none !important;
+        }
+    }
 }

@@ -10,7 +10,7 @@ description: 使用 Docker Compose、PostgreSQL 和发布镜像部署 DQ-绘图
 ## 安装
 
 ```bash
-git clone https://github.com/ldq551945-del/DQ-canvas.git DQ
+git clone https://github.com/DAO-QIN/DQ-canvas.git DQ
 cd DQ
 cp .env.example .env
 ```
@@ -38,6 +38,8 @@ docker compose ps
 ```text
 postgres -> PostgreSQL 16，数据卷 dq-postgres
 app      -> DQ-绘图 standalone，数据卷 dq-data
+rembg    -> rembg CPU 抠图 sidecar，模型随镜像预取
+generation-worker -> 生成任务恢复 Worker
 ```
 
 应用通过容器网络连接：
@@ -47,6 +49,46 @@ postgres://用户:密码@postgres:5432/数据库
 ```
 
 不要把 Docker 内数据库 Host 写成 localhost。
+
+### 抠图 sidecar
+
+默认 Compose 会启动一个只加入 Compose 内部网络的 `rembg` 服务。应用通过
+`http://rembg:7000/v1/remove` 发送原始 JPEG、PNG 或 WebP 字节，sidecar 返回 PNG；
+它不接受公网 URL、multipart 上传、任意模型名或任意 extras。sidecar 不映射宿主机端口，
+因此不要在 Nginx、宝塔或安全组中为它配置公网入口。
+
+镜像构建阶段会把 `u2net`、`isnet-general-use`、`u2net_human_seg`、`isnet-anime` 和
+`silueta` 五个画布白名单模型下载并校验到 `/models`。运行时不再给该目录挂载命名卷，
+因此已有空卷或只含旧默认模型的卷不会遮蔽镜像权重；模型更新随新版 sidecar 镜像
+交付。默认任务使用 `silueta`，画布 V3 参数表可按素材逐任务选择通用、高精通用、人像、
+动漫插画和轻量通用模型。推理仍会使用
+额外 CPU 和内存。标准、本地构建、外部数据库和宝塔 Compose 均为 sidecar 设置
+`2.0` CPU 与 `5g` 内存上限，并同时声明普通 Compose 的 `cpus`/`mem_limit` 和
+`deploy.resources.limits`；默认 ONNX、OpenMP、OpenBLAS 与 MKL 线程数均为 2，使
+推理和 Alpha 求解可使用完整两个 CPU 核心。
+这些值是上限而非资源预留，运行主机还需要为其他服务留出余量。可通过
+`DQ_REMBG_CPUS`、`DQ_REMBG_MEMORY_LIMIT` 和 `DQ_REMBG_OMP_NUM_THREADS` 一致调整。
+`DQ_REMBG_MODEL` 只设置 `/readyz` 启动时验证的基线模型，默认使用 `silueta`；任务实际
+模型来自经过校验的 V3 快照。所有模型共用一个全站推理槽。`/readyz` 在基线模型加载完成后才返回 200，
+并报告画布支持模型列表。
+
+参数表还同步了官方 UI 的“官方精细”一键组合（Alpha Matting、240/10 阈值、40
+细化范围、蒙版后处理）；新任务统一输出透明 RGBA PNG。
+
+主应用在调用 sidecar 前会校正 EXIF，并把最长边超过 2048px 或超过 6400 万像素的源图
+等比缩至 2K；sidecar 再次执行相同防御性限制。默认
+`DQ_REMBG_ALPHA_MATTING_TILE_PIXELS=1048576` 是 2K 模型输入上的单个分块内存预算。
+
+需要跨主机部署 sidecar 时，在 `.env` 中设置 `DQ_REMBG_URL` 为仅内网可达的地址，
+并设置 `DQ_REMBG_INTERNAL_TOKEN`；不要把该地址直接交给浏览器。每个用户每分钟
+30 次的限制、同源节点限制以及 Canvas 归属校验由主应用 BFF 执行。全站 rembg 并发固定为
+1，任务进入持久化 FIFO 队列；多 worker 由 PostgreSQL advisory lock 与有效租约统一领取。
+4 核、8GB 且约 10 多人使用的单机部署建议保持 2 CPU、5GB rembg 硬上限和单推理槽，
+给 App、Worker、PostgreSQL 与系统保留其余资源。点击终止后，BFF 会等待 sidecar 确认排队协程和推理子进程
+都已退出；短暂故障时可重复终止，不会仅凭数据库状态宣称进程已经停止。
+
+rembg 软件本身为 MIT 许可证，模型权重有独立条款。上线前逐个核对五个随镜像分发的
+白名单模型卡。
 
 ## 外部数据库与宝塔
 
@@ -66,7 +108,7 @@ DATABASE_URL=postgres://用户:密码@127.0.0.1:5432/数据库
 docker compose -f docker-compose.baota.yml up -d
 ```
 
-宝塔 Compose 使用 host 网络，只启动 `app`，不创建项目 PostgreSQL 容器。默认 Compose 和外部数据库 Compose 的 3000 端口也只绑定 `127.0.0.1`，由 Nginx 或宝塔反向代理对外提供 HTTPS。
+宝塔 Compose 使用 host 网络，启动 `app`、`rembg` 和生成 Worker，不创建项目 PostgreSQL 容器。此拓扑中的 app 通过 `http://127.0.0.1:7000` 访问 rembg；不要在 `.env` 覆盖该地址。默认 Compose 和外部数据库 Compose 的 3000 端口也只绑定 `127.0.0.1`，由 Nginx 或宝塔反向代理对外提供 HTTPS。
 
 宝塔单层 Nginx 反向代理默认使用 `DQ_TRUSTED_PROXY_HOPS=1`，用于登录、生成和媒体访问的真实 IP 限流。接入 CDN 或额外代理时按可信代理层数调整；只有客户端直接访问应用时才设置为 `0`。
 
@@ -85,7 +127,9 @@ docker compose -f docker-compose.local.yml up -d --build
 ```bash
 docker compose logs -f app
 docker compose logs -f postgres
+docker compose logs -f rembg
 docker compose exec postgres pg_isready -U dq -d dq
+docker compose exec rembg python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7000/readyz').read().decode())"
 ```
 
 安装页报数据库错误时，重点检查 `.env`、PostgreSQL 健康状态、数据库密码和 Host。浏览器只显示安全分类提示，完整连接错误保留在服务器日志。
@@ -103,10 +147,10 @@ Token 不得写入仓库或公开日志。
 
 ## HTTPS 反向代理
 
-反向代理应保留 `Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`，并允许至少 32MB 请求体，确保 30MB 画布项目可以保存。Nginx/宝塔站点配置示例：
+反向代理应保留 `Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`，并允许至少 44MB 请求体，确保 30MB 画布项目及 30MB 画布图片的 Base64 上传可以保存。Nginx/宝塔站点配置示例：
 
 ```nginx
-client_max_body_size 32m;
+client_max_body_size 44m;
 ```
 
 站点地址使用真实 HTTPS 域名：
@@ -123,11 +167,13 @@ docker compose pull
 docker compose up -d
 ```
 
-不要执行 `docker compose down -v`。更新前备份 PostgreSQL 和 `dq-data`。
+不要执行 `docker compose down -v`。更新前备份 PostgreSQL 和 `dq-data`。rembg 模型
+随 sidecar 镜像交付，不属于业务数据备份。
 
 ## 数据卷
 
 - `dq-postgres`：PostgreSQL 主库。
 - `dq-data`：服务器媒体副本、文件模式数据和运行期文件。
 
-Canvas、“我的素材”、短剧和工作台记录保存在 PostgreSQL，媒体位于 `dq-data` 数据卷。生产备份必须同时覆盖 PostgreSQL 与该数据卷。
+Canvas、“我的素材”、短剧和工作台记录保存在 PostgreSQL，媒体位于 `dq-data` 数据卷。
+生产备份必须覆盖 PostgreSQL 和媒体卷；抠图权重从对应版本的 sidecar 镜像恢复。

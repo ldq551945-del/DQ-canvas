@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/ldq551945-del/dq:latest
+    image: ghcr.io/dao-qin/dq:latest
     env_file:
       - .env
     ports:
@@ -19,6 +19,11 @@ services:
       DQ_DATABASE_SSL: ${DQ_DATABASE_SSL:-1}
       DQ_ENCRYPTION_KEY: ${DQ_ENCRYPTION_KEY:?请在 .env 中配置 DQ_ENCRYPTION_KEY}
       DQ_MAINTENANCE_TOKEN: ${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      DQ_REMBG_URL: ${DQ_REMBG_URL:?低内存部署请在 .env 中配置外部 rembg 服务 URL}
+      DQ_REMBG_INTERNAL_TOKEN: ${DQ_REMBG_INTERNAL_TOKEN:-}
+      DQ_REMBG_MODEL: ${DQ_REMBG_MODEL:-silueta}
+      DQ_REMBG_CONCURRENCY: ${DQ_REMBG_CONCURRENCY:-1}
+      DQ_REMBG_TIMEOUT_SECONDS: ${DQ_REMBG_TIMEOUT_SECONDS:-120}
     mem_limit: 512m
     memswap_limit: 768m
     healthcheck:
@@ -27,7 +32,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/api/health/live').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+          "const base=process.env.DQ_REMBG_URL;const rembgUrl=base.endsWith('/')?base+'readyz':base+'/readyz';Promise.all([fetch('http://127.0.0.1:3000/api/health/live'),fetch(rembgUrl)]).then(([app,rembg])=>{if(!app.ok||!rembg.ok)process.exit(1)}).catch(()=>process.exit(1))",
         ]
       interval: 15s
       timeout: 10s
@@ -36,7 +41,7 @@ services:
     restart: unless-stopped
 
   generation-worker:
-    image: ghcr.io/ldq551945-del/dq:latest
+    image: ghcr.io/dao-qin/dq:latest
     command: ["node", "/app/web/scripts/generation-worker.mjs"]
     env_file:
       - .env

@@ -5,7 +5,7 @@ const savedChannel = { id: "saved", name: "已保存", baseUrl: "https://api.exa
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "admin", role: "admin" })) }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(async () => ({ systemChannels: [savedChannel] })), setSystemChannelHealthResult: mocks.setSystemChannelHealthResult }));
-vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: vi.fn(async () => true) }));
+vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: vi.fn(async () => true), fetchSafeOutboundUrl: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
 import { POST } from "./route";

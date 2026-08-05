@@ -12,11 +12,14 @@ export const composeProfiles = [
 ];
 
 export const docsComposeProfiles = [
-    { file: "docs/docker-compose.yml", image: "ghcr.io/ldq551945-del/dq-docs:latest" },
+    { file: "docs/docker-compose.yml", image: "ghcr.io/dao-qin/dq-docs:latest" },
     { file: "docs/docker-compose.local.yml", build: { context: "..", dockerfile: "docs/Dockerfile" } },
 ];
 
 const maintenanceToken = "${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}";
+const rembgCpus = "${DQ_REMBG_CPUS:-2.0}";
+const rembgMemoryLimit = "${DQ_REMBG_MEMORY_LIMIT:-5g}";
+const rembgCanvasModels = "u2net,isnet-general-use,u2net_human_seg,isnet-anime,silueta";
 
 export function validateComposeContracts({ repoRoot }) {
     return composeProfiles.map((profile) => {
@@ -65,8 +68,10 @@ export function validateComposeContract(source, profile) {
     };
     const services = compose?.services || {};
     const app = services.app || {};
+    const rembg = services.rembg || {};
     const worker = services["generation-worker"] || {};
     const appEnvironment = app.environment || {};
+    const rembgEnvironment = rembg.environment || {};
     const workerEnvironment = worker.environment || {};
 
     ensure(Boolean(services.app), "缺少 app 服务");
@@ -80,6 +85,9 @@ export function validateComposeContract(source, profile) {
     ensure(workerEnvironment.DQ_WORKER_API_ORIGIN === profile.workerOrigin, `Worker API 地址必须为 ${profile.workerOrigin}`);
     ensure(appEnvironment.DQ_DATABASE_PROVIDER === "postgres", "app 必须使用 PostgreSQL provider");
     ensure(typeof appEnvironment.DATABASE_URL === "string", "app 缺少 DATABASE_URL");
+    ensure(appEnvironment.DQ_REMBG_MODEL === "${DQ_REMBG_MODEL:-silueta}", "app 必须显式使用 rembg 模型配置");
+    ensure(appEnvironment.DQ_REMBG_CONCURRENCY === "${DQ_REMBG_CONCURRENCY:-1}", "app 必须显式使用 rembg 并发配置");
+    ensure(appEnvironment.DQ_REMBG_TIMEOUT_SECONDS === "${DQ_REMBG_TIMEOUT_SECONDS:-120}", "app 必须显式使用 rembg 超时配置");
     ensure(!("DATABASE_URL" in workerEnvironment), "generation-worker 不应直接持有数据库连接串");
     ensure(!("DQ_DATABASE_PROVIDER" in workerEnvironment), "generation-worker 不应直接访问数据库 provider");
     ensure(app.volumes?.includes("dq-data:/app/web/.data"), "app 缺少持久数据卷挂载");
@@ -104,9 +112,45 @@ export function validateComposeContract(source, profile) {
         ensure(app.network_mode === "host", "宝塔 app 必须使用 host 网络");
         ensure(worker.network_mode === "host", "宝塔 generation-worker 必须使用 host 网络");
         ensure("DQ_TRUSTED_PROXY_HOPS" in appEnvironment, "宝塔拓扑缺少反向代理层数配置");
+        ensure(appEnvironment.DQ_REMBG_URL === "${DQ_REMBG_URL:-http://127.0.0.1:7000}", "宝塔 rembg 必须通过宿主机回环地址访问");
     } else {
         ensure(!app.network_mode && !worker.network_mode, "宝塔专用 host 网络不得泄漏到其他拓扑");
         ensure(!("DQ_TRUSTED_PROXY_HOPS" in appEnvironment), "宝塔专用反向代理默认值不得泄漏到其他拓扑");
+    }
+
+    if (profile.file === "docker-compose.lowmem.yml") {
+        ensure(!services.rembg, "低内存拓扑不得内置 rembg 服务");
+        ensure(appEnvironment.DQ_REMBG_URL === "${DQ_REMBG_URL:?低内存部署请在 .env 中配置外部 rembg 服务 URL}", "低内存拓扑必须显式要求外部 rembg 地址");
+        ensure(
+            app.healthcheck?.test?.some((value) => String(value).includes("DQ_REMBG_URL") && String(value).includes("/readyz")),
+            "低内存 app 健康检查必须验证外部 rembg 就绪",
+        );
+    } else {
+        ensure(Boolean(services.rembg), "标准、宝塔和外部数据库拓扑必须包含 rembg 服务");
+        ensure(app.depends_on?.rembg?.condition === "service_healthy", "app 必须等待 rembg 就绪");
+        ensure(rembg.env_file?.includes(".env"), "rembg 必须读取 .env");
+        ensure(rembgEnvironment.DQ_REMBG_MODEL === appEnvironment.DQ_REMBG_MODEL, "app 与 rembg 必须使用相同模型配置");
+        ensure(rembgEnvironment.DQ_REMBG_CONCURRENCY === appEnvironment.DQ_REMBG_CONCURRENCY, "app 与 rembg 必须使用相同并发配置");
+        ensure(rembgEnvironment.DQ_REMBG_TIMEOUT_SECONDS === appEnvironment.DQ_REMBG_TIMEOUT_SECONDS, "app 与 rembg 必须使用相同超时配置");
+        ensure(rembgEnvironment.DQ_REMBG_ALPHA_MATTING_TILE_PIXELS === "${DQ_REMBG_ALPHA_MATTING_TILE_PIXELS:-1048576}", "rembg 必须使用原尺寸 Alpha 分块预算");
+        ensure(!("DQ_REMBG_ALPHA_MATTING_MAX_PIXELS" in rembgEnvironment), "rembg 不得继续使用整图缩放 Alpha 预算");
+        ensure(rembg.cpus === rembgCpus, "rembg 普通 Compose CPU 上限必须使用统一配置");
+        ensure(rembg.mem_limit === rembgMemoryLimit, "rembg 普通 Compose 内存上限必须使用统一配置");
+        ensure(rembg.deploy?.resources?.limits?.cpus === rembgCpus, "rembg Deploy CPU 上限必须与普通 Compose 一致");
+        ensure(rembg.deploy?.resources?.limits?.memory === rembgMemoryLimit, "rembg Deploy 内存上限必须与普通 Compose 一致");
+        ensure(rembgEnvironment.DQ_REMBG_OMP_NUM_THREADS === "${DQ_REMBG_OMP_NUM_THREADS:-2}", "rembg 必须允许单任务使用两个 CPU 线程");
+        ensure(rembgEnvironment.DQ_REMBG_ONNX_INTER_OP_THREADS === "${DQ_REMBG_ONNX_INTER_OP_THREADS:-1}", "rembg ONNX inter-op 线程必须固定为 1");
+        ensure(rembgEnvironment.OMP_NUM_THREADS === rembgEnvironment.DQ_REMBG_OMP_NUM_THREADS, "rembg OpenMP 与 ONNX 线程配置必须一致");
+        ensure(rembgEnvironment.OPENBLAS_NUM_THREADS === rembgEnvironment.DQ_REMBG_OMP_NUM_THREADS, "rembg OpenBLAS 与 ONNX 线程配置必须一致");
+        ensure(rembgEnvironment.MKL_NUM_THREADS === rembgEnvironment.DQ_REMBG_OMP_NUM_THREADS, "rembg MKL 与 ONNX 线程配置必须一致");
+        ensure(!rembg.volumes?.some((volume) => String(volume).split(":").slice(1).includes("/models")), "rembg 不得用运行时卷遮蔽镜像内预取模型");
+        ensure(!Object.hasOwn(compose?.volumes || {}, "dq-rembg-models"), "不得声明会遮蔽镜像模型的 rembg 卷");
+        ensure(
+            rembg.healthcheck?.test?.some((value) => String(value).includes("/readyz")),
+            "rembg 健康检查必须验证模型就绪",
+        );
+        if (profile.file === "docker-compose.local.yml") ensure(rembg.build?.args?.DQ_REMBG_MODELS === rembgCanvasModels, "本地 rembg 构建必须预取完整画布模型白名单");
+        if (!profile.hostNetwork) ensure(appEnvironment.DQ_REMBG_URL === "${DQ_REMBG_URL:-http://rembg:7000}", "Compose rembg 必须通过服务名访问");
     }
 
     if (violations.length > 0) throw new Error(`${profile.file} Compose 契约失败：\n- ${violations.join("\n- ")}`);

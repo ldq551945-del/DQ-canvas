@@ -1,8 +1,9 @@
 "use client";
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import { CREATIVE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { readImageMeta } from "@/lib/image-utils";
-import { blobToDataUrl, getServerMediaBlob, serverMediaUrl, uploadServerMedia } from "@/services/server-media-storage";
+import { blobToDataUrl, getServerMediaBlob, serverMediaUrl, uploadServerMedia, type ServerMediaUploadOptions } from "@/services/server-media-storage";
 
 export type UploadedImage = {
     url: string;
@@ -15,8 +16,9 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const stored = await uploadServerMedia(input, "image");
+export async function uploadImage(input: string | Blob, options: { maxBytes?: number; purpose?: ServerMediaUploadOptions["purpose"] } = {}): Promise<UploadedImage> {
+    const maxBytes = options.maxBytes ?? CREATIVE_UPLOAD_MAX_BYTES;
+    const stored = await uploadServerMedia(input, "image", maxBytes, options);
     const meta = await readImageMeta(stored.url);
     return { ...stored, serverUrl: stored.url, width: meta.width, height: meta.height, mimeType: stored.mimeType || meta.mimeType };
 }

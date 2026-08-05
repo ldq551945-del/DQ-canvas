@@ -59,6 +59,60 @@ describe("Agent 产物排版", () => {
         expect(created.nodes[0]).toMatchObject({ width: 340, height: 340, metadata: { naturalWidth: 1024, naturalHeight: 1024 } });
     });
 
+    it("keeps locked output geometry when an async Agent result adds natural dimensions", () => {
+        const locked: CanvasAgentSnapshot = {
+            ...snapshot,
+            nodes: [
+                {
+                    id: "output-agent-run-0-0",
+                    type: CanvasNodeType.Image,
+                    title: "Locked output",
+                    position: { x: 120, y: 80 },
+                    width: 420,
+                    height: 260,
+                    metadata: { locked: true, status: "loading" },
+                },
+            ],
+        };
+
+        const updated = applyCanvasAgentOps(locked, [
+            {
+                type: "update_node",
+                id: "output-agent-run-0-0",
+                patch: { position: { x: 900, y: 700 }, width: 800, height: 450 },
+                metadata: { status: "success", content: "/result.png", naturalWidth: 1600, naturalHeight: 900 },
+            },
+        ]);
+
+        expect(updated.nodes[0]).toMatchObject({
+            position: { x: 120, y: 80 },
+            width: 420,
+            height: 260,
+            metadata: { locked: true, status: "success", content: "/result.png", naturalWidth: 1600, naturalHeight: 900 },
+        });
+    });
+
+    it("applies explicit geometry patches after the output is unlocked", () => {
+        const unlocked: CanvasAgentSnapshot = {
+            ...snapshot,
+            nodes: [
+                {
+                    id: "output-agent-run-0-0",
+                    type: CanvasNodeType.Image,
+                    title: "Unlocked output",
+                    position: { x: 120, y: 80 },
+                    width: 420,
+                    height: 260,
+                    metadata: { locked: false, freeResize: true, status: "loading" },
+                },
+            ],
+        };
+
+        const updated = applyCanvasAgentOps(unlocked, [{ type: "update_node", id: "output-agent-run-0-0", patch: { position: { x: 900, y: 700 }, width: 800, height: 450 } }]);
+
+        expect(updated.nodes[0]).toMatchObject({ position: { x: 900, y: 700 }, width: 800, height: 450 });
+    });
+
     it("uses the requested image ratio before natural dimensions are available", () => {
         const created = applyCanvasAgentOps(snapshot, [{ type: "add_node", id: "output-agent-run-0-0", nodeType: CanvasNodeType.Image, position: { x: 400, y: 20 }, metadata: { content: "/image.png", size: "1:1" } }]);
 
@@ -93,5 +147,22 @@ describe("Agent 产物排版", () => {
         expect(deleted.nodes.map((node) => node.id)).toEqual(["two"]);
         expect(deleted.connections).toEqual([]);
         expect(deleted.selectedNodeIds).toEqual([]);
+    });
+
+    it("keeps distinct port pairs and redraws the matching edge anchors", () => {
+        const nodes = applyCanvasAgentOps(snapshot, [
+            { type: "add_node", id: "one", nodeType: CanvasNodeType.Text, position: { x: 10, y: 20 } },
+            { type: "add_node", id: "two", nodeType: CanvasNodeType.Image, position: { x: 400, y: 20 } },
+        ]);
+        const connected = applyCanvasAgentOps(nodes, [
+            { type: "connect_nodes", id: "edge-a", fromNodeId: "one", toNodeId: "two", fromHandleId: "output:a", toHandleId: "input", fromAnchorRatio: 0.2, toAnchorRatio: 0.7 },
+            { type: "connect_nodes", id: "edge-b", fromNodeId: "one", toNodeId: "two", fromHandleId: "output:b", toHandleId: "input", fromAnchorRatio: 0.4, toAnchorRatio: 0.6 },
+            { type: "connect_nodes", id: "ignored", fromNodeId: "one", toNodeId: "two", fromHandleId: "output:a", toHandleId: "input", fromAnchorRatio: 0.3, toAnchorRatio: 0.8 },
+        ]);
+
+        expect(connected.connections).toEqual([
+            { id: "edge-a", fromNodeId: "one", toNodeId: "two", fromHandleId: "output:a", toHandleId: "input", fromAnchorRatio: 0.3, toAnchorRatio: 0.8 },
+            { id: "edge-b", fromNodeId: "one", toNodeId: "two", fromHandleId: "output:b", toHandleId: "input", fromAnchorRatio: 0.4, toAnchorRatio: 0.6 },
+        ]);
     });
 });

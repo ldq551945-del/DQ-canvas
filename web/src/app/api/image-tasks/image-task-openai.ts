@@ -107,6 +107,7 @@ import {
     toGeminiImagePart,
     buildImageEditFormData,
     imageReferenceToFile,
+    imageReferenceToDataUrl,
     dataUrlToFile,
     readFetchError,
     readPointsRemaining,
@@ -242,7 +243,7 @@ export async function runOpenAiJsonImageEditTask(
     const imageUrlObjectOnlyMode = shouldUseSub2ApiImageEdit(config, apiBase);
     const allowProtocolFallback = allowsImageProtocolFallback(config);
     const publicUrlReferenceMode = imageUrlObjectOnlyMode || referenceMode === "public-url" || (referenceMode === "auto" && isQingyanProvider({ baseUrl: apiBase, model: config.model, protocol: config.advancedConfig?.protocol }));
-    for (const body of await buildJsonImageEditBodies(task, quality, requestSize, responseFormat, origin, publicOrigin, publicUrlReferenceMode, imageUrlObjectOnlyMode, allowProtocolFallback)) {
+    for (const body of await buildJsonImageEditBodies(task, quality, requestSize, responseFormat, origin, publicOrigin, publicUrlReferenceMode, imageUrlObjectOnlyMode, allowProtocolFallback, cookie)) {
         const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
         if (!response.ok) {
             const message = await readFetchError(response, "图片生成失败");
@@ -332,7 +333,8 @@ export async function runOpenAiResponsesImageTask(task: ImageTask, origin: strin
     headers.set("content-type", "application/json");
     let lastError = "";
 
-    const bodies = allowsImageProtocolFallback(config) ? buildResponsesImageBodies(task, origin) : [buildResponsesImageBodies(task, origin)[0]];
+    const responseBodies = await buildResponsesImageBodies(task, origin, cookie);
+    const bodies = allowsImageProtocolFallback(config) ? responseBodies : [responseBodies[0]];
     for (const body of bodies) {
         const response = await imageSubmissionFetch(config, url, { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" });
         if (!response.ok) {
@@ -348,9 +350,9 @@ export async function runOpenAiResponsesImageTask(task: ImageTask, origin: strin
     throw new GenerationSubmissionSafeFailure(lastError || "图片生成失败");
 }
 
-export function buildResponsesImageBodies(task: ImageTask, origin: string) {
+export async function buildResponsesImageBodies(task: ImageTask, origin: string, cookie = "") {
     const prompt = withSystemPrompt(task.config, buildImageReferencePromptText(task.prompt, task.references));
-    const imageContent = task.references.map((reference) => ({ type: "input_image", image_url: referenceRequestUrl(reference, origin) }));
+    const imageContent = await Promise.all(task.references.map(async (reference, index) => ({ type: "input_image", image_url: await inlineImageReference(reference, index, origin, cookie) })));
     const content = [{ type: "input_text", text: prompt }, ...imageContent];
     return [
         {
@@ -384,12 +386,13 @@ export async function buildJsonImageEditBodies(
     publicUrlReferenceMode = false,
     imageUrlObjectOnlyMode = false,
     includeCompatibilityFields = true,
+    cookie = "",
 ) {
     const referenceContext = { ownerUserId: task.userId, taskId: task.id };
     const images = (
-        await Promise.all(task.references.map((reference) => (publicUrlReferenceMode ? publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext) : Promise.resolve(jsonImageReferenceRequestUrl(reference, origin)))))
+        await Promise.all(task.references.map((reference, index) => (publicUrlReferenceMode ? publicImageReferenceRequestUrl(reference, origin, publicOrigin, referenceContext) : inlineImageReference(reference, index, origin, cookie))))
     ).filter(Boolean);
-    const mask = task.mask ? (publicUrlReferenceMode ? await publicImageReferenceRequestUrl(task.mask, origin, publicOrigin, referenceContext) : jsonImageReferenceRequestUrl(task.mask, origin)) : "";
+    const mask = task.mask ? (publicUrlReferenceMode ? await publicImageReferenceRequestUrl(task.mask, origin, publicOrigin, referenceContext) : await inlineImageReference(task.mask, -1, origin, cookie, "mask.png")) : "";
     const prompt = imageUrlObjectOnlyMode ? buildSub2ApiImageEditPrompt(task.prompt, task.references) : buildImageReferencePromptText(task.prompt, task.references);
     const base = {
         model: task.config.model,
@@ -425,6 +428,11 @@ export async function buildJsonImageEditBodies(
         { ...base, image: first },
         { ...base, images: imageObjects, ref_assets: imageObjects, image_urls: imageObjects },
     ];
+}
+
+async function inlineImageReference(reference: ImageTaskReference, index: number, origin: string, cookie: string, fallbackName = `reference-${index + 1}.png`) {
+    const dataUrl = (reference.dataUrl || "").trim();
+    return /^data:image\//i.test(dataUrl) ? dataUrl : imageReferenceToDataUrl(reference, reference.name || fallbackName, origin, cookie);
 }
 
 export function buildSub2ApiImageEditPrompt(prompt: string, references: readonly unknown[]) {

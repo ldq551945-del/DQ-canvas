@@ -16,3 +16,6 @@ pnpm-lock.yaml
 *.webp
 *.svg
 .tmp-*
+.playwright-cli
+public/mediapipe/
+public/three/

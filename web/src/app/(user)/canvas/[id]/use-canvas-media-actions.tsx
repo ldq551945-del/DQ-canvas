@@ -10,7 +10,7 @@ import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
 export function useCanvasMediaActions({ state, tasks, interactions }: { state: CanvasPageState; tasks: CanvasTaskRuntime; interactions: CanvasInteractions }) {
     const files = useCanvasFileActions({ state, interactions });
     const nodes = useCanvasNodeMediaActions({ state, tasks, interactions });
-    const session = useCanvasMediaSessionActions({ state, interactions, files });
+    const session = useCanvasMediaSessionActions({ state, tasks, interactions, files });
     return { ...files, ...nodes, ...session };
 }
 

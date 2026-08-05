@@ -7,7 +7,7 @@ import { channelHealthSnapshot } from "@/lib/channel-health-result";
 import { isProviderTimeoutError, resolveAdminChannelCredentials, sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
-import { isSafeOutboundUrl } from "@/lib/server/security";
+import { fetchSafeOutboundUrl, isSafeOutboundUrl } from "@/lib/server/security";
 import { buildProviderRequest, isProviderBusinessError, readProviderString } from "@/lib/server/provider-task-config";
 import { buildGlobalAiOpcImageRequest, buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcCatalogPresets, resolveGlobalAiOpcPreset, type GlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
@@ -193,7 +193,7 @@ async function testText(baseUrl: string, apiKey: string, model: string, channelP
                 : protocol.kind === "custom"
                   ? buildProviderRequest(protocol.requestTemplate!, values, values)
                   : { model, messages, max_tokens: 8 };
-    const response = await fetch(textProtocolUrl(baseUrl, protocol, advanced), {
+    const response = await fetchSafeOutboundUrl(textProtocolUrl(baseUrl, protocol, advanced), {
         method: "POST",
         headers: { ...protocolAuthHeaders(apiKey, advanced, protocol.providerKind === "gemini" ? "gemini" : "openai"), "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -238,7 +238,7 @@ async function testImage(baseUrl: string, apiKey: string, model: string, globalP
         return withImageEditHealth(result, baseUrl, apiKey, protocol, advanced, globalPreset);
     }
     for (const responseFormat of ["url", "b64_json"] as const) {
-        const response = await fetch(apiUrl(baseUrl, "/images/generations"), {
+        const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, "/images/generations"), {
             method: "POST",
             headers: jsonHeaders(apiKey),
             body: JSON.stringify({
@@ -322,7 +322,7 @@ async function testImageEdit(
     globalPreset?: GlobalAiOpcPreset,
 ): Promise<NonNullable<HealthResult["referenceImageTest"]>> {
     if (globalPreset?.capability === "image") {
-        const response = await fetch(apiUrl(baseUrl, globalPreset.createPath), {
+        const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, globalPreset.createPath), {
             method: "POST",
             headers: jsonHeaders(apiKey),
             body: JSON.stringify(buildGlobalAiOpcImageRequest(globalPreset, { model, prompt: "Keep the reference image composition and make the circle slightly darker.", quality: "low", ratio: "1:1", resolution: "1k", imageUrls: [referenceImage] })),
@@ -334,7 +334,7 @@ async function testImageEdit(
 
     if (protocol === "sub2api" || isSub2ApiHealthTarget(baseUrl) || isQingyanHealthTarget(baseUrl)) {
         const path = advanced.editPath || advanced.createPath || "/images/generations";
-        const response = await fetch(apiUrl(baseUrl, path), {
+        const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, path), {
             method: "POST",
             headers: jsonHeaders(apiKey),
             body: JSON.stringify({
@@ -360,7 +360,7 @@ async function testImageEdit(
     formData.set("size", "1024x1024");
     formData.set("response_format", "url");
     formData.set("image", healthReferenceImageFile());
-    const response = await fetch(apiUrl(baseUrl, advanced.editPath || "/images/edits"), {
+    const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, advanced.editPath || "/images/edits"), {
         method: "POST",
         headers: { authorization: `Bearer ${apiKey}` },
         body: formData,
@@ -392,7 +392,7 @@ function healthReferenceImageFile() {
 }
 
 async function testAudio(baseUrl: string, apiKey: string, model: string): Promise<HealthResult> {
-    const response = await fetch(apiUrl(baseUrl, "/audio/speech"), {
+    const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, "/audio/speech"), {
         method: "POST",
         headers: jsonHeaders(apiKey),
         body: JSON.stringify({ model, input: "DQ-绘图 audio health check.", voice: "alloy", response_format: "mp3" }),
@@ -471,7 +471,7 @@ async function testVideo(baseUrl: string, apiKey: string, model: string, globalP
 }
 
 async function testGlobalAiOpcImage(baseUrl: string, apiKey: string, model: string, preset: GlobalAiOpcPreset): Promise<HealthResult> {
-    const response = await fetch(apiUrl(baseUrl, preset.createPath), {
+    const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, preset.createPath), {
         method: "POST",
         headers: jsonHeaders(apiKey),
         body: JSON.stringify(buildGlobalAiOpcImageRequest(preset, { model, prompt: "A single blue circle icon on a white background.", quality: "low", ratio: "1:1", resolution: "1k", imageUrls: [] })),
@@ -504,7 +504,7 @@ async function testGlobalAiOpcImage(baseUrl: string, apiKey: string, model: stri
 }
 
 async function testGlobalAiOpcVideo(baseUrl: string, apiKey: string, model: string, preset: GlobalAiOpcPreset): Promise<HealthResult> {
-    const response = await fetch(apiUrl(baseUrl, preset.createPath), {
+    const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, preset.createPath), {
         method: "POST",
         headers: jsonHeaders(apiKey),
         body: JSON.stringify(
@@ -540,7 +540,7 @@ async function testGlobalAiOpcVideo(baseUrl: string, apiKey: string, model: stri
 async function testVideoPayloads(baseUrl: string, apiKey: string, model: string, payloads: Array<Record<string, unknown>>, allowReferenceRetry: boolean): Promise<HealthResult> {
     for (const path of videoHealthPaths(baseUrl, model)) {
         for (const payload of videoHealthPayloadsForPath(path, payloads)) {
-            const response = await fetch(apiUrl(baseUrl, path), {
+            const response = await fetchSafeOutboundUrl(apiUrl(baseUrl, path), {
                 method: "POST",
                 headers: jsonHeaders(apiKey),
                 body: JSON.stringify(payload),

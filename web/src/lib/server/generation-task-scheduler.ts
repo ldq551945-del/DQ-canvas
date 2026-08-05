@@ -59,6 +59,123 @@ export async function scheduleGenerationTask(type: GenerationTaskType, id: strin
     });
 }
 
+export async function repairUnscheduledImageProcessTask(id: string, now = Date.now()) {
+    const taskId = clean(id, 160);
+    if (!taskId) return null;
+    const repairedAt = finiteTime(now) || Date.now();
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `UPDATE generation_tasks
+             SET execution_phase = 'submitting', provider = 'rembg', next_poll_at = $2, last_upstream_status = 'processing'
+             WHERE id = $1 AND task_type = 'image_process'
+               AND status IN ('pending', 'running')
+               AND next_poll_at IS NULL
+               AND (worker_id IS NULL OR lease_until IS NULL OR lease_until <= $2)
+             RETURNING *`,
+            [taskId, new Date(repairedAt)],
+        );
+        return result.rows[0] ? mapLease(result.rows[0]) : null;
+    }
+    return withGenerationTaskFileMutation(async (tasks) => {
+        let result: GenerationTaskLease | null = null;
+        const next = tasks.map((task) => {
+            const active = task.status === "pending" || task.status === "running";
+            const activelyLeased = Boolean(task.workerId) && Number(task.leaseUntil || 0) > repairedAt;
+            if (task.id !== taskId || task.type !== "image_process" || !active || task.nextPollAt != null || activelyLeased) return task;
+            const updated = { ...task, executionPhase: "submitting" as const, provider: "rembg", nextPollAt: repairedAt, lastUpstreamStatus: "processing" };
+            result = toLease(updated);
+            return updated;
+        });
+        return { tasks: next, result };
+    });
+}
+
+export async function finalizeCancelledBackgroundRemovalTask(id: string) {
+    const taskId = clean(id, 160);
+    if (!taskId) return null;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `UPDATE generation_tasks
+             SET execution_phase = 'completed', next_poll_at = NULL, last_upstream_status = 'cancelled',
+                 worker_id = NULL, lease_until = NULL, last_heartbeat_at = NULL
+             WHERE id = $1 AND task_type = 'image_process' AND status = 'cancelled'
+             RETURNING *`,
+            [taskId],
+        );
+        return result.rows[0] ? mapLease(result.rows[0]) : null;
+    }
+    return withGenerationTaskFileMutation(async (tasks) => {
+        let result: GenerationTaskLease | null = null;
+        const next = tasks.map((task) => {
+            if (task.id !== taskId || task.type !== "image_process" || task.status !== "cancelled") return task;
+            const updated = {
+                ...task,
+                executionPhase: "completed" as const,
+                nextPollAt: undefined,
+                lastUpstreamStatus: "cancelled",
+                workerId: undefined,
+                leaseUntil: undefined,
+                lastHeartbeatAt: undefined,
+            };
+            result = toLease(updated);
+            return updated;
+        });
+        return { tasks: next, result };
+    });
+}
+
+export async function claimDueBackgroundRemovalTask(input: { workerId: string; now?: number; leaseMs?: number }): Promise<GenerationTaskLease | null> {
+    const workerId = clean(input.workerId, 160);
+    if (!workerId) throw new Error("Worker ID is required");
+    const now = finiteTime(input.now) || Date.now();
+    const leaseUntil = now + Math.max(30_000, Math.min(5 * 60_000, Math.floor(Number(input.leaseMs) || 90_000)));
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        return withPostgresTransaction(async (client) => {
+            await client.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", ["generation_tasks", "image_process:global_slot"]);
+            const occupied = await client.query(
+                `SELECT id
+                 FROM generation_tasks
+                 WHERE task_type = 'image_process' AND worker_id IS NOT NULL AND lease_until > $1
+                 LIMIT 1`,
+                [new Date(now)],
+            );
+            if (occupied.rows.length) return null;
+            const claimed = await client.query<Record<string, unknown>>(
+                `WITH due AS (
+                    SELECT id
+                    FROM generation_tasks
+                    WHERE task_type = 'image_process'
+                      AND status IN ('pending', 'running')
+                      AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')
+                      AND next_poll_at IS NOT NULL AND next_poll_at <= $1
+                      AND (lease_until IS NULL OR lease_until <= $1)
+                    ORDER BY created_at ASC, id ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                 )
+                 UPDATE generation_tasks AS task
+                 SET worker_id = $2, lease_until = $3, last_heartbeat_at = $1
+                 FROM due
+                 WHERE task.id = due.id
+                 RETURNING task.*`,
+                [new Date(now), workerId, new Date(leaseUntil)],
+            );
+            return claimed.rows[0] ? mapLease(claimed.rows[0]) : null;
+        });
+    }
+    return withGenerationTaskFileMutation(async (tasks) => {
+        const occupied = tasks.some((task) => task.type === "image_process" && Boolean(task.workerId) && Number(task.leaseUntil || 0) > now);
+        if (occupied) return { tasks, result: null };
+        const candidate = tasks.filter((task) => isDueBackgroundRemoval(task, now)).sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))[0];
+        if (!candidate) return { tasks, result: null };
+        const next = tasks.map((task) => (task.id === candidate.id ? { ...task, workerId, leaseUntil, lastHeartbeatAt: now } : task));
+        return { tasks: next, result: toLease(next.find((task) => task.id === candidate.id)!) };
+    });
+}
+
 export async function claimDueGenerationTasks(input: { workerId: string; now?: number; limit?: number; leaseMs?: number; taskIds?: string[] }): Promise<GenerationTaskLease[]> {
     const workerId = clean(input.workerId, 160);
     if (!workerId) throw new Error("Worker ID is required");
@@ -76,6 +193,7 @@ export async function claimDueGenerationTasks(input: { workerId: string; now?: n
                     WHERE ((status IN ('pending', 'running')
                       AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting'))
                       OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')))
+                      AND task_type <> 'image_process'
                       AND next_poll_at IS NOT NULL AND next_poll_at <= $1
                       AND (lease_until IS NULL OR lease_until <= $1)
                       AND (cardinality($4::text[]) = 0 OR id = ANY($4::text[]))
@@ -220,6 +338,17 @@ function isDue(task: StoredGenerationTaskRecord, now: number, taskIds: string[])
     return SCHEDULABLE_TYPES.has(task.type) && (active || review) && Number(task.nextPollAt || 0) > 0 && Number(task.nextPollAt) <= now && Number(task.leaseUntil || 0) <= now && (!taskIds.length || taskIds.includes(task.id));
 }
 
+function isDueBackgroundRemoval(task: StoredGenerationTaskRecord, now: number) {
+    return (
+        task.type === "image_process" &&
+        (task.status === "pending" || task.status === "running") &&
+        ACTIVE_PHASES.has(task.executionPhase || "created") &&
+        Number(task.nextPollAt || 0) > 0 &&
+        Number(task.nextPollAt) <= now &&
+        Number(task.leaseUntil || 0) <= now
+    );
+}
+
 function mapLease(row: Record<string, unknown>): GenerationTaskLease {
     return {
         id: String(row.id || ""),
@@ -288,5 +417,5 @@ function isPhase(value: unknown): value is GenerationTaskExecutionPhase {
 }
 
 function isTaskType(value: unknown): value is GenerationTaskType {
-    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "agent" || value === "render";
+    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "agent" || value === "render" || value === "image_process";
 }

@@ -27,6 +27,7 @@ import { assertCapabilityConstraints } from "@/lib/server/capability-constraints
 import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { fetchSafeExternalMedia } from "@/lib/server/media-download";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 
 import {
@@ -659,24 +660,27 @@ export async function buildImageEditFormData(task: ImageTask, quality: string | 
 
 export async function imageReferenceToFile(reference: ImageTaskReference, name: string, origin: string, cookie: string) {
     let lastError: unknown;
-    for (const value of rawReferenceRequestUrlCandidates(reference)) {
+    for (const value of imageReferenceHydrationCandidates(reference, origin)) {
         try {
             if (/^data:image\//i.test(value)) return dataUrlToFile(value, name, reference.type);
             if (/^blob:/i.test(value)) throw new Error("参考图已失效，请重新上传");
+            const internal = isInternalMediaReference(value, origin);
+            if (value.startsWith("/") && !internal) throw new Error("参考图地址无效，请重新上传参考图");
             const fetchUrl = value.startsWith("/") ? `${origin}${value}` : value;
             if (!isRemoteMediaUrl(fetchUrl)) throw new Error("参考图地址无效，请重新上传参考图");
             const workerHeaders = maintenanceWorkerContextHeaders(cookie);
-            const response = await fetch(fetchUrl, {
-                headers: value.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
-                cache: "no-store",
-                signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),
-            });
+            const response = internal
+                ? await fetch(fetchUrl, {
+                      headers: workerHeaders || (cookie ? { cookie } : undefined),
+                      cache: "no-store",
+                      signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),
+                  })
+                : await fetchSafeExternalMedia(fetchUrl, INLINE_IMAGE_TIMEOUT_MS, { allowPrivateUpstreams: false });
             if (!response.ok || !response.body) throw new Error("参考图读取失败");
             const contentLength = Number(response.headers.get("content-length") || 0);
             if (contentLength > MAX_INLINE_IMAGE_BYTES) throw new Error("参考图过大，请压缩后重试");
-            const bytes = Buffer.from(await response.arrayBuffer());
+            const bytes = await readImageReferenceBytes(response, MAX_INLINE_IMAGE_BYTES);
             if (!bytes.length) throw new Error("参考图读取失败");
-            if (bytes.length > MAX_INLINE_IMAGE_BYTES) throw new Error("参考图过大，请压缩后重试");
             const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || reference.type || "image/png";
             if (!mimeType.startsWith("image/")) throw new Error("参考图不是有效图片");
             return new File([bytes], name, { type: mimeType });
@@ -685,6 +689,52 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
         }
     }
     throw lastError instanceof Error ? lastError : new Error("参考图读取失败");
+}
+
+async function readImageReferenceBytes(response: Response, maxBytes: number) {
+    if (!response.body) return Buffer.alloc(0);
+    const reader = response.body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+        for (;;) {
+            const next = await reader.read();
+            if (next.done) break;
+            const chunk = Buffer.from(next.value);
+            total += chunk.length;
+            if (total > maxBytes) {
+                await reader.cancel();
+                throw new Error("参考图过大，请压缩后重试");
+            }
+            chunks.push(chunk);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    return Buffer.concat(chunks, total);
+}
+
+function imageReferenceHydrationCandidates(reference: ImageTaskReference, origin: string) {
+    const candidates = rawReferenceRequestUrlCandidates(reference);
+    const internal = candidates.filter((value) => isInternalMediaReference(value, origin));
+    if (internal.length) return internal;
+    return [...candidates.filter((value) => /^data:image\//i.test(value)), ...candidates.filter((value) => !/^data:image\//i.test(value))];
+}
+
+function isInternalMediaReference(value: string, origin: string) {
+    try {
+        const base = new URL(origin);
+        const url = new URL(value, base);
+        return url.origin === base.origin && (url.pathname.startsWith("/api/reference-assets/") || url.pathname.startsWith("/api/generation-log-assets/"));
+    } catch {
+        return false;
+    }
+}
+
+export async function imageReferenceToDataUrl(reference: ImageTaskReference, name: string, origin: string, cookie: string) {
+    const file = await imageReferenceToFile(reference, name, origin, cookie);
+    const bytes = Buffer.from(await file.arrayBuffer());
+    return `data:${file.type || reference.type || "image/png"};base64,${bytes.toString("base64")}`;
 }
 
 export function dataUrlToFile(dataUrl: string, name: string, fallbackType?: string) {

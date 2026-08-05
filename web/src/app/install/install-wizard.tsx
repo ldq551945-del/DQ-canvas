@@ -26,6 +26,7 @@ const steps = [
 export function InstallWizard({ install }: { install: InstallStatus }) {
     const [activeStep, setActiveStep] = useState<InstallStepId>("intro");
     const [currentInstall, setCurrentInstall] = useState(install);
+    const [maintenanceToken, setMaintenanceToken] = useState("");
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const databaseReady = currentInstall.database.healthy && currentInstall.database.schemaReady;
     const schemaPending = currentInstall.database.healthy && !currentInstall.database.schemaReady;
@@ -98,8 +99,18 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
 
                 <div className="min-w-0 bg-white/50">
                     {activeStep === "intro" ? <IntroStep onNext={() => setActiveStep("database")} /> : null}
-                    {activeStep === "database" ? <DatabaseStep install={currentInstall} runtimeReady={runtimeReady} onInstallChange={setCurrentInstall} onPrev={() => setActiveStep("intro")} onNext={() => setActiveStep("admin")} /> : null}
-                    {activeStep === "admin" ? <AdminStep install={currentInstall} runtimeReady={runtimeReady} onPrev={() => setActiveStep("database")} /> : null}
+                    {activeStep === "database" ? (
+                        <DatabaseStep
+                            install={currentInstall}
+                            maintenanceToken={maintenanceToken}
+                            runtimeReady={runtimeReady}
+                            onInstallChange={setCurrentInstall}
+                            onMaintenanceTokenChange={setMaintenanceToken}
+                            onPrev={() => setActiveStep("intro")}
+                            onNext={() => setActiveStep("admin")}
+                        />
+                    ) : null}
+                    {activeStep === "admin" ? <AdminStep install={currentInstall} maintenanceToken={maintenanceToken} runtimeReady={runtimeReady} onMaintenanceTokenChange={setMaintenanceToken} onPrev={() => setActiveStep("database")} /> : null}
                 </div>
             </section>
         </div>
@@ -128,7 +139,23 @@ function IntroStep({ onNext }: { onNext: () => void }) {
     );
 }
 
-function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }: { install: InstallStatus; runtimeReady: boolean; onInstallChange: (install: InstallStatus) => void; onPrev: () => void; onNext: () => void }) {
+function DatabaseStep({
+    install,
+    maintenanceToken,
+    runtimeReady,
+    onInstallChange,
+    onMaintenanceTokenChange,
+    onPrev,
+    onNext,
+}: {
+    install: InstallStatus;
+    maintenanceToken: string;
+    runtimeReady: boolean;
+    onInstallChange: (install: InstallStatus) => void;
+    onMaintenanceTokenChange: (token: string) => void;
+    onPrev: () => void;
+    onNext: () => void;
+}) {
     const [initializing, setInitializing] = useState(false);
     const [initializeError, setInitializeError] = useState("");
     const canInitialize = install.database.configured && install.database.healthy && !install.database.schemaReady && install.security.encryptionReady;
@@ -138,7 +165,7 @@ function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }
         setInitializing(true);
         setInitializeError("");
         try {
-            const response = await fetch("/api/install/initialize", { method: "POST" });
+            const response = await fetch("/api/install/initialize", { method: "POST", headers: maintenanceToken.trim() ? { Authorization: `Bearer ${maintenanceToken.trim()}` } : undefined });
             const payload = (await response.json().catch(() => ({}))) as { data?: { install?: InstallStatus }; msg?: string };
             if (!response.ok || !payload.data?.install) throw new Error(payload.msg || "数据库初始化失败");
             onInstallChange(payload.data.install);
@@ -154,7 +181,7 @@ function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }
             <div className="min-w-0 p-5 sm:p-8">
                 <StepHeader step="步骤 2 / 3" title="配置并初始化数据库" description="填写数据库信息后复制配置，写入服务器环境变量并重启 Web 服务。状态检查只验证连接；确认无误后由你显式初始化表结构。" />
                 <div className="mt-6">
-                    <DatabaseConfigBuilder />
+                    <DatabaseConfigBuilder maintenanceToken={maintenanceToken} onMaintenanceTokenChange={onMaintenanceTokenChange} />
                 </div>
             </div>
 
@@ -181,7 +208,7 @@ function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }
                     <ol className="mt-2 space-y-2 text-xs leading-5 text-slate-500">
                         <li>1. 按左侧当前部署方式的命令重新启动应用。</li>
                         <li>2. 等待 10-30 秒，再点击下方“刷新检查”。</li>
-                        <li>3. 看到“数据库连接成功”后点击“初始化表结构”。</li>
+                        <li>3. 确认上方 Maintenance Token 与环境变量中的 DQ_MAINTENANCE_TOKEN 一致后，点击“初始化表结构”。</li>
                         <li>4. 初始化成功后再进入下一步创建管理员。</li>
                     </ol>
                 </div>
@@ -212,7 +239,7 @@ function DatabaseStep({ install, runtimeReady, onInstallChange, onPrev, onNext }
     );
 }
 
-function AdminStep({ install, runtimeReady, onPrev }: { install: InstallStatus; runtimeReady: boolean; onPrev: () => void }) {
+function AdminStep({ install, maintenanceToken, runtimeReady, onMaintenanceTokenChange, onPrev }: { install: InstallStatus; maintenanceToken: string; runtimeReady: boolean; onMaintenanceTokenChange: (token: string) => void; onPrev: () => void }) {
     if (!runtimeReady) {
         return (
             <section className="p-5 sm:p-8">
@@ -240,7 +267,7 @@ function AdminStep({ install, runtimeReady, onPrev }: { install: InstallStatus; 
     return (
         <section className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_300px]">
             <div className="min-w-0 bg-white/40">
-                <AuthForm mode="register" nextPath="/admin" registrationEnabled emailRegistrationEnabled={false} firstUser variant="embedded" className="!border-0 !bg-transparent !shadow-none" />
+                <AuthForm mode="register" nextPath="/admin" registrationEnabled emailRegistrationEnabled={false} firstUser bootstrapToken={maintenanceToken} variant="embedded" className="!border-0 !bg-transparent !shadow-none" />
             </div>
             <aside className="border-t border-slate-200/70 bg-slate-50/70 p-5 xl:border-l xl:border-t-0">
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 shadow-sm">
@@ -250,6 +277,18 @@ function AdminStep({ install, runtimeReady, onPrev }: { install: InstallStatus; 
                     </div>
                     <p className="mt-2 text-xs leading-5">创建成功后会直接进入后台。后续普通用户注册会按后台注册策略控制。</p>
                 </div>
+                <label className="mt-5 block space-y-1.5">
+                    <span className="text-xs font-medium text-slate-600">Maintenance Token</span>
+                    <input
+                        type="password"
+                        value={maintenanceToken}
+                        onChange={(event) => onMaintenanceTokenChange(event.target.value)}
+                        placeholder="粘贴环境变量中的 DQ_MAINTENANCE_TOKEN"
+                        autoComplete="off"
+                        className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 font-mono text-xs text-slate-900 outline-none transition focus:border-slate-950 focus:ring-4 focus:ring-slate-950/10"
+                    />
+                    <span className="block text-xs leading-5 text-slate-500">首个管理员仅接受与服务器环境变量匹配的维护令牌；页面不会读取或回显服务器令牌。</span>
+                </label>
                 <button type="button" onClick={onPrev} className={`mt-5 ${ghostButtonClass}`}>
                     <ArrowLeft className="size-4" />
                     返回配置数据库

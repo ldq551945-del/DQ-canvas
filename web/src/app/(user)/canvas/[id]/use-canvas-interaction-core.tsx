@@ -5,10 +5,13 @@ import { useCallback, useMemo } from "react";
 
 import { nanoid } from "nanoid";
 import { buildNodeGenerationInputs, type NodeGenerationInput } from "../components/canvas-node-generation";
-import { CanvasNodeType, type ConnectionHandle } from "../types";
+import { getNodeSpec } from "../constants";
+import { CanvasNodeType, type CanvasConnection, type ConnectionHandle, type Position } from "../types";
 import { useCanvasLocalAgentBridge } from "../use-canvas-local-agent-bridge";
 import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
+import { shouldReduceCanvasEffects } from "../utils/canvas-performance-mode";
+import { clampAnchorRatio, nodeAnchorRatioAtY, splitCanvasConnectionAtNode } from "../utils/canvas-connection-path";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -35,6 +38,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         setConnections,
         viewport,
         setViewport,
+        performanceMode,
         size,
         selectedNodeIds,
         setSelectedNodeIds,
@@ -115,7 +119,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
     }, []);
 
     const connectNodes = useCallback(
-        (current: ConnectionHandle, targetNodeId: string) => {
+        (current: ConnectionHandle, targetNodeId: string, targetHandleId?: string, targetAnchorRatio = 0.5) => {
             if (current.nodeId === targetNodeId) return;
 
             const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
@@ -124,9 +128,28 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
                 return;
             }
             const { fromNodeId, toNodeId } = connection;
-            const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
-            if (!exists) {
-                setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId }]);
+            const fromHandleId = fromNodeId === current.nodeId ? current.handleId : targetHandleId;
+            const toHandleId = toNodeId === current.nodeId ? current.handleId : targetHandleId;
+            const fromAnchorRatio = clampAnchorRatio(fromNodeId === current.nodeId ? current.anchorRatio : targetAnchorRatio);
+            const toAnchorRatio = clampAnchorRatio(toNodeId === current.nodeId ? current.anchorRatio : targetAnchorRatio);
+            const exists = connectionsRef.current.find((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId && conn.fromHandleId === fromHandleId && conn.toHandleId === toHandleId);
+            if (exists) {
+                // Redrawing the same logical edge updates its attachment points
+                // instead of accumulating duplicate edges.
+                setConnections((prev) => prev.map((item) => (item.id === exists.id ? { ...item, fromAnchorRatio, toAnchorRatio } : item)));
+            } else {
+                setConnections((prev) => [
+                    ...prev,
+                    {
+                        id: `conn-${Date.now()}`,
+                        fromNodeId,
+                        toNodeId,
+                        ...(fromHandleId ? { fromHandleId } : {}),
+                        ...(toHandleId ? { toHandleId } : {}),
+                        fromAnchorRatio,
+                        toAnchorRatio,
+                    },
+                ]);
             }
             setContextMenu(null);
         },
@@ -135,8 +158,31 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
 
     const createConnectedNode = useCallback(
         async (type: CanvasCreatableNodeType, pending: PendingConnectionCreate) => {
+            const splitConnection = pending.splitConnectionId ? connectionsRef.current.find((item) => item.id === pending.splitConnectionId) : undefined;
+            if (pending.splitConnectionId && !splitConnection) {
+                message.warning("原连线已变更，请重新拖动加号插入节点");
+                return;
+            }
+            const splitFrom = splitConnection ? nodesRef.current.find((node) => node.id === splitConnection.fromNodeId) : undefined;
+            const splitTo = splitConnection ? nodesRef.current.find((node) => node.id === splitConnection.toNodeId) : undefined;
+            if (splitConnection && (!splitFrom || !splitTo)) {
+                message.warning("原连线的节点已不存在");
+                return;
+            }
+            if (splitConnection && type === CanvasNodeType.Config && (!pending.allowConfig || splitFrom?.type === CanvasNodeType.Config || splitTo?.type === CanvasNodeType.Config)) {
+                message.warning("配置节点不能插入到包含配置节点的连线中");
+                return;
+            }
             const metadata = type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count) } : undefined;
-            const newNode = createCanvasNode(type, pending.position, metadata);
+            const quickSource = pending.quick ? nodesRef.current.find((node) => node.id === pending.connection.nodeId) : undefined;
+            const spec = getNodeSpec(type);
+            const newNodePosition = quickSource
+                ? {
+                      x: pending.connection.handleType === "source" ? quickSource.position.x + quickSource.width + 96 + spec.width / 2 : quickSource.position.x - 96 - spec.width / 2,
+                      y: quickSource.position.y + quickSource.height * clampAnchorRatio(pending.connection.anchorRatio),
+                  }
+                : pending.position;
+            const newNode = createCanvasNode(type, newNodePosition, metadata);
             let connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
             if (!connection) {
                 message.warning("配置节点之间不能连接");
@@ -175,7 +221,26 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
                 }
             }
             setNodes((prev) => [...prev, newNode]);
-            setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
+            const currentAnchorRatio = clampAnchorRatio(pending.connection.anchorRatio);
+            setConnections((prev) => {
+                if (splitConnection) {
+                    const current = prev.find((item) => item.id === splitConnection.id);
+                    if (!current) return prev;
+                    const split = splitCanvasConnectionAtNode(current, newNode.id);
+                    return [...prev.filter((item) => item.id !== current.id), { id: nanoid(), ...split.first }, { id: nanoid(), ...split.second }];
+                }
+                return [
+                    ...prev,
+                    {
+                        id: nanoid(),
+                        ...connection,
+                        ...(connection.fromNodeId === pending.connection.nodeId && pending.connection.handleId ? { fromHandleId: pending.connection.handleId } : {}),
+                        ...(connection.toNodeId === pending.connection.nodeId && pending.connection.handleId ? { toHandleId: pending.connection.handleId } : {}),
+                        fromAnchorRatio: connection.fromNodeId === pending.connection.nodeId ? currentAnchorRatio : 0.5,
+                        toAnchorRatio: connection.toNodeId === pending.connection.nodeId ? currentAnchorRatio : 0.5,
+                    },
+                ];
+            });
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== CanvasNodeType.Drawing) setDialogNodeId(newNode.id);
@@ -198,13 +263,18 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
             const handleRadius = CONNECTION_HANDLE_HIT_RADIUS / scale;
             let isNearNode = false;
             let bestNodeId: string | null = null;
+            let bestHandleId: string | undefined;
+            let bestAnchorRatio = 0.5;
             let bestPriority = Number.POSITIVE_INFINITY;
 
             [...nodesRef.current]
                 .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
                 .reverse()
                 .forEach((node) => {
-                    const anchor = getConnectionTargetAnchor(node, current);
+                    // Nodes can expose named ports through data attributes. The
+                    // default side port remains unnamed for backwards compatibility.
+                    const targetHandleId = current.handleId ? (current.handleType === "source" ? "target" : "source") : undefined;
+                    const anchor = getConnectionTargetAnchor(node, current, targetHandleId);
                     const dx = world.x - anchor.x;
                     const dy = world.y - anchor.y;
                     const hitsHandle = dx * dx + dy * dy <= handleRadius * handleRadius;
@@ -218,17 +288,19 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
                     const priority = hitsInside ? 0 : hitsHandle ? 1 : 2;
                     if (priority < bestPriority) {
                         bestNodeId = node.id;
+                        bestHandleId = node.id === current.nodeId ? undefined : targetHandleId;
+                        bestAnchorRatio = nodeAnchorRatioAtY(node, world.y);
                         bestPriority = priority;
                     }
                 });
 
-            return { nodeId: bestNodeId, isNearNode };
+            return { nodeId: bestNodeId, handleId: bestHandleId, isNearNode, anchorRatio: bestNodeId ? bestAnchorRatio : undefined };
         },
         [screenToCanvas],
     );
 
     const visibleNodes = useMemo(() => {
-        const padding = 280;
+        const padding = shouldReduceCanvasEffects(performanceMode, nodes) ? 96 : 280;
         const rect = containerRef.current?.getBoundingClientRect();
         const width = rect?.width || size.width;
         const height = rect?.height || size.height;
@@ -238,7 +310,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
         return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
-    }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+    }, [collapsingBatchIds, nodes, performanceMode, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;

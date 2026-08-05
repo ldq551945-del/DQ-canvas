@@ -27,7 +27,7 @@ DQ-绘图 默认使用 PostgreSQL。推荐通过 Docker Compose 启动主应用�
 ### 1. 准备配置
 
 ```bash
-git clone https://github.com/ldq551945-del/DQ-canvas.git DQ
+git clone https://github.com/DAO-QIN/DQ-canvas.git DQ
 cd DQ
 cp .env.example .env
 ```
@@ -59,7 +59,7 @@ docker compose ps
 默认启动：
 
 - `postgres:16-alpine`
-- `ghcr.io/ldq551945-del/dq:latest`
+- `ghcr.io/dao-qin/dq:latest`
 - `dq-postgres` 数据库卷
 - `dq-data` 媒体数据卷
 
@@ -97,7 +97,7 @@ docker compose -f docker-compose.baota.yml up -d
 要求 Node.js 22、pnpm 10+ 和 PostgreSQL 16。
 
 ```bash
-git clone https://github.com/ldq551945-del/DQ-canvas.git DQ
+git clone https://github.com/DAO-QIN/DQ-canvas.git DQ
 cd DQ
 cp .env.example web/.env.local
 ```

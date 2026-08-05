@@ -22,6 +22,9 @@ type RequestOptions = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    sourceNodeId?: string;
+    targetNodeId?: string;
+    validateBeforeSubmit?: () => void;
 };
 
 export type ImageGenerationTask = {
@@ -47,6 +50,8 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const taskReferences = await Promise.all(references.map(referenceToTaskInput));
     const taskMask = mask ? await referenceToTaskInput(mask) : undefined;
+    options?.validateBeforeSubmit?.();
+    if (options?.signal?.aborted) throw new DOMException("\u8bf7\u6c42\u5df2\u53d6\u6d88", "AbortError");
     const response = await fetch("/api/image-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -86,6 +91,8 @@ function taskContext(options?: RequestOptions) {
         parentTaskId: options.parentTaskId,
         attemptNo: options.attemptNo,
         clientRequestId: options.clientRequestId,
+        sourceNodeId: options.sourceNodeId,
+        targetNodeId: options.targetNodeId,
     };
 }
 

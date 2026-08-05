@@ -35,6 +35,9 @@ export type RequestOptions = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    sourceNodeId?: string;
+    targetNodeId?: string;
+    skillIds?: string[];
 };
 export type ResolvedVideoMediaUrl = { url: string; remoteUrl?: string };
 

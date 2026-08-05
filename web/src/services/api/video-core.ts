@@ -165,6 +165,7 @@ export async function createServerVideoGenerationTask(
             references: serverReferences,
             source: options?.source,
             context: taskContext(options),
+            skillIds: options?.skillIds,
         }),
         signal: options?.signal,
     });
@@ -187,6 +188,8 @@ export function taskContext(options?: RequestOptions) {
         parentTaskId: options.parentTaskId,
         attemptNo: options.attemptNo,
         clientRequestId: options.clientRequestId,
+        sourceNodeId: options.sourceNodeId,
+        targetNodeId: options.targetNodeId,
     };
 }
 

@@ -110,6 +110,34 @@ describe("local media storage", () => {
         await expect(access(file)).rejects.toBeTruthy();
     });
 
+    it("keeps expired temporary files while an active generation task references them", async () => {
+        const storage = await import("./local-media-storage");
+        const registry = await import("./local-media-registry");
+        const mediaPath = storage.createDatedMediaPath("temporary", "image", ".png");
+        const file = await write(storage.REFERENCE_MEDIA_ROOT, mediaPath, "image");
+        const expiredAt = new Date(Date.now() - 60_000).toISOString();
+        await registry.registerLocalMediaAsset({
+            storageKey: mediaPath,
+            scope: "reference",
+            storageClass: "temporary",
+            type: "image",
+            ownerUserId: "user-one",
+            source: "image-task-reference",
+            taskId: "task-one",
+            mimeType: "image/png",
+            bytes: 5,
+            expiresAt: expiredAt,
+        });
+        await writeFile(resolve(dataDir, "generation-tasks.json"), JSON.stringify([{ id: "task-one", expiresAt: Date.now() + 60_000, payload: { references: [{ url: `/api/reference-assets/${mediaPath}` }] } }]));
+
+        expect(await storage.cleanupExpiredLocalMediaAssets()).toMatchObject({ deletedFiles: 0, blocked: [{ storageKey: mediaPath, referenceCount: 1 }] });
+        await expect(access(file)).resolves.toBeUndefined();
+
+        await writeFile(resolve(dataDir, "generation-tasks.json"), JSON.stringify([{ id: "task-one", expiresAt: Date.now() - 1, payload: { references: [{ url: `/api/reference-assets/${mediaPath}` }] } }]));
+        expect(await storage.cleanupExpiredLocalMediaAssets()).toMatchObject({ deletedFiles: 1, blocked: [] });
+        await expect(access(file)).rejects.toBeTruthy();
+    });
+
     it("extracts reference and generated media keys without trusting malformed paths", async () => {
         const { collectLocalMediaStorageKeys } = await import("./local-media-references");
         expect(

@@ -25,6 +25,7 @@ type SystemChannelAdvancedConfig = {
     imageModel: string;
     videoModel: string;
     createPath: string;
+    editPath?: string;
     queryPath: string;
     requestTemplate: string;
     resultField: string;
@@ -44,6 +45,7 @@ type SystemChannelAdvancedConfig = {
             apiFormat?: ApiCallFormat;
             protocol?: SystemChannelProtocol;
             createPath?: string;
+            editPath?: string;
             queryPath?: string;
             requestTemplate?: string;
             resultField?: string;

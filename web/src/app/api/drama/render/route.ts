@@ -11,7 +11,7 @@ import { normalizeDramaShotAudioMode, resolveDramaRenderAudioPlan } from "@/lib/
 import { ffmpegAvailable, runFfmpeg, runFfprobe } from "@/lib/server/ffmpeg";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { writeReferenceMediaFile } from "@/lib/server/reference-asset-store";
-import { checkGenerationRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
+import { checkGenerationRateLimit, fetchSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { dramaOutputDimensions, normalizeDramaImageSize } from "@/lib/drama-image-size";
@@ -220,8 +220,7 @@ async function downloadMedia(url: string, path: string, origin: string, cookie: 
 async function fetchExternalMedia(initialUrl: string) {
     let target = initialUrl;
     for (let redirects = 0; redirects <= 3; redirects += 1) {
-        if (!(await isSafeOutboundUrl(target))) throw new Error("媒体地址不安全");
-        const response = await fetch(target, { redirect: "manual", signal: AbortSignal.timeout(3 * 60_000) });
+        const response = await fetchSafeOutboundUrl(target, { redirect: "manual", signal: AbortSignal.timeout(3 * 60_000) });
         if (![301, 302, 303, 307, 308].includes(response.status)) return response;
         const location = response.headers.get("location");
         if (!location) throw new Error("媒体重定向地址无效");

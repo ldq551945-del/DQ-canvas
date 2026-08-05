@@ -29,7 +29,7 @@ export function fitNodeAspectRatio(width: number, height: number, maxWidth: numb
 export function resizeImageNodeToNaturalRatio(node: CanvasNodeData, naturalWidth: number, naturalHeight: number) {
     const dimensionsChanged = node.metadata?.naturalWidth !== naturalWidth || node.metadata?.naturalHeight !== naturalHeight;
     const metadata = dimensionsChanged ? { ...node.metadata, naturalWidth, naturalHeight } : node.metadata;
-    if (!Number.isFinite(naturalWidth) || naturalWidth <= 0 || !Number.isFinite(naturalHeight) || naturalHeight <= 0 || node.metadata?.freeResize) return dimensionsChanged ? { ...node, metadata } : node;
+    if (!Number.isFinite(naturalWidth) || naturalWidth <= 0 || !Number.isFinite(naturalHeight) || naturalHeight <= 0 || node.metadata?.freeResize || node.metadata?.locked) return dimensionsChanged ? { ...node, metadata } : node;
 
     const currentRatio = node.width / Math.max(1, node.height);
     const naturalRatio = naturalWidth / naturalHeight;

@@ -46,6 +46,20 @@ describe("consumeEmailCode attempt tracking", () => {
         expect(user.username).toBe("admin");
     });
 
+    it("does not create a reset code when an anonymous reset request names no account", async () => {
+        const result = await createEmailVerificationCode({ purpose: "password-reset", email: "missing@example.com", silentPasswordResetMissing: true });
+
+        expect(result).toEqual({ email: "missing@example.com" });
+        expect((memory.value as StoredDb).emailCodes).toEqual([]);
+    });
+
+    it("assigns the administrator role to only one concurrent first-user registration", async () => {
+        const results = await Promise.allSettled([createUser({ username: "first-admin", password: "password123" }), createUser({ username: "second-user", password: "password123" })]);
+
+        const createdUsers = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+        expect(createdUsers.filter((user) => user.role === "admin")).toHaveLength(1);
+    });
+
     it("rejects a wrong verification code with the correct error", async () => {
         await createUser({ username: "admin", email: "test@example.com", password: "password123" });
         await createEmailVerificationCode({ purpose: "password-reset", email: "test@example.com" });

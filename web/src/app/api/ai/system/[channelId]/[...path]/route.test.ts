@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
     getAuthSettings: vi.fn(),
     refundUserPoints: vi.fn(),
     safeUrl: vi.fn(),
+    safeFetch: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
@@ -18,7 +19,7 @@ vi.mock("@/lib/auth/store", () => ({
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
-    isSafeOutboundUrl: mocks.safeUrl,
+    fetchSafeOutboundUrl: mocks.safeFetch,
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 
@@ -33,6 +34,7 @@ describe("system media proxy", () => {
         mocks.refundUserPoints.mockReset();
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
         mocks.safeUrl.mockResolvedValue(true);
+        mocks.safeFetch.mockImplementation((url: string | URL, init?: RequestInit) => fetch(url, init));
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
@@ -67,7 +69,7 @@ describe("system media proxy", () => {
     });
 
     it("checks every media redirect before fetching the next hop", async () => {
-        mocks.safeUrl.mockResolvedValueOnce(true).mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        mocks.safeFetch.mockImplementationOnce((url: string | URL, init?: RequestInit) => fetch(url, init)).mockRejectedValueOnce(new Error("Unsafe media redirect"));
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(null, { status: 302, headers: { location: "http://127.0.0.1/private.png" } }));
 
         const response = await GET(request(), context);
@@ -402,6 +404,45 @@ describe("custom protocol model routing", () => {
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v1/jobs/image");
         expect(mocks.consumeUserPoints).toHaveBeenCalledWith("user-one", "image-tool", 1, "image", undefined);
+    });
+});
+
+describe("system operation authorization", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeFetch.mockImplementation((url: string | URL, init?: RequestInit) => fetch(url, init));
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: ["writer"] }],
+        });
+    });
+
+    it("rejects unclassified upstream paths before forwarding credentials or consuming points", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/internal/admin", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ model: "writer", command: "rotate-key" }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["internal", "admin"] }) },
+        );
+
+        expect(response.status).toBe(403);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+    });
+
+    it("rejects a registered operation when its model is not enabled on the channel", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await POST(chatRequest({ model: "unlisted", messages: [{ role: "user", content: "hello" }] }), textContext());
+
+        expect(response.status).toBe(403);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
     });
 });
 

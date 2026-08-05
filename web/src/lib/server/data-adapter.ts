@@ -1,4 +1,5 @@
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import { resolveServerDataPath } from "@/lib/server/data-dir";
@@ -29,8 +30,14 @@ export async function readJsonDataFile<T>(fileName: string, fallback: T): Promis
 
 export async function writeJsonDataFile(fileName: string, value: unknown) {
     const filePath = resolveServerDataPath(fileName);
+    const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
     await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    try {
+        await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+        await rename(temporaryPath, filePath);
+    } finally {
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
 }
 
 export async function copyDataFile(sourceFileName: string, targetFileName: string) {

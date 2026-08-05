@@ -6,6 +6,7 @@ import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
 import { readZip } from "@/lib/zip";
+import { CANVAS_IMAGE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { APP_EXPORT_ID } from "@/lib/storage-keys";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
@@ -66,7 +67,9 @@ export default function CanvasPage() {
                             const blob = zip.get(file.path);
                             if (!blob) return;
                             const typedBlob = blob.type ? blob : blob.slice(0, blob.size, file.mimeType);
-                            const media = file.mimeType.startsWith("image/") ? await uploadImage(typedBlob) : await uploadMediaFile(typedBlob, file.mimeType.startsWith("audio/") ? "audio" : "video");
+                            const media = file.mimeType.startsWith("image/")
+                                ? await uploadImage(typedBlob, { maxBytes: CANVAS_IMAGE_UPLOAD_MAX_BYTES, purpose: "canvas-image" })
+                                : await uploadMediaFile(typedBlob, file.mimeType.startsWith("audio/") ? "audio" : "video");
                             uploaded.set(file.storageKey, media);
                         }),
                     );

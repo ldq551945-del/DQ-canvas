@@ -17,8 +17,9 @@ DQ/
 |  |- public/community/     社区等项目社区素材
 |  |- public/screenshots/   文档使用的脱敏页面截图
 |  `- src/                  文档站页面、搜索和导航
+|- services/rembg/          内网 CPU 抠图 Sidecar、容器与 Python 测试
 |- web/                     DQ-绘图 主应用
-|  |- public/               Logo、图标等静态资源
+|  |- public/               Logo、图标、MediaPipe/Three.js 运行资源与画布模型
 |  |- scripts/              standalone 启动与运维脚本
 |  `- src/
 |     |- app/               页面、布局和 API Route Handler
@@ -30,7 +31,7 @@ DQ/
 |     `- styles/            跨页面样式
 |- .env.example             环境变量模板，不包含真实密钥
 |- Dockerfile               主应用 standalone 生产镜像
-|- docker-compose.yml       主应用和 PostgreSQL 的标准编排
+|- docker-compose.yml       主应用、Worker、rembg 和 PostgreSQL 的标准编排
 |- docker-compose.baota.yml 宝塔 PostgreSQL + host 网络编排
 |- docker-compose.external-db.yml 外部数据库编排
 |- docker-compose.lowmem.yml      低内存部署编排
@@ -62,6 +63,7 @@ DQ/
 | `web/src/lib/server/database/` | PostgreSQL schema、参数化 Repository 和文件 Provider 回退            |
 | `web/src/styles/`              | 全局布局和跨页面主题样式，页面私有样式仍由组件管理                   |
 | `web/src/**/*.test.ts(x)`      | 与实现同域放置的 Vitest 单元和契约测试                               |
+| `services/rembg/`              | rembg 模型白名单、图片边界、单推理、取消和透明 PNG 输出              |
 
 ## 关键文件入口
 
@@ -76,6 +78,8 @@ DQ/
 | `web/src/lib/server/agent-run-executor.ts`       | Agent Run 的认领、执行、终态处理和失败记录                                |
 | `web/src/lib/server/logical-model-router.ts`     | 逻辑模型到真实渠道、上游模型和候选优先级的解析                            |
 | `web/src/lib/server/generation-task-store.ts`    | 统一生成任务状态、并发、认领、取消和统计                                  |
+| `web/src/lib/server/background-removal-task-runtime.ts` | 抠图源媒体读取、sidecar 调用、取消隔离和结果登记                  |
+| `web/src/app/api/background-removal-tasks/`      | Canvas 抠图任务创建、归属校验、查询与取消                                 |
 | `web/src/lib/server/object-storage-service.ts`   | S3 写入、签名读取、对象管理和本地媒体迁移                                 |
 | `web/src/lib/server/local-media-registry.ts`     | 媒体用户归属、来源、原名、存储 Provider 和业务关联登记                     |
 | `web/src/lib/server/database/schema.ts`          | PostgreSQL 表、索引、约束和初始化结构                                     |
@@ -86,6 +90,7 @@ DQ/
 | `.github/workflows/quality.yml`                  | Web/Docs 依赖安装、类型检查、测试、格式检查和生产构建                      |
 | `.github/workflows/docker-image.yml`             | 主应用 amd64/arm64 镜像构建、GHCR 推送和 manifest 合并                     |
 | `.github/workflows/docs-docker-image.yml`        | 文档站 amd64/arm64 镜像构建、GHCR 推送和 manifest 合并                     |
+| `.github/workflows/rembg-docker-image.yml`       | rembg sidecar 多架构镜像构建与 GHCR 推送                                  |
 
 页面目录中的 `page.tsx` 是页面入口；同目录 `use-*.ts(x)`、`*-records.ts` 或 `components/` 通常承载该页面私有控制逻辑。服务端同名 `*.test.ts(x)` 用于保护任务、计费、媒体、数据库和协议边界。
 
@@ -99,6 +104,7 @@ DQ/
 | `logical-model-router.ts`    | 逻辑模型到真实渠道、上游模型和候选优先级的解析         |
 | `*-task-store.ts`            | 文本、图片、视频、音频任务的状态、幂等和退款边界       |
 | `generation-task-store.ts`   | 统一生成任务状态机、并发约束和任务认领                 |
+| `background-removal-*`       | 抠图参数、持久任务、sidecar 协议、取消和结果登记        |
 | `generation-log-*`           | 用户生成记录、媒体结果和运营统计                       |
 | `reference-asset-*`          | 参考素材上传、归属校验和给上游使用的短期签名 URL       |
 | `local-media-*`              | 本地媒体登记、分类、引用保护、读取和清理               |
@@ -106,6 +112,25 @@ DQ/
 | `billing-*` / `payment-*`    | 商品、订单、支付、退款、对账和积分入账                 |
 | `canvas-project-*`           | Canvas 项目校验、保存和用户隔离                        |
 | `drama-project-*`            | 短剧剧本、资产、分镜、版本、成本和成片状态             |
+
+## Canvas 抠图请求
+
+```mermaid
+flowchart LR
+    TOOL["图片节点抠图工具"] --> ROUTE["background-removal-tasks API"]
+    ROUTE --> OWNERSHIP["用户、画布、节点与媒体归属校验"]
+    OWNERSHIP --> TASK["image_process 持久任务"]
+    TASK --> QUEUE["全站 FIFO 单推理槽"]
+    QUEUE --> SIDECAR["内网 rembg sidecar"]
+    SIDECAR --> PNG["透明 RGBA PNG"]
+    PNG --> REGISTER["媒体登记与稳定 storageKey"]
+    REGISTER --> NODE["派生图片节点"]
+    TOOL -->|取消| CANCEL["任务终态与 sidecar 子进程终止"]
+    CANCEL --> TASK
+    CANCEL --> SIDECAR
+```
+
+浏览器不直接访问 sidecar。BFF 负责请求频率、画布归属和参数白名单；持久任务负责租约、跨 Worker 单槽、取消和晚到结果隔离；sidecar 只负责图片解码、2K 归一化、CPU 推理和 PNG 输出。
 
 ## 标准页面请求
 
@@ -193,6 +218,8 @@ flowchart LR
     USER["浏览器"] --> HTTPS["HTTPS 域名"]
     HTTPS --> NGINX["宝塔 Nginx 或其他反向代理"]
     NGINX --> APP["DQ-绘图 :3000"]
+    APP --> WORKER["生成 Worker"]
+    WORKER --> REMBG["rembg 内网 Sidecar :7000"]
     APP --> PG[("PostgreSQL 16")]
     APP --> LOCAL["本地持久媒体目录"]
     APP --> OSS["可选 S3 / OSS"]
@@ -200,7 +227,7 @@ flowchart LR
     APP --> PAY["可选支付与 SMTP 服务"]
 ```
 
-标准 Compose 自带 PostgreSQL；宝塔 Compose 使用宿主机 PostgreSQL；外部数据库与低内存 Compose 只运行应用。所有模式共用同一代码和数据契约。
+标准 Compose 自带 PostgreSQL、生成 Worker 和 rembg；宝塔 Compose 使用宿主机 PostgreSQL；外部数据库 Compose 仍包含 Worker 与 rembg；低内存 Compose 只运行应用与 Worker，并要求把 rembg 部署到另一台内网主机。所有模式共用同一任务和数据契约。
 
 ## 查问题的最短路径
 

@@ -102,6 +102,32 @@ describe("image task runtime submission safety", () => {
         expect(mocks.refund).toHaveBeenCalledWith("user-one", "image-one", 1, "image", 1, "image-task:image-one:attempt:1:refund", "record-one");
         expect(state.attempts?.map(({ status }) => status)).toEqual(["failed"]);
     });
+
+    it("passes persisted internal reference urls unchanged to a recovered worker submission", async () => {
+        state = imageTask();
+        state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
+        state.candidateConfigs = [];
+        state.kind = "edit";
+        state.references = [
+            { id: "first", dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/first.png" },
+            { id: "second", dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/second.png" },
+        ];
+        state.mask = { id: "mask", dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/mask.png" };
+        mocks.runOpenAi.mockResolvedValueOnce({ dataUrl: "", pending: { id: "upstream-one", mediaBaseUrl: "https://provider.example", pollBaseUrl: "https://provider.example" } });
+
+        await createImageTaskUpstreamStep(state, "http://internal", "https://public.example", "", "user-one");
+
+        expect(mocks.runOpenAi).toHaveBeenCalledWith(
+            expect.objectContaining({
+                references: [expect.objectContaining({ dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/first.png" }), expect.objectContaining({ dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/second.png" })],
+                mask: expect.objectContaining({ dataUrl: "", url: "/api/reference-assets/temporary/2026/08/03/images/mask.png" }),
+            }),
+            "http://internal",
+            "https://public.example",
+            "worker-context",
+            true,
+        );
+    });
 });
 
 function imageTask(): ImageTask {

@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { DEFAULT_CHANNEL_CONNECT_ERROR } from "@/lib/server/generation-errors";
 import { limitMediaResponseBody, mediaResponseExceedsLimit } from "@/lib/server/media-response-limit";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
-import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
+import { checkMediaProxyRateLimit, fetchSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
 import { resolveLogicalBillingModel } from "@/lib/server/logical-model-router";
 import { readRequestBodyBytes, RequestBodyTooLargeError } from "@/lib/server/request-body-limit";
 import { resolveGlobalAiOpcPathPreset, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
@@ -97,7 +97,6 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     const globalAdaptation = adaptGlobalAiOpcTextRequest(channel.advancedConfig, path, requestBody.body);
     if (globalAdaptation === "responses-unsupported") return NextResponse.json({ error: "该 GlobalAiOpc 原生文本接口不支持 Responses，已切换 Chat 兼容回退。" }, { status: 404 });
     const target = targetUrl(globalPreset?.baseUrl || channel.baseUrl, globalPreset?.apiFormat || apiFormat, globalAdaptation?.path || path, new URL(request.url).search, globalChannel, modelConfig?.protocol || channel.advancedConfig?.protocol);
-    if (!(await isSafeOutboundUrl(target, { allowCredentials: false }))) return NextResponse.json({ error: "接口地址不允许访问内网或保留地址" }, { status: 400 });
     const pointsRequest =
         classifyPointsRequest(request.method, apiFormat, path, contentType, requestBody.pointsPayload, settings.generationPointMultipliers) ||
         classifyConfiguredPointsRequest(
@@ -111,7 +110,9 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             settings.logicalModels,
             settings.generationPointMultipliers,
         );
-    if (pointsRequest?.model && !channelHasModel(channel.models, pointsRequest.model)) return NextResponse.json({ error: "该模型未在后台渠道中启用" }, { status: 403 });
+    if (!isAllowedSystemOperation(request.method, path, upstreamModel, pointsRequest, channel, globalPreset, modelConfig)) {
+        return NextResponse.json({ error: "请求的操作或模型未在后台渠道中启用" }, { status: 403 });
+    }
     const billingModel =
         pointsRequest && pointsRequest.usageKind !== "api" ? resolveLogicalBillingModel(settings.logicalModels, pointsRequest.usageKind, channel.id, pointsRequest.model, request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "") : pointsRequest?.model;
     const pointsIdempotencyBase = normalizePointsIdempotencyKey(request.headers.get(SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER));
@@ -137,7 +138,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
 
     let upstream: Response;
     try {
-        upstream = await fetch(target, {
+        upstream = await fetchSafeOutboundUrl(target, {
             method: request.method,
             headers,
             body: globalAdaptation?.body || requestBody.body,
@@ -186,6 +187,52 @@ function channelHasModel(models: string[], requested: string) {
     );
 }
 
+function isAllowedSystemOperation(
+    method: string,
+    path: string[],
+    requestedModel: string,
+    pointsRequest: PointsRequest | null,
+    channel: { models: string[]; baseUrl: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig },
+    globalPreset: { queryPath?: string } | undefined,
+    modelConfig: { queryPath?: string } | undefined,
+) {
+    if (method.toUpperCase() === "POST") {
+        const model = requestedModel || pointsRequest?.model || "";
+        return Boolean(pointsRequest && model && channelHasModel(channel.models, model));
+    }
+
+    const configuredPaths = [
+        globalPreset?.queryPath,
+        modelConfig?.queryPath,
+        channel.advancedConfig?.queryPath,
+        ...Object.values(channel.advancedConfig?.modelConfigs || {}).map((config) => config?.queryPath),
+        ...Object.values(channel.advancedConfig?.operationConfigs || {}).map((config) => config?.queryPath),
+    ];
+    if (configuredPaths.some((configuredPath) => matchesConfiguredOperationPath(path, configuredPath))) return true;
+
+    // Agnes exposes one documented polling endpoint at the API origin.
+    return isAgnesApiBaseUrl(channel.baseUrl) && channel.models.length > 0 && matchesConfiguredOperationPath(path, "/agnesapi");
+}
+
+function matchesConfiguredOperationPath(path: string[], configuredPath: string | undefined) {
+    if (!configuredPath) return false;
+    const incoming = normalizeOperationPath(`/${path.join("/")}`);
+    const configured = normalizeOperationPath(configuredPath.split("?", 1)[0]);
+    if (!incoming || !configured) return false;
+    const expression = configured
+        .replace(/:(?:task_id|id)\b|\{\{taskId\}\}|\{taskId\}/gi, "__DQ_TASK_ID__")
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/__DQ_TASK_ID__/g, "[^/]+");
+    return new RegExp(`^${expression}$`, "i").test(incoming);
+}
+
+function normalizeOperationPath(value: string) {
+    const clean = value.trim().replace(/^\/+|\/+$/g, "");
+    const segments = clean.split("/").filter(Boolean);
+    if (segments[0]?.toLowerCase() === "v1" || segments[0]?.toLowerCase() === "v1beta") segments.shift();
+    return segments.join("/");
+}
+
 function requestModel(payload: ArrayBuffer | Record<string, unknown> | undefined) {
     return payload && !(payload instanceof ArrayBuffer) ? readRequestModel(payload) : "";
 }
@@ -201,8 +248,6 @@ async function proxySystemMediaRequest(request: Request, channel: SystemMediaCha
     if (request.method !== "GET" && request.method !== "HEAD") return NextResponse.json({ error: "Media proxy only supports GET and HEAD" }, { status: 405 });
     const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, new URL(request.url).searchParams.get("url") || "", isGlobalAiOpcChannel(channel.advancedConfig));
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
-    if (!(await isSafeOutboundUrl(target.url, { allowCredentials: false }))) return NextResponse.json({ error: "媒体地址不允许访问内网或保留地址" }, { status: 400 });
-
     const headers = new Headers();
     const range = request.headers.get("range");
     if (range) headers.set("range", range);
@@ -231,10 +276,9 @@ async function fetchSystemMedia(target: { url: string; includeAuth: boolean }, m
     let includeAuth = target.includeAuth;
     const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(SYSTEM_MEDIA_TIMEOUT_MS)]);
     for (let redirects = 0; redirects <= MAX_SYSTEM_MEDIA_REDIRECTS; redirects += 1) {
-        if (!(await isSafeOutboundUrl(currentUrl, { allowCredentials: false }))) throw new Error("Unsafe media redirect");
         const headers = new Headers(baseHeaders);
         if (!includeAuth) headers.delete("authorization");
-        const upstream = await fetch(currentUrl, { method, headers, cache: "no-store", redirect: "manual", signal });
+        const upstream = await fetchSafeOutboundUrl(currentUrl, { method, headers, cache: "no-store", redirect: "manual", signal }, { allowCredentials: false });
         if (!isRedirectStatus(upstream.status)) return upstream;
         const location = upstream.headers.get("location");
         await upstream.body?.cancel().catch(() => undefined);

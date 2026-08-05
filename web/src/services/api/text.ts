@@ -3,7 +3,7 @@ import type { AiTextMessage } from "@/types/ai";
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
 
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; surface?: "chat" | "canvas" | "drama"; projectId?: string; conversationId?: string; runId?: string; clientRequestId?: string; sourceNodeId?: string; targetNodeId?: string };
 
 export type TextGenerationTask = {
     id: string;
@@ -28,7 +28,13 @@ export async function createTextGenerationTask(config: AiConfig, messages: AiTex
     const response = await fetch("/api/text-tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ config: { model: requestConfig.model }, messages }),
+        body: JSON.stringify({
+            config: { model: requestConfig.model },
+            messages,
+            context: options
+                ? { surface: options.surface, projectId: options.projectId, conversationId: options.conversationId, runId: options.runId, clientRequestId: options.clientRequestId, sourceNodeId: options.sourceNodeId, targetNodeId: options.targetNodeId }
+                : undefined,
+        }),
         signal: options?.signal,
     });
     const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;

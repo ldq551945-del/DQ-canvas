@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     claim: vi.fn(),
+    claimBackground: vi.fn(),
     release: vi.fn(),
     renew: vi.fn(),
     schedule: vi.fn(),
@@ -11,10 +12,13 @@ const mocks = vi.hoisted(() => ({
     getImageTask: vi.fn(),
     getVideoTask: vi.fn(),
     queryVideoTaskUpstream: vi.fn(),
+    getBackgroundRemovalTask: vi.fn(),
+    runBackgroundRemovalTaskStep: vi.fn(),
 }));
 
 vi.mock("@/lib/server/generation-task-scheduler", () => ({
     claimDueGenerationTasks: mocks.claim,
+    claimDueBackgroundRemovalTask: mocks.claimBackground,
     releaseGenerationTaskLease: mocks.release,
     renewGenerationTaskLeases: mocks.renew,
     scheduleGenerationTask: mocks.schedule,
@@ -31,12 +35,16 @@ vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: vi.fn() }));
 vi.mock("@/lib/server/image-task-runtime", () => ({ createImageTaskUpstreamStep: vi.fn(), markImageTaskFailed: vi.fn(), persistImageTaskResult: vi.fn(), queryImageTaskUpstreamStep: vi.fn() }));
 vi.mock("@/lib/server/image-task-store", () => ({ getImageTask: mocks.getImageTask }));
 vi.mock("@/lib/server/text-task-store", () => ({ getTextTask: vi.fn() }));
+vi.mock("@/lib/server/background-removal-task-store", () => ({ getBackgroundRemovalTask: mocks.getBackgroundRemovalTask }));
+vi.mock("@/lib/server/background-removal-task-runtime", () => ({ runBackgroundRemovalTaskStep: mocks.runBackgroundRemovalTaskStep }));
 
 import { runGenerationTaskRecoveryBatch } from "./generation-task-recovery-service";
 
 describe("generation task recovery service", () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        mocks.claim.mockResolvedValue([]);
+        mocks.claimBackground.mockResolvedValue(null);
         mocks.release.mockResolvedValue({});
         mocks.renew.mockResolvedValue(1);
     });
@@ -117,6 +125,58 @@ describe("generation task recovery service", () => {
         expect(mocks.queryVideoTaskUpstream).toHaveBeenCalledWith(task, "http://internal", "", task.userId);
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }));
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it("executes deterministic image processing without manual-review semantics", async () => {
+        const task = { id: "process-one", userId: "user-one", operation: "remove-background", status: "running", createdAt: 1_000 };
+        mocks.claimBackground.mockResolvedValue({ ...lease(), id: task.id, type: "image_process", status: "running" });
+        mocks.getBackgroundRemovalTask.mockResolvedValue(task);
+        mocks.runBackgroundRemovalTaskStep.mockResolvedValue({ state: "completed" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(mocks.schedule).not.toHaveBeenCalled();
+        expect(mocks.runBackgroundRemovalTaskStep).toHaveBeenCalledWith(task);
+        expect(mocks.release).toHaveBeenCalledWith("image_process", task.id, "worker-one", expect.objectContaining({ executionPhase: "completed", nextPollAt: undefined }));
+        expect(result).toMatchObject({ claimed: 1, completed: 1, needsReview: 0 });
+    });
+
+    it("claims only one background-removal task even when the environment requests more", async () => {
+        const previousConcurrency = process.env.DQ_REMBG_CONCURRENCY;
+        process.env.DQ_REMBG_CONCURRENCY = "5";
+        let active = 0;
+        let peak = 0;
+        try {
+            const task = { id: "process-one", userId: "user-one", operation: "remove-background", status: "running", createdAt: 1_000 };
+            mocks.claimBackground.mockResolvedValue({ ...lease(), id: task.id, type: "image_process", status: "running" });
+            mocks.getBackgroundRemovalTask.mockResolvedValue(task);
+            mocks.runBackgroundRemovalTaskStep.mockImplementation(async () => {
+                active += 1;
+                peak = Math.max(peak, active);
+                await new Promise((resolve) => setTimeout(resolve, 10));
+                active -= 1;
+                return { state: "completed" };
+            });
+
+            await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+            expect(peak).toBe(1);
+            expect(mocks.runBackgroundRemovalTaskStep).toHaveBeenCalledOnce();
+        } finally {
+            if (previousConcurrency === undefined) delete process.env.DQ_REMBG_CONCURRENCY;
+            else process.env.DQ_REMBG_CONCURRENCY = previousConcurrency;
+        }
+    });
+
+    it("does not count a cancelled image processing step as completed", async () => {
+        const task = { id: "process-cancelled", userId: "user-one", operation: "remove-background", status: "running", createdAt: 1_000 };
+        mocks.claimBackground.mockResolvedValue({ ...lease(), id: task.id, type: "image_process", status: "running" });
+        mocks.getBackgroundRemovalTask.mockResolvedValue(task);
+        mocks.runBackgroundRemovalTaskStep.mockResolvedValue({ state: "cancelled" });
+
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+
+        expect(result).toMatchObject({ claimed: 1, completed: 0, failed: 1 });
     });
 });
 

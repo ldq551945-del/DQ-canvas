@@ -3,6 +3,8 @@
 out/
 node_modules/
 .pnpm-store/
+.playwright-cli/
+output/
 .env*
 !.env.example
 .data/

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Button, Dropdown, Modal } from "antd";
-import { BookOpen, Images, Menu, Plus, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
+import type { MenuProps } from "antd";
+import { Button, Dropdown } from "antd";
+import { BookOpen, Gauge, Images, Menu, Plus, Redo2, Sparkles, Trash2, Undo2, Upload } from "lucide-react";
 
 import { SiteLogo } from "@/components/layout/site-logo";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import type { CanvasMediaPerformanceMode } from "../types";
 
 export function CanvasTopBar({
     title,
@@ -26,6 +28,9 @@ export function CanvasTopBar({
     onImportImage,
     onUndo,
     onRedo,
+    performanceMode,
+    performanceReduced,
+    onPerformanceModeChange,
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
@@ -46,6 +51,9 @@ export function CanvasTopBar({
     onImportImage: () => void;
     onUndo: () => void;
     onRedo: () => void;
+    performanceMode: CanvasMediaPerformanceMode;
+    performanceReduced: boolean;
+    onPerformanceModeChange: (mode: CanvasMediaPerformanceMode) => void;
     agentOpen: boolean;
     compactAgentStatus?: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
@@ -54,7 +62,6 @@ export function CanvasTopBar({
     const theme = canvasThemes[colorTheme];
     const titleRef = useRef<HTMLDivElement>(null);
     const menuTriggerRef = useRef<HTMLButtonElement>(null);
-    const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
 
     useEffect(() => {
@@ -95,6 +102,12 @@ export function CanvasTopBar({
                                 { key: "projects", icon: <Images className="size-4" />, label: "我的画布", onClick: onProjects },
                                 { type: "divider" },
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
+                                {
+                                    key: "performance-menu",
+                                    icon: <Gauge className="size-4" />,
+                                    label: "性能调节",
+                                    children: performanceMenuItems(performanceMode, performanceReduced, onPerformanceModeChange),
+                                },
                                 { key: "delete", danger: true, icon: <Trash2 className="size-4" />, label: "删除当前画布", onClick: onDeleteProject },
                                 { type: "divider" },
                                 { key: "import", icon: <Upload className="size-4" />, label: "导入素材", onClick: onImportImage },
@@ -138,7 +151,29 @@ export function CanvasTopBar({
 
                 <div className="canvas-topbar-actions pointer-events-auto flex min-w-0 items-center gap-1.5">
                     {compactAgentStatus ? <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} /> : null}
-                    <UserStatusActions variant="canvas" onOpenShortcuts={() => setShortcutsOpen(true)} />
+                    <UserStatusActions variant="canvas" />
+                    <Dropdown
+                        trigger={["click"]}
+                        menu={{
+                            items: performanceMenuItems(performanceMode, performanceReduced, onPerformanceModeChange),
+                            selectable: true,
+                            selectedKeys: [performanceMode],
+                        }}
+                    >
+                        <Button
+                            type="text"
+                            data-canvas-performance-trigger
+                            className="canvas-performance-action !grid !size-10 !min-w-10 !place-items-center !rounded-xl !p-0"
+                            style={{
+                                background: performanceReduced ? theme.toolbar.activeBg : theme.toolbar.panel,
+                                border: `1px solid ${performanceReduced ? theme.node.activeStroke : theme.toolbar.border}`,
+                                color: performanceReduced ? theme.toolbar.activeText : theme.toolbar.item,
+                            }}
+                            icon={<Gauge className="size-4.5" />}
+                            aria-label={`性能模式：${performanceMode === "auto" ? "自动" : performanceMode === "quality" ? "质量优先" : "性能优先"}`}
+                            title="性能调节"
+                        />
+                    </Dropdown>
                     <span className="canvas-topbar-divider h-6 w-px" style={{ background: theme.toolbar.border }} />
                     <Button
                         type="text"
@@ -167,25 +202,20 @@ export function CanvasTopBar({
                     </Button>
                 </div>
             </div>
-            <Modal title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
-                <div className="space-y-2 border-t pt-4 text-sm" style={{ borderColor: theme.node.stroke }}>
-                    <Shortcut keys={["拖动画布"]} value="平移视图" />
-                    <Shortcut keys={["滚轮"]} value="缩放画布" />
-                    <Shortcut keys={["缩放滑杆"]} value="精确调整缩放" />
-                    <Shortcut keys={["Ctrl / Cmd", "拖动"]} value="框选多个节点" />
-                    <Shortcut keys={["Shift / Ctrl / Cmd", "点击"]} value="追加选择节点" />
-                    <Shortcut keys={["Ctrl / Cmd", "A"]} value="全选节点" />
-                    <Shortcut keys={["Ctrl / Cmd", "C / V"]} value="复制 / 粘贴节点，或粘贴剪切板文本/图片" />
-                    <Shortcut keys={["Ctrl / Cmd", "Z"]} value="撤销" />
-                    <Shortcut keys={["Ctrl / Cmd", "Shift", "Z"]} value="重做" />
-                    <Shortcut keys={["Ctrl / Cmd", "Y"]} value="重做" />
-                    <Shortcut keys={["Delete / Backspace"]} value="删除选中" />
-                    <Shortcut keys={["Esc"]} value="取消选择并关闭浮层" />
-                    <Shortcut keys={["拖入图片/视频/音频"]} value="上传到画布" />
-                </div>
-            </Modal>
         </>
     );
+}
+
+function performanceMenuItems(mode: CanvasMediaPerformanceMode, performanceReduced: boolean, onChange: (mode: CanvasMediaPerformanceMode) => void): MenuProps["items"] {
+    return [
+        {
+            key: "auto",
+            label: `自动性能${mode === "auto" && performanceReduced ? "（已启用优化）" : "（按画布规模调整）"}`,
+            onClick: () => onChange("auto"),
+        },
+        { key: "quality", label: "画质优先", onClick: () => onChange("quality") },
+        { key: "performance", label: "性能优先", onClick: () => onChange("performance") },
+    ];
 }
 
 function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
@@ -213,26 +243,5 @@ function CompactAgentStatus({ status, onClick }: { status: { connected: boolean;
             <span className="size-2 rounded-full" style={{ background: dotColor }} />
             <span className="max-w-[180px] truncate">{label}</span>
         </button>
-    );
-}
-
-function Shortcut({ keys, value }: { keys: string[]; value: string }) {
-    return (
-        <div className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-6 rounded-lg px-1 py-1.5">
-            <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {keys.map((key, index) => (
-                    <span key={`${key}-${index}`} className="flex items-center gap-1.5">
-                        {index ? <span className="text-xs opacity-35">+</span> : null}
-                        <kbd
-                            className="min-w-9 rounded-md border px-2.5 py-1.5 text-center text-xs font-medium leading-none shadow-[inset_0_-1px_0_rgba(0,0,0,.08),0_1px_2px_rgba(0,0,0,.06)]"
-                            style={{ borderColor: "rgba(120,113,108,.28)", background: "linear-gradient(#fff, rgba(245,245,244,.92))", color: "rgb(68,64,60)" }}
-                        >
-                            {key}
-                        </kbd>
-                    </span>
-                ))}
-            </span>
-            <span className="text-right text-sm opacity-55">{value}</span>
-        </div>
     );
 }

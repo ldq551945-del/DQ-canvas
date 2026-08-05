@@ -127,6 +127,17 @@ describe("reference asset access", () => {
         expect(mocks.acquire).not.toHaveBeenCalled();
     });
 
+    it("does not expose expired object-backed media metadata through HEAD", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
+        mocks.registration.mockResolvedValue({ ownerUserId: "owner", storageProvider: "object", mimeType: "image/png", bytes: 5, expiresAt: new Date(Date.now() - 1_000).toISOString() });
+
+        const response = await HEAD(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png", { method: "HEAD" }), context);
+
+        expect(response.status).toBe(404);
+        expect(mocks.head).not.toHaveBeenCalled();
+        expect(mocks.externalRead).not.toHaveBeenCalled();
+    });
+
     it("marks authenticated original HEAD downloads as attachments", async () => {
         mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
         mocks.registration.mockResolvedValue({ ownerUserId: "owner", storageProvider: "object", mimeType: "video/quicktime", bytes: 5, originalName: "generated-video" });

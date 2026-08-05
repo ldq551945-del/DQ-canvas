@@ -25,6 +25,7 @@ type AuthFormProps = {
     initialReferralCode?: string;
     referralSource?: string;
     inviteError?: string;
+    bootstrapToken?: string;
 };
 
 export function AuthForm({
@@ -40,6 +41,7 @@ export function AuthForm({
     initialReferralCode = "",
     referralSource = "registration-form",
     inviteError,
+    bootstrapToken = "",
 }: AuthFormProps) {
     const router = useRouter();
     const { message } = App.useApp();
@@ -63,7 +65,7 @@ export function AuthForm({
         try {
             const response = await fetch(isRegister ? "/api/auth/register" : "/api/auth/login", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...(isRegister && firstUser && bootstrapToken.trim() ? { Authorization: `Bearer ${bootstrapToken.trim()}` } : {}) },
                 body: JSON.stringify({ username, email, emailCode, displayName, password, referralCode: isRegister && !firstUser ? referralCode : undefined, referralSource }),
             });
             const payload = (await response.json()) as { user?: LocalUser; error?: string };

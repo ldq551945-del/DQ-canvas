@@ -34,10 +34,12 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
         setToolbarNodeId,
         setDialogNodeId,
         setIsNodeDragging,
+        canvasTool,
         nodesRef,
         selectedNodeIdsRef,
         viewportRef,
         connectingParamsRef,
+        connectingPointerStartRef,
         connectionTargetNodeIdRef,
         selectionBoxRef,
         pendingConnectionCreateRef,
@@ -50,7 +52,8 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
             if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
             if (event.button !== 0) return;
 
-            if (!event.ctrlKey && !event.metaKey) {
+            const isBoxSelection = canvasTool === "box-select" || event.ctrlKey || event.metaKey;
+            if (!isBoxSelection) {
                 setSelectionBox(null);
                 setSelectedNodeIds(new Set());
                 setSelectedConnectionId(null);
@@ -74,11 +77,12 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
 
             setSelectedConnectionId(null);
         },
-        [cancelPendingConnectionCreate, screenToCanvas],
+        [cancelPendingConnectionCreate, canvasTool, screenToCanvas],
     );
 
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent | ReactPointerEvent, nodeId: string) => {
         event.stopPropagation();
+        if (event.button !== 0) return;
         if ("pointerId" in event && event.currentTarget instanceof Element) {
             event.currentTarget.setPointerCapture(event.pointerId);
         }
@@ -103,17 +107,40 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
         }
 
         setSelectedNodeIds(nextSelected);
+        if ((event.shiftKey || event.metaKey || event.ctrlKey) && !nextSelected.has(nodeId)) {
+            dragRef.current = { isDraggingNode: false, hasMoved: false, startX: event.clientX, startY: event.clientY, initialSelectedNodes: [] };
+            return;
+        }
+        const clickedNode = currentNodes.find((node) => node.id === nodeId);
+        if (clickedNode?.metadata?.locked) {
+            dragRef.current = { isDraggingNode: false, hasMoved: false, startX: event.clientX, startY: event.clientY, initialSelectedNodes: [] };
+            if (clickedNode.type === CanvasNodeType.Drawing) setDialogNodeId(null);
+            else if (clickedNode.type === CanvasNodeType.Text) setDialogNodeId((current) => (current === nodeId ? current : null));
+            else setDialogNodeId(nodeId);
+            return;
+        }
         const dragIds = new Set(nextSelected);
         currentNodes.forEach((node) => {
             if (nextSelected.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => dragIds.add(childId));
         });
+        const selectedGroups = new Set(
+            currentNodes
+                .filter((node) => nextSelected.has(node.id) && node.metadata?.groupId)
+                .map((node) => node.metadata?.groupId)
+                .filter((id): id is string => Boolean(id)),
+        );
+        if (selectedGroups.size)
+            currentNodes.forEach((node) => {
+                if (node.metadata?.groupId && selectedGroups.has(node.metadata.groupId)) dragIds.add(node.id);
+            });
         dragRef.current = {
             isDraggingNode: true,
             hasMoved: false,
             startX: event.clientX,
             startY: event.clientY,
-            initialSelectedNodes: currentNodes.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
+            initialSelectedNodes: currentNodes.filter((node) => dragIds.has(node.id) && !node.metadata?.locked).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
         };
+        if (!dragRef.current.initialSelectedNodes.length) return;
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
@@ -144,6 +171,11 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
                     return { ...node, position: { x: initial.x + dx, y: initial.y + dy } };
                 }),
             );
+        } else if (dragRef.current.hasMoved) {
+            // A cancelled pointer sequence has already applied its last RAF position.
+            // Clone it once after unpausing history so persistence and undo receive that final state.
+            const movedIds = new Set(initialPositions.map((item) => item.id));
+            setNodes((prev) => prev.map((node) => (movedIds.has(node.id) ? { ...node, position: { ...node.position } } : node)));
         }
 
         dragRef.current.isDraggingNode = false;
@@ -250,16 +282,31 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
 
             const currentConnection = connectingParamsRef.current;
             if (!currentConnection) return;
+            const start = connectingPointerStartRef.current;
+            const isQuickCreate = Boolean(start && Math.hypot(clientX - start.clientX, clientY - start.clientY) <= 5);
+            if (isQuickCreate) {
+                const source = nodesRef.current.find((node) => node.id === currentConnection.nodeId);
+                const side = currentConnection.handleType === "source" ? 1 : -1;
+                const position = source ? { x: source.position.x + (side > 0 ? source.width + 48 : -48), y: source.position.y + source.height * (currentConnection.anchorRatio ?? 0.5) } : screenToCanvas(clientX, clientY);
+                setMouseWorld(position);
+                setPendingConnectionCreate({ connection: currentConnection, position, quick: true });
+                connectingPointerStartRef.current = null;
+                setConnecting(null);
+                return;
+            }
             const dropTarget = getConnectionDropTarget(clientX, clientY, currentConnection);
             if (dropTarget.nodeId) {
-                connectNodes(currentConnection, dropTarget.nodeId);
+                connectNodes(currentConnection, dropTarget.nodeId, dropTarget.handleId, dropTarget.anchorRatio);
+                connectingPointerStartRef.current = null;
                 setConnecting(null);
             } else if (dropTarget.isNearNode) {
+                connectingPointerStartRef.current = null;
                 setConnecting(null);
             } else {
                 const position = screenToCanvas(clientX, clientY);
                 setMouseWorld(position);
                 setPendingConnectionCreate({ connection: currentConnection, position });
+                connectingPointerStartRef.current = null;
             }
         },
         [connectNodes, getConnectionDropTarget, screenToCanvas, setConnecting],
@@ -285,12 +332,24 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
                 finishConnectionAt(event.clientX, event.clientY);
             }
         };
-        const cancelNodeDrag = () => finishNodeDrag();
+        const cancelNodeDrag = () => {
+            finishNodeDrag();
+            selectionBoxRef.current = null;
+            setSelectionBox(null);
+            setConnectionTargetNodeId(null);
+            connectingPointerStartRef.current = null;
+            if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
+            setConnecting(null);
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") cancelNodeDrag();
+        };
         window.addEventListener("mousemove", handleGlobalMouseMove);
         window.addEventListener("mouseup", handleGlobalMouseUp);
         window.addEventListener("pointerup", handlePointerUp);
         window.addEventListener("pointercancel", cancelNodeDrag);
         window.addEventListener("blur", cancelNodeDrag);
+        window.addEventListener("keydown", handleKeyDown);
         window.addEventListener("pointermove", handleGlobalPointerMove);
         return () => {
             window.removeEventListener("mousemove", handleGlobalMouseMove);
@@ -298,9 +357,10 @@ export function useCanvasPointerInteractions({ state, core }: { state: CanvasPag
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", cancelNodeDrag);
             window.removeEventListener("blur", cancelNodeDrag);
+            window.removeEventListener("keydown", handleKeyDown);
             window.removeEventListener("pointermove", handleGlobalPointerMove);
         };
-    }, [finishConnectionAt, finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
+    }, [cancelPendingConnectionCreate, finishConnectionAt, finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
     return {
         handleCanvasMouseDown,
         handleNodeMouseDown,

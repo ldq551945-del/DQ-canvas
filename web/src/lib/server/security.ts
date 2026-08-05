@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { Agent, buildConnector, ProxyAgent } from "undici";
 
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
+import { getOutboundProxyUrl } from "@/lib/server/proxy-dispatcher";
 
 type RateLimitConfig = {
     maxRequests: number;
@@ -15,7 +17,7 @@ export type RateLimitResult = {
     resetAt: number;
 };
 
-export type GenerationRateLimitType = "text" | "image" | "video" | "audio" | "agent" | "render";
+export type GenerationRateLimitType = "text" | "image" | "video" | "audio" | "agent" | "render" | "image_process";
 
 const generationRateLimits: Record<GenerationRateLimitType, RateLimitConfig> = {
     agent: { maxRequests: 10, windowMs: 60 * 1000 },
@@ -24,6 +26,7 @@ const generationRateLimits: Record<GenerationRateLimitType, RateLimitConfig> = {
     audio: { maxRequests: 20, windowMs: 60 * 1000 },
     text: { maxRequests: 30, windowMs: 60 * 1000 },
     render: { maxRequests: 6, windowMs: 60 * 1000 },
+    image_process: { maxRequests: 30, windowMs: 60 * 1000 },
 };
 
 const mediaProxyRateLimit: RateLimitConfig = { maxRequests: 120, windowMs: 60 * 1000 };
@@ -33,6 +36,8 @@ const publicMediaResourceRateLimit: RateLimitConfig = { maxRequests: 2400, windo
 const publicMediaIpRateLimit: RateLimitConfig = { maxRequests: 240, windowMs: 60 * 1000 };
 
 const blockedHostnames = ["metadata.google.internal", "metadata.goog", "metadata.azure.com", "instance-data"];
+const MAX_OUTBOUND_DISPATCHERS = 128;
+const outboundDispatchers = new Map<string, Agent | ProxyAgent>();
 
 const globalSecurityStore = globalThis as typeof globalThis & {
     __dqRateLimits?: Map<string, { count: number; resetAt: number }>;
@@ -148,15 +153,38 @@ function checkMemoryRateLimit(key: string, config: RateLimitConfig) {
     return { allowed: true, remaining: config.maxRequests - current.count, resetAt: current.resetAt };
 }
 
-export async function isSafeOutboundUrl(value: string, options?: { allowCredentials?: boolean }) {
+export async function isSafeOutboundUrl(value: string, options?: { allowCredentials?: boolean; allowPrivateUpstreams?: boolean }) {
+    return Boolean(await resolveSafeOutboundUrl(value, options));
+}
+
+/**
+ * Resolves a URL once and returns an address-pinned dispatcher. Callers must use
+ * fetchSafeOutboundUrl rather than resolving first and fetching the hostname.
+ */
+export async function fetchSafeOutboundUrl(value: string | URL, init?: RequestInit, options?: { allowCredentials?: boolean; allowPrivateUpstreams?: boolean }) {
+    const target = await resolveSafeOutboundUrl(value.toString(), options);
+    if (!target) throw new Error("Unsafe outbound URL");
+    const proxyUrl = getOutboundProxyUrl();
+    const url = proxyUrl ? pinnedOutboundUrl(target.url, target.address) : target.url;
+    const headers = new Headers(init?.headers);
+    if (proxyUrl) headers.set("host", target.url.host);
+    return fetch(url, { ...init, headers, dispatcher: outboundDispatcher(target.hostname, target.address, proxyUrl) } as RequestInit);
+}
+
+export async function resolveSafeOutboundUrl(value: string, options?: { allowCredentials?: boolean; allowPrivateUpstreams?: boolean }) {
     try {
         const url = new URL(value);
-        if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-        if (!options?.allowCredentials && (url.username || url.password)) return false;
-        if (privateUpstreamHostAllowed(url.hostname)) return true;
-        return isSafeOutboundHost(url.hostname);
+        if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+        if (!options?.allowCredentials && (url.username || url.password)) return null;
+        const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+        const addresses = await resolveOutboundAddresses(hostname);
+        if (!addresses.length) return null;
+        const privateAllowed = options?.allowPrivateUpstreams !== false && privateUpstreamHostAllowed(hostname);
+        const directIp = Boolean(isIP(hostname));
+        const addressesAllowed = privateAllowed || addresses.every((address) => isPublicIpAddress(address) || (!directIp && process.env.DQ_ALLOW_FAKE_IP_DNS === "1" && isClashFakeIpAddress(address)));
+        return addressesAllowed ? { url, hostname, address: addresses[0] } : null;
     } catch {
-        return false;
+        return null;
     }
 }
 
@@ -175,22 +203,48 @@ function privateUpstreamHostAllowed(hostname: string) {
         .includes(host);
 }
 
-async function isSafeOutboundHost(hostname: string) {
+async function resolveOutboundAddresses(hostname: string) {
     const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (!host || host === "localhost" || host.endsWith(".localhost")) return false;
-    if (blockedHostnames.some((blocked) => host === blocked || host.endsWith(`.${blocked}`) || host.includes(blocked))) return false;
+    if (!host || host === "localhost" || host.endsWith(".localhost")) return [];
+    if (blockedHostnames.some((blocked) => host === blocked || host.endsWith(`.${blocked}`) || host.includes(blocked))) return [];
 
     const directIpVersion = isIP(host);
-    if (directIpVersion) return isPublicIpAddress(host);
+    if (directIpVersion) return [host];
 
     try {
         const addresses = await lookup(host, { all: true, verbatim: true });
-        if (!addresses.length) return false;
-        if (addresses.every((address) => isPublicIpAddress(address.address))) return true;
-        return process.env.DQ_ALLOW_FAKE_IP_DNS === "1" && addresses.every((address) => isClashFakeIpAddress(address.address));
+        return [...new Set(addresses.map((address) => address.address))];
     } catch {
-        return false;
+        return [];
     }
+}
+
+function pinnedOutboundUrl(url: URL, address: string) {
+    const pinned = new URL(url);
+    pinned.hostname = address;
+    return pinned;
+}
+
+function outboundDispatcher(hostname: string, address: string, proxyUrl: string) {
+    const key = `${proxyUrl}\u0000${hostname}\u0000${address}`;
+    const existing = outboundDispatchers.get(key);
+    if (existing) return existing;
+
+    if (outboundDispatchers.size >= MAX_OUTBOUND_DISPATCHERS) {
+        const oldest = outboundDispatchers.entries().next().value as [string, Agent | ProxyAgent] | undefined;
+        if (oldest) {
+            outboundDispatchers.delete(oldest[0]);
+            void oldest[1].destroy();
+        }
+    }
+    const connector = buildConnector({});
+    const dispatcher = proxyUrl
+        ? new ProxyAgent({ uri: proxyUrl, requestTls: isIP(hostname) ? undefined : { servername: hostname } })
+        : new Agent({
+              connect: (connection, callback) => connector({ ...connection, hostname: address, servername: isIP(hostname) ? undefined : hostname }, callback),
+          });
+    outboundDispatchers.set(key, dispatcher);
+    return dispatcher;
 }
 
 export function isClashFakeIpAddress(address: string) {

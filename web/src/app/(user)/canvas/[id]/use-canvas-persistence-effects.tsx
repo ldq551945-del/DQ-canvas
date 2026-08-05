@@ -5,6 +5,7 @@ import { useCallback, useEffect, useLayoutEffect } from "react";
 
 import { isGenerationTaskNeedsReviewError } from "@/services/api/generation-task-state";
 import { CanvasNodeType, isCanvasImageNodeType } from "../types";
+import { clearCanvasBackgroundRemovalTaskMetadata, clearHandledCanvasBackgroundRemovalTaskMetadataFromNodes } from "../utils/canvas-active-task-binding";
 import { classifyCanvasVideoTaskFailure } from "./canvas-video-task-recovery";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
@@ -12,7 +13,7 @@ const loadAssetPickerModal = () => import("../components/asset-picker-modal").th
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 
 import { NODE_STATUS_ERROR, NODE_STATUS_LOADING } from "./canvas-page-elements";
-import { buildGenerationConfig, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled } from "./canvas-page-utils";
+import { buildGenerationConfig, canvasNodesEqualIgnoringTaskMetadata, hydrateAssistantImages, hydrateCanvasImages, isGenerationCanceled } from "./canvas-page-utils";
 
 import type { CanvasPageState } from "./use-canvas-page-state";
 import type { CanvasTaskRuntime } from "./use-canvas-task-runtime";
@@ -155,8 +156,21 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         resumingVideoTaskIdsRef,
         resumingTextTaskIdsRef,
         resumingAudioTaskIdsRef,
+        backgroundRemovalHandledTaskIdsRef,
     } = state;
-    const { createHistoryEntry, startGenerationRequest, finishGenerationRequest, stopGenerationByRunningId, confirmStopGeneration, completeVideoTask, completeImageTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
+    const {
+        createHistoryEntry,
+        startGenerationRequest,
+        attachGenerationTask,
+        finishGenerationRequest,
+        stopGenerationByRunningId,
+        confirmStopGeneration,
+        completeVideoTask,
+        completeImageTask,
+        startAndCompleteImageTask,
+        completeTextTask,
+        completeAudioTask,
+    } = tasks;
     const deferReviewedTask = (nodeId: string, taskField: "imageTask" | "videoTask" | "textTask" | "audioTask", errorDetails: string) => {
         setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
         window.setTimeout(() => {
@@ -183,9 +197,17 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
         setProjectLoaded(false);
         void loadProject(projectId)
             .then(async (project) => {
-                const restoredNodes = await hydrateCanvasImages(project.nodes);
+                const restoredNodes = (await hydrateCanvasImages(project.nodes)).map((node) => {
+                    const handledTaskId = node.metadata?.backgroundRemovalHandledTaskId;
+                    return handledTaskId ? clearCanvasBackgroundRemovalTaskMetadata(node, handledTaskId) : node;
+                });
                 const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
                 if (cancelled) return;
+                backgroundRemovalHandledTaskIdsRef.current.clear();
+                restoredNodes.forEach((node) => {
+                    const taskId = node.metadata?.backgroundRemovalHandledTaskId;
+                    if (taskId) backgroundRemovalHandledTaskIdsRef.current.add(taskId);
+                });
                 setNodes(restoredNodes);
                 setConnections(project.connections);
                 setChatSessions(restoredSessions);
@@ -228,6 +250,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             if (!task || resumingImageTaskIdsRef.current.has(node.id)) return;
             resumingImageTaskIdsRef.current.add(node.id);
             const controller = startGenerationRequest(node.id, node.id, node.id);
+            attachGenerationTask(node.id, controller, { id: task.id, type: "image" });
             const generationConfig = buildGenerationConfig(effectiveConfig, node, "image");
             setRunningNodeId((current) => current || node.id);
             void completeImageTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
@@ -247,7 +270,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 });
         });
-    }, [completeImageTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+    }, [attachGenerationTask, completeImageTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -257,6 +280,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             if (!task || resumingVideoTaskIdsRef.current.has(node.id)) return;
             resumingVideoTaskIdsRef.current.add(node.id);
             const controller = startGenerationRequest(node.id, node.id, node.id);
+            attachGenerationTask(node.id, controller, { id: task.id, type: "video" });
             const generationConfig = buildGenerationConfig(effectiveConfig, node, "video");
             setRunningNodeId((current) => current || node.id);
             void completeVideoTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
@@ -283,7 +307,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 });
         });
-    }, [completeVideoTask, deferVideoTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+    }, [attachGenerationTask, completeVideoTask, deferVideoTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -293,6 +317,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             if (!task || resumingTextTaskIdsRef.current.has(node.id)) return;
             resumingTextTaskIdsRef.current.add(node.id);
             const controller = startGenerationRequest(node.id, node.id, node.id);
+            attachGenerationTask(node.id, controller, { id: task.id, type: "text" });
             const generationConfig = buildGenerationConfig(effectiveConfig, node, "text");
             setRunningNodeId((current) => current || node.id);
             void completeTextTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
@@ -312,7 +337,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 });
         });
-    }, [completeTextTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+    }, [attachGenerationTask, completeTextTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
         if (!projectLoaded) return;
@@ -322,6 +347,7 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
             if (!task || resumingAudioTaskIdsRef.current.has(node.id)) return;
             resumingAudioTaskIdsRef.current.add(node.id);
             const controller = startGenerationRequest(node.id, node.id, node.id);
+            attachGenerationTask(node.id, controller, { id: task.id, type: "audio" });
             const generationConfig = buildGenerationConfig(effectiveConfig, node, "audio");
             setRunningNodeId((current) => current || node.id);
             void completeAudioTask(node.id, generationConfig, task, controller, node.metadata?.prompt)
@@ -341,14 +367,15 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
                     setRunningNodeId((current) => (current === node.id ? null : current));
                 });
         });
-    }, [completeAudioTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
+    }, [attachGenerationTask, completeAudioTask, effectiveConfig, finishGenerationRequest, message, nodes, projectLoaded, startGenerationRequest]);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
         const next = createHistoryEntry();
         const previous = lastHistoryRef.current;
         if (
-            previous?.nodes === next.nodes &&
+            previous &&
+            canvasNodesEqualIgnoringTaskMetadata(previous.nodes, next.nodes) &&
             previous.connections === next.connections &&
             previous.chatSessions === next.chatSessions &&
             previous.activeChatId === next.activeChatId &&
@@ -386,7 +413,8 @@ export function useCanvasPersistenceEffects({ state, tasks }: { state: CanvasPag
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
-        updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
+        const persistedNodes = clearHandledCanvasBackgroundRemovalTaskMetadataFromNodes(nodes);
+        updateProject(projectId, { nodes: persistedNodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
     }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
     useEffect(() => {

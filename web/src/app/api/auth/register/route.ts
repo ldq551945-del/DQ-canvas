@@ -5,6 +5,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { serializeCurrentUser, setSessionCookie } from "@/lib/auth/session";
 import { checkRateLimit, getClientIp } from "@/lib/server/security";
 import { getInstallStatus } from "@/lib/server/install-status";
+import { isAuthorizedMaintenanceRequest, isMaintenanceTokenConfigured } from "@/lib/server/maintenance-auth";
 import { REFERRAL_COOKIE_NAME } from "@/lib/server/referral-service";
 
 export const runtime = "nodejs";
@@ -13,6 +14,8 @@ export async function POST(request: NextRequest) {
     try {
         const install = await getInstallStatus();
         if (!install.ready && !install.firstAdminRequired) return NextResponse.json({ error: "请先完成数据库初始化并配置加密密钥" }, { status: 503 });
+        if (install.firstAdminRequired && !isMaintenanceTokenConfigured()) return NextResponse.json({ error: "请先配置至少 32 位的 DQ_MAINTENANCE_TOKEN" }, { status: 503 });
+        if (install.firstAdminRequired && !isAuthorizedMaintenanceRequest(request)) return NextResponse.json({ error: "首次管理员创建认证失败" }, { status: 401 });
         const body = await readJsonBody<{ username?: string; email?: string; emailCode?: string; displayName?: string; password?: string; referralCode?: string; referralSource?: string }>(request);
         const referralCodeProvided = Object.prototype.hasOwnProperty.call(body, "referralCode");
         const cookieReferralCode = request.cookies.get(REFERRAL_COOKIE_NAME)?.value;

@@ -3,7 +3,7 @@ import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import { CanvasNodeType, isCanvasImageNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 import { canvasDrawingReferenceImage } from "./canvas-drawing-storage";
 
-type CanvasResourceKind = "image" | "video" | "audio" | "text";
+export type CanvasResourceKind = "image" | "video" | "audio" | "text" | "skill";
 
 export type CanvasResourceReference = {
     id: string;
@@ -14,7 +14,12 @@ export type CanvasResourceReference = {
     previewUrl?: string;
     text?: string;
     active: boolean;
+    skillId?: string;
 };
+
+export function canvasResourceMentionToken(reference: CanvasResourceReference) {
+    return reference.kind === "skill" && reference.skillId ? `@[skill:${reference.skillId}]` : `@[node:${reference.nodeId}]`;
+}
 
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connections: CanvasConnection[], contextNodeId?: string | null) {
     const contextNodes = contextNodeId ? getMentionResourceNodes(contextNodeId, nodes, connections) : [];
@@ -25,6 +30,10 @@ export function buildCanvasResourceReferences(nodes: CanvasNodeData[], connectio
 
 export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
     return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+}
+
+export function buildSkillResourceReferences(skills: Array<{ id: string; name: string; description?: string }>): CanvasResourceReference[] {
+    return skills.map((skill) => ({ id: `skill:${skill.id}`, nodeId: `skill:${skill.id}`, kind: "skill", skillId: skill.id, label: skill.name, title: skill.name, text: skill.description, active: true }));
 }
 
 function getMentionResourceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
@@ -58,7 +67,7 @@ function getConnectedConfigResourceNodes(nodeId: string, nodes: CanvasNodeData[]
 }
 
 function labelResourceNodes(nodes: CanvasNodeData[], active: boolean) {
-    const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
+    const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0, skill: 0 };
     let drawingCount = 0;
     return nodes.flatMap((node): CanvasResourceReference[] => {
         const kind = resourceKind(node);
@@ -85,6 +94,7 @@ function labelForKind(kind: CanvasResourceKind, index: number) {
     if (kind === "image") return imageReferenceLabel(index);
     if (kind === "video") return seedanceReferenceLabel("video", index);
     if (kind === "audio") return seedanceReferenceLabel("audio", index);
+    if (kind === "skill") return `Skill ${index + 1}`;
     return `文本${index + 1}`;
 }
 

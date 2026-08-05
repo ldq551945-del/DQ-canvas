@@ -31,6 +31,20 @@ description: DQ-绘图 环境变量、模型渠道、服务器媒体与支付配
 | `DQ_GENERATION_WORKER_STALE_MS`     | 否               | 就绪检查判定 Worker 失联的窗口，默认 90000ms                                          |
 | `DQ_GENERATION_WEBHOOK_SECRET`      | 回调可选         | 通用生成回调 HMAC-SHA256 密钥，启用时至少 32 个字符                                   |
 | `DQ_APP_URL`                        | 文档站可选       | 独立文档站使用的主应用地址，使文档 favicon 跟随后台站点图标                           |
+| `DQ_REMBG_URL`                      | 默认 Compose 可选；低内存必填 | 留空时标准/外部数据库 Compose 使用 `http://rembg:7000`，宝塔使用 `http://127.0.0.1:7000`；低内存部署填写仅内网可达的外部地址 |
+| `DQ_REMBG_INTERNAL_TOKEN`           | 跨主机推荐       | rembg sidecar 的 Bearer Token；与 sidecar 配置一致，只保存在服务端环境变量             |
+| `DQ_REMBG_IMAGE`                    | 否               | Compose 使用的 rembg 镜像，默认 `ghcr.io/dao-qin/dq-rembg:latest`                       |
+| `DQ_REMBG_MODEL`                    | 否               | `/readyz` 启动基线模型，默认 `silueta`；画布 V3 任务可从镜像内固定白名单手动选模       |
+| `DQ_REMBG_CONCURRENCY`              | 否               | rembg 推理并发，默认且硬限制为 1；其他图片、视频、文本任务不受此槽位限制               |
+| `DQ_REMBG_CPUS`                     | 否               | Compose 为 sidecar 设置的 CPU 上限，默认 `2.0`；同时写入普通 Compose 与 `deploy.resources` |
+| `DQ_REMBG_MEMORY_LIMIT`             | 否               | Compose 为 sidecar 设置的内存上限，默认 `5g`；同时写入普通 Compose 与 `deploy.resources` |
+| `DQ_REMBG_OMP_NUM_THREADS`          | 否               | 单次 CPU 计算线程数，默认 2；Compose 同步到 ONNX、OpenMP、OpenBLAS 与 MKL              |
+| `DQ_REMBG_ONNX_INTER_OP_THREADS`    | 否               | ONNX inter-op 线程，固定为 1                                                           |
+| `DQ_REMBG_ALPHA_MATTING_TILE_PIXELS`| 否               | 原尺寸 Alpha Matting 单块像素预算，默认 1,048,576；控制单块求解内存，不限制整图或输出尺寸 |
+| `DQ_REMBG_TIMEOUT_SECONDS`          | 否               | 单次推理超时，默认 120 秒                                                              |
+| `DQ_REMBG_QUEUE_TIMEOUT_SECONDS`    | 否               | 等待推理槽位超时，默认 30 秒                                                           |
+| `DQ_REMBG_CANCEL_TIMEOUT_MS`        | 否               | BFF 等待 sidecar 完成子进程清理的超时，默认 15000ms                                   |
+| `DQ_REMBG_CANCEL_TOMBSTONE_SECONDS` | 否               | sidecar 保留取消标记的时间，默认 600 秒，最大 3600 秒                                  |
 | `FFMPEG_PATH`                              | 否               | 本机 FFmpeg 不在 PATH 时填写；Docker 已内置 FFmpeg                                    |
 | `FFPROBE_PATH`                             | 否               | 可选的 FFprobe 路径；默认使用 `FFMPEG_PATH` 同目录二进制或系统 PATH                   |
 | `DQ_CONTENT_MODERATION_PROVIDER`    | 否               | 作品审核信号 Provider：`manual`、`keywords` 或 `http`，默认人工审核                   |
@@ -109,6 +123,46 @@ ALL_PROXY=http://proxy-host:7890
 ```
 
 代理变量只作用于服务端请求，不会下发给浏览器。
+
+## Canvas 抠图服务
+
+Canvas 图片组件的“抠图”操作由 rembg sidecar 执行。主应用 BFF 先验证当前用户和
+Canvas 归属，再以原始图片字节调用：
+
+```text
+POST ${DQ_REMBG_URL}/v1/remove
+Content-Type: image/png | image/jpeg | image/webp
+Authorization: Bearer ${DQ_REMBG_INTERNAL_TOKEN}  # 配置 Token 时发送
+```
+
+成功响应为 `image/png`，并带有实际任务模型的 `x-rembg-model`、
+`x-rembg-input-width` 和 `x-rembg-input-height` 响应头。V3 参数快照可逐任务选择
+`u2net`（通用）、`isnet-general-use`（高精通用）、`u2net_human_seg`（人像）、
+`isnet-anime`（动漫插画）或默认的 `silueta`（轻量通用）；V1/V2 历史快照仍按 `u2net` 读取。
+自定义表同时提供 rembg 官方 UI 的“官方精细”组合：Alpha Matting 开启、前景/背景
+阈值 240/10、边缘细化 40、蒙版后处理开启。所有新任务强制输出带 Alpha 通道的透明
+RGBA PNG；历史已完成的蒙版或纯色素材保持可读，不会重写。
+
+服务端限制单张输入和输出各 30MB并拒绝动图；EXIF 校正后最长边超过 2048px 或源图
+超过 64,000,000 像素时，主应用会等比缩至最长边 2048px，小图不会放大。sidecar 在
+模型入口再次验证 64,000,000 像素和 2K 上限。用户级每分钟 30 次、同源节点限制和结果
+写入媒体库由 BFF 负责。前端只拿到主应用返回的媒体引用，不应读取 sidecar 地址或 Token。
+
+默认 Compose 会创建 `rembg` 容器；低内存 Compose 不会创建该容器，必须先准备外部
+服务。五个白名单模型已在镜像构建阶段下载并校验到 `/models`，标准 Compose 不再给
+该路径挂载命名卷，避免旧卷或空卷遮蔽镜像内权重。更新模型白名单时需要拉取新版
+sidecar 镜像，而不是修改任意请求参数。模型权重与 rembg 软件的许可证分开核对：
+软件为 MIT，权重条款以各模型卡为准，不要把软件许可证自动套用到模型权重。
+
+标准、本地构建、外部数据库和宝塔 Compose 默认把 rembg 限制为 `2.0` CPU 与 `5g`
+内存，并把同一变量同时写入顶层 `cpus`/`mem_limit` 和
+`deploy.resources.limits`：前者覆盖普通 `docker compose`，后者覆盖采用 Deploy
+资源语义的部署方式。这里声明的是容器可使用的上限，不是预留量；主机仍需为 App、
+Worker、数据库和系统保留资源。默认 `DQ_REMBG_OMP_NUM_THREADS=2`，并同步到
+OpenMP、OpenBLAS 与 MKL，使 ONNX 推理和 Alpha 求解都可使用两个 CPU 核心；
+`DQ_REMBG_CONCURRENCY=1` 表示全站同一时间只执行一个 rembg 推理；PostgreSQL advisory
+lock 与任务租约保证多 worker 不会突破该槽位，其余任务按 `created_at, id` FIFO 排队。
+`DQ_REMBG_ALPHA_MATTING_TILE_PIXELS=1048576` 限制每个 Alpha 求解分块的像素量和内存峰值。
 
 Clash Verge / Mihomo 使用 TUN Fake-IP 模式时，容器中的公网域名可能解析为 `198.18.0.0/15`，而不是目标站点的真实公网地址。确认 Docker 容器的直接外网请求已经由 Clash 接管后，可以显式开启：
 

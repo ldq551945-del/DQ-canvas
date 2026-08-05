@@ -1,0 +1,30 @@
+DQ-绘图
+
+Portions of the Canvas image-node annotation, emotion editing, portrait
+texture, canvas locking, and multi-angle workflows are adapted from:
+
+  Open AI Canvas
+  https://github.com/ddcat-ai/open-ai-canvas
+  Source revision reviewed: 0c4c258a521cb10c775a8d1d8164432fae3d1504
+  Feature implementation base: d3b044e00946be8ce4f46ae8705fc9ad4b2aa312
+  Copyright (C) 2026 ddcat and contributors
+  License: GNU Affero General Public License v3.0
+
+Open AI Canvas is itself a derivative of Infinite Canvas. Its upstream
+attribution is retained in the source project's NOTICE file:
+https://github.com/ddcat-ai/open-ai-canvas/blob/0c4c258a521cb10c775a8d1d8164432fae3d1504/NOTICE
+
+The imported FaceCap preview model is an optimized derivative of the Open AI
+Canvas asset, while the BlazeFace detector asset is retained from that source.
+Their upstream provenance is recorded by the reviewed source revision above.
+
+Third-party runtime components used by these workflows remain subject to
+their respective licenses, including:
+
+  MediaPipe Tasks Vision - Apache License 2.0
+  three.js - MIT License
+  React Three Fiber - MIT License
+
+The full license for this repository is provided in LICENSE. Third-party
+packages and assets remain subject to the notices and license declarations
+provided by their respective authors.

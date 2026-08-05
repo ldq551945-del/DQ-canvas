@@ -5,7 +5,7 @@ import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router
 import { TEXT_MODEL_REQUEST_TIMEOUT_MS } from "@/lib/server/model-request-policy";
 import { strictJsonObjectText } from "@/lib/server/structured-model-output";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders, systemAiIdempotencyKey } from "@/lib/server/system-ai-billing";
-import { isSafeOutboundUrl } from "@/lib/server/security";
+import { fetchSafeOutboundUrl } from "@/lib/server/security";
 import { safeProtocolDocumentationUrl } from "@/lib/channel-protocol-security";
 
 const MAX_DOCUMENT_BYTES = 512 * 1024;
@@ -85,8 +85,12 @@ async function assistProtocolDraftWithTextModel(input: { requestUrl: string; coo
 async function fetchProtocolDocument(url: string) {
     let current = url;
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-        if (!(await isSafeOutboundUrl(current, { allowCredentials: false }))) throw new ProtocolDraftError("文档地址不允许访问内网、保留地址或携带凭据", 400);
-        const response = await fetch(current, { headers: { accept: "text/markdown,text/plain,application/json,text/html;q=0.8" }, cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15_000) });
+        let response: Response;
+        try {
+            response = await fetchSafeOutboundUrl(current, { headers: { accept: "text/markdown,text/plain,application/json,text/html;q=0.8" }, cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15_000) }, { allowCredentials: false });
+        } catch {
+            throw new ProtocolDraftError("文档地址不允许访问内网、保留地址或携带凭据", 400);
+        }
         if ([301, 302, 303, 307, 308].includes(response.status)) {
             const location = response.headers.get("location");
             if (!location || redirects === MAX_REDIRECTS) throw new ProtocolDraftError("文档重定向次数过多", 400);

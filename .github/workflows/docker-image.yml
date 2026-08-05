@@ -12,7 +12,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/ldq551945-del/dq
+  IMAGE_NAME: ghcr.io/dao-qin/dq
 
 jobs:
   meta:

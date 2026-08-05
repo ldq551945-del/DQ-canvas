@@ -43,11 +43,12 @@ type CanvasProject = {
 
 ## 节点与连线
 
-`CanvasNodeData` 保存节点 ID、类型、标题、世界坐标、尺寸和 metadata。节点支持文本、图片、视频、音频、生成配置、简报、任务和状态展示。媒体节点使用以下稳定字段：
+`CanvasNodeData` 保存节点 ID、类型、标题、世界坐标、尺寸和 metadata。用户可创建文本、图片、全景图、绘图、视频、音频和生成配置节点；Agent 还可写入简报、任务和品牌规范节点。媒体与任务节点使用以下代表性稳定字段：
 
 ```ts
 type CanvasNodeMetadata = {
   content?: string;
+  composerContent?: string;
   storageKey?: string;
   serverUrl?: string;
   remoteUrl?: string;
@@ -56,13 +57,27 @@ type CanvasNodeMetadata = {
   naturalWidth?: number;
   naturalHeight?: number;
   durationMs?: number;
-  status?: "idle" | "loading" | "success" | "error";
+  status?: "idle" | "loading" | "success" | "error" | "cancelled";
+  locked?: boolean;
+  groupId?: string;
+  taskId?: string;
+  taskStatus?: "pending" | "running" | "success" | "error" | "paused" | "cancelled";
+  taskProgress?: number;
+  taskStage?: string;
+  videoStartFrameNodeId?: string;
+  videoEndFrameNodeId?: string;
+  derivedOperation?: "remove-background" | "refine-background";
+  sourceNodeId?: string;
+  sourceStorageKey?: string;
+  backgroundRemovalTask?: CanvasBackgroundRemovalTask;
 };
 ```
 
-项目持久化以 `storageKey/serverUrl` 为准。用户上传的图片、视频和音频先写入服务器 `reference-assets/permanent/YYYY/MM/DD/{images|videos|audio}`，再进入节点；生成结果也保存服务器副本。`content` 只保存可重新访问的 URL，不保存 base64 或对象 URL。
+项目持久化以 `storageKey/serverUrl` 为准。用户上传的图片、视频和音频先写入服务器 `reference-assets/permanent/YYYY/MM/DD/{images|videos|audio}`，再进入节点；生成结果也保存服务器副本。`content` 只保存可重新访问的 URL，不保存 base64 或对象 URL。`composerContent` 保存可读的节点/Skill token；服务端执行时仍按结构化引用重新校验资源归属。
 
-`CanvasConnection` 只保存 `id/fromNodeId/toNodeId`。删除节点时同步删除相关连线；批量图片根节点与子节点关系记录在节点 metadata。
+`locked` 只保护节点位置和尺寸；`groupId` 表示编组关系。派生图片通过 `sourceNodeId/sourceStorageKey` 保留源图身份，抠图任务还会保存参数快照、模型、任务 ID 和已处理终态，防止刷新后重复回写。
+
+`CanvasConnection` 保存 `id/fromNodeId/toNodeId`，新连线还可保存 `fromHandleId/toHandleId` 与 `fromAnchorRatio/toAnchorRatio`。锚点比例相对节点高度记录，节点缩放或连线中点插入后仍能恢复连接位置；旧连线缺少这些字段时继续使用左右中心点。删除节点时同步删除相关连线；批量图片根节点与子节点关系记录在节点 metadata。
 
 ## 媒体与导入导出
 

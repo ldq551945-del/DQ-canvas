@@ -9,7 +9,7 @@ export type CanvasAgentOp =
     | { type: "update_node"; id: string; patch?: Partial<CanvasNodeData>; metadata?: CanvasNodeMetadata }
     | { type: "delete_node"; id?: string; ids?: string[]; nodeType?: CanvasNodeType }
     | { type: "delete_connections"; id?: string; ids?: string[]; all?: boolean }
-    | { type: "connect_nodes"; id?: string; fromNodeId: string; toNodeId: string }
+    | { type: "connect_nodes"; id?: string; fromNodeId: string; toNodeId: string; fromHandleId?: string; toHandleId?: string; fromAnchorRatio?: number; toAnchorRatio?: number }
     | { type: "set_viewport"; viewport: ViewportTransform }
     | { type: "select_nodes"; ids: string[] }
     | { type: "run_generation"; nodeId: string; mode?: "text" | "image" | "video" | "audio"; prompt?: string };
@@ -75,10 +75,16 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
             if (!op.id) return;
             nodes = nodes.map((node) => {
                 if (node.id !== op.id) return node;
-                const updated = { ...node, ...op.patch, metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata } };
+                const geometryLocked = Boolean(node.metadata?.locked);
+                const updated = {
+                    ...node,
+                    ...op.patch,
+                    ...(geometryLocked ? { position: node.position, width: node.width, height: node.height } : {}),
+                    metadata: { ...node.metadata, ...op.patch?.metadata, ...op.metadata },
+                };
                 const naturalWidth = updated.metadata?.naturalWidth;
                 const naturalHeight = updated.metadata?.naturalHeight;
-                if (!isCanvasVisualMedia(updated.type) || !naturalWidth || !naturalHeight || updated.metadata?.freeResize) return updated;
+                if (!isCanvasVisualMedia(updated.type) || !naturalWidth || !naturalHeight || updated.metadata?.freeResize || geometryLocked) return updated;
                 const size = fitNodeAspectRatio(naturalWidth, naturalHeight, Math.max(updated.width, updated.height), Math.max(updated.width, updated.height));
                 const center = { x: updated.position.x + updated.width / 2, y: updated.position.y + updated.height / 2 };
                 return { ...updated, width: size.width, height: size.height, position: { x: center.x - size.width / 2, y: center.y - size.height / 2 } };
@@ -96,9 +102,32 @@ export function applyCanvasAgentOps(snapshot: CanvasAgentSnapshot, ops?: CanvasA
         }
         if (op.type === "connect_nodes") {
             if (!op.fromNodeId || !op.toNodeId) return;
-            const exists = connections.some((conn) => conn.fromNodeId === op.fromNodeId && conn.toNodeId === op.toNodeId);
+            const exists = connections.find((conn) => conn.fromNodeId === op.fromNodeId && conn.toNodeId === op.toNodeId && conn.fromHandleId === op.fromHandleId && conn.toHandleId === op.toHandleId);
             const hasNodes = nodes.some((node) => node.id === op.fromNodeId) && nodes.some((node) => node.id === op.toNodeId);
-            if (!exists && hasNodes) connections = [...connections, { id: op.id || nanoid(), fromNodeId: op.fromNodeId, toNodeId: op.toNodeId }];
+            if (exists) {
+                connections = connections.map((connection) =>
+                    connection.id === exists.id
+                        ? {
+                              ...connection,
+                              fromAnchorRatio: typeof op.fromAnchorRatio === "number" ? op.fromAnchorRatio : connection.fromAnchorRatio,
+                              toAnchorRatio: typeof op.toAnchorRatio === "number" ? op.toAnchorRatio : connection.toAnchorRatio,
+                          }
+                        : connection,
+                );
+            } else if (hasNodes) {
+                connections = [
+                    ...connections,
+                    {
+                        id: op.id || nanoid(),
+                        fromNodeId: op.fromNodeId,
+                        toNodeId: op.toNodeId,
+                        ...(op.fromHandleId ? { fromHandleId: op.fromHandleId } : {}),
+                        ...(op.toHandleId ? { toHandleId: op.toHandleId } : {}),
+                        ...(typeof op.fromAnchorRatio === "number" ? { fromAnchorRatio: op.fromAnchorRatio } : {}),
+                        ...(typeof op.toAnchorRatio === "number" ? { toAnchorRatio: op.toAnchorRatio } : {}),
+                    },
+                ];
+            }
         }
         if (op.type === "set_viewport" && op.viewport) viewport = op.viewport;
         if (op.type === "select_nodes") selectedNodeIds = (op.ids || []).filter((id) => nodes.some((node) => node.id === id));

@@ -12,20 +12,24 @@ const SERVER_MEDIA_ROUTES = [
     { prefix: "/api/reference-assets/", scope: "reference" as const },
 ];
 
-export async function uploadServerMedia(input: string | Blob, type: ServerMediaType, maxBytes = CREATIVE_UPLOAD_MAX_BYTES): Promise<StoredServerMedia> {
+export type ServerMediaUploadOptions = {
+    purpose?: "canvas-image";
+};
+
+export async function uploadServerMedia(input: string | Blob, type: ServerMediaType, maxBytes = CREATIVE_UPLOAD_MAX_BYTES, options: ServerMediaUploadOptions = {}): Promise<StoredServerMedia> {
     const existing = typeof input === "string" ? parseServerMediaUrl(input) : null;
     if (existing?.storageKey.startsWith("permanent/")) return readExistingServerMedia(existing, type);
 
     const blob = typeof input === "string" ? await fetchMediaBlob(input) : input;
     const originalName = input instanceof File ? input.name.trim() : "";
     if (!blob.size) throw new Error("上传文件为空");
-    if (blob.size > maxBytes) throw new Error(maxBytes === CREATIVE_UPLOAD_MAX_BYTES ? "单个文件不能超过 20MB" : "生成媒体文件过大");
+    if (blob.size > maxBytes) throw new Error(options.purpose === "canvas-image" ? "画布图片不能超过 30MB" : maxBytes === CREATIVE_UPLOAD_MAX_BYTES ? "单个文件不能超过 20MB" : "生成媒体文件过大");
     if (!isCreativeUploadMimeType(blob.type) || !blob.type.startsWith(`${type}/`)) throw new Error(`仅支持${type === "image" ? "图片" : type === "video" ? "视频" : "音频"}格式`);
 
     const response = await fetch("/api/reference-assets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, persistent: true, dataUrl: await blobToDataUrl(blob), originalName: originalName || undefined }),
+        body: JSON.stringify({ type, persistent: true, purpose: options.purpose, dataUrl: await blobToDataUrl(blob), originalName: originalName || undefined }),
     });
     const payload = (await response.json().catch(() => ({}))) as { error?: string; url?: string; token?: string; key?: string; bytes?: number; mimeType?: string };
     if (!response.ok || !payload.token) throw new Error(payload.error || "文件保存到服务器失败");

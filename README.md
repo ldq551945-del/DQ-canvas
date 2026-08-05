@@ -7,7 +7,7 @@
 <p align="center">面向 Agent、图片、视频、Canvas 与短剧生产的开源 AI 创作工作台</p>
 
 <p align="center">
-  <a href="https://github.com/ldq551945-del/DQ-canvas"><img src="https://img.shields.io/github/stars/ldq551945-del/DQ-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/DAO-QIN/DQ-canvas"><img src="https://img.shields.io/github/stars/DAO-QIN/DQ-canvas?style=flat-square&logo=github" alt="GitHub stars"></a>
   <a href="VERSION"><img src="https://img.shields.io/badge/version-v0.0.3-2563eb?style=flat-square" alt="Version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-f97316?style=flat-square" alt="License"></a>
   <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-16.2-000000?style=flat-square&logo=nextdotjs" alt="Next.js"></a>
@@ -33,7 +33,7 @@ DQ-绘图 把统一创作 Agent、图片与视频工作台、画布、短剧生�
 - **统一 Agent**：文字、图片、视频和音频素材在同一会话中创作，支持 Skill、智能规划、手动逻辑模型、服务端历史和稳定资产。
 - **图片工作台**：文生图、图生图、参考图编辑、多结果、历史恢复、失败重试、WebP 预览和原件下载。
 - **视频工作台**：文生视频、图生视频、多类型参考素材、时长/比例/清晰度参数、异步续取和结果管理。
-- **画布**：文本、图片、视频、音频与生成节点，支持拖拽、连线、缩放、撤销重做、导入导出和 Agent Run。
+- **画布**：文本、图片、全景图、绘图、视频、音频与生成配置节点，支持资源引用、编组、连线中点插入、性能模式和真实任务进度；图片节点提供标注、情绪、人物质感、多视角、锁定、媒体替换与可取消的 rembg CPU 抠图。
 - **短剧生产线**：剧本、内容审核、角色/场景/道具、分镜、镜头视频、配音、字幕、版本和 FFmpeg 合成。
 - **作品广场**：作品草稿、版本审核、发布分享、广场检索、作者主页、点赞关注、下架重发和内容治理。
 - **模型与协议**：管理员维护渠道、协议、真实模型、逻辑模型、能力、优先级和默认值，覆盖 OpenAI、Gemini、Seedance 2.0、Stable Diffusion、A1111/Forge 和声明式自定义协议。
@@ -170,12 +170,16 @@ flowchart LR
     EDITOR --> NODE{"添加节点"}
     NODE --> TEXT["文本节点"]
     NODE --> IMAGE["图片节点"]
+    NODE --> PANORAMA["全景图节点"]
+    NODE --> DRAWING["绘图节点"]
     NODE --> VIDEO["视频节点"]
     NODE --> AUDIO["音频节点"]
-    NODE --> GENERATE["生成节点"]
+    NODE --> GENERATE["生成配置节点"]
 
     TEXT --> CONNECT["拖拽、缩放和节点连线"]
     IMAGE --> CONNECT
+    PANORAMA --> CONNECT
+    DRAWING --> CONNECT
     VIDEO --> CONNECT
     AUDIO --> CONNECT
     GENERATE --> CONNECT
@@ -410,7 +414,7 @@ DQ-绘图 调用外部 AI 模型，不要求 GPU。服务器主要承担 Web、P
 环境要求：可运行 Docker Compose 的 Linux 服务器、HTTPS 域名，以及按业务需要准备的模型渠道。
 
 ```bash
-git clone https://github.com/ldq551945-del/DQ-canvas.git DQ
+git clone https://github.com/DAO-QIN/DQ-canvas.git DQ
 cd DQ
 cp .env.example .env
 ```
@@ -455,7 +459,7 @@ DQ_DATABASE_SSL=0
 DQ_TRUSTED_PROXY_HOPS=1
 ```
 
-宝塔 Nginx 反向代理到应用后，应转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`，并设置 `client_max_body_size 32m;` 以允许保存 30MB 画布项目。详细步骤见[生产上线基线](docs/content/docs/overview/production-readiness.mdx)和[Docker 部署](docs/content/docs/overview/docker.mdx)。
+宝塔 Nginx 反向代理到应用后，应转发 `Host`、`X-Forwarded-Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`，并设置 `client_max_body_size 44m;` 以允许保存 30MB 画布项目及其图片上传请求。详细步骤见[生产上线基线](docs/content/docs/overview/production-readiness.mdx)和[Docker 部署](docs/content/docs/overview/docker.mdx)。
 
 ### 源码开发
 
@@ -498,6 +502,7 @@ pnpm run dev
 | `web/src/services/api/` / `web/src/stores/` | 浏览器访问本站 API 的类型化客户端，以及用户、主题、配置和素材瞬时状态      |
 | `web/scripts/`                              | 低内存生产构建、standalone 启动、生成 Worker、管理员密码重置和发布检查脚本 |
 | `web/public/`                               | 站点 Logo、浏览器图标和模型品牌图标                                        |
+| `services/rembg/`                          | 内网 CPU 抠图 Sidecar、五模型白名单、取消协议、容器和 Python 测试            |
 | `docs/content/docs/`                        | 功能、安装、部署、数据库、商业准备、进度和排障文档                         |
 | `docs/public/screenshots/`                  | 用户端、公开页和管理后台的脱敏 WebP 功能截图                               |
 | `.github/workflows/quality.yml`             | Web 与文档的安装、类型检查、测试、格式检查和生产构建                       |
@@ -509,7 +514,7 @@ pnpm run dev
 | `LICENSE` / `CLA.md` / `SECURITY.md`        | AGPL-3.0 协议、贡献者授权和漏洞提交规则                                    |
 | `AGENTS.md` / `CONTRIBUTING.md`             | 项目工程约束，以及开发者提交 Issue、代码和文档的流程                       |
 
-更完整的目录树、关键源码入口、Service、Route Handler、Repository 和任务 Store 职责见[项目结构与流程](docs/content/docs/overview/project-structure.mdx)。
+更完整的目录树、关键源码入口、Service、Route Handler、Repository 和任务 Store 职责见[项目结构与流程](docs/content/docs/overview/project-structure.mdx)；风险分区、质量基线和渐进治理顺序见[代码质量分类](docs/content/docs/overview/code-quality.mdx)。
 
 ## 页面展示
 
@@ -557,6 +562,7 @@ pnpm run build
 - Copyright (C) 2026 DQ
 - [功能总览](docs/content/docs/overview/features.mdx)
 - [项目结构与流程](docs/content/docs/overview/project-structure.mdx)
+- [代码质量分类](docs/content/docs/overview/code-quality.mdx)
 - [配置说明](docs/content/docs/overview/configuration.mdx)
 - [数据库结构](docs/content/docs/backend/backend-database.mdx)
 - [待测试](docs/content/docs/progress/pending-test.mdx)

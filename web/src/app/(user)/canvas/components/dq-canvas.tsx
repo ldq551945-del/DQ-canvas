@@ -4,12 +4,16 @@ import React, { useEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { ViewportTransform } from "../types";
+import type { CanvasMediaPerformanceMode, CanvasNodeData, ViewportTransform } from "../types";
+import { shouldReduceCanvasEffects } from "../utils/canvas-performance-mode";
 
 type DQCanvasProps = {
     containerRef: React.RefObject<HTMLDivElement | null>;
     viewport: ViewportTransform;
     backgroundMode?: CanvasBackgroundMode;
+    performanceMode?: CanvasMediaPerformanceMode;
+    canvasTool?: "move" | "box-select";
+    nodes?: CanvasNodeData[];
     onViewportChange: (viewport: ViewportTransform) => void;
     onCanvasMouseDown?: (event: React.PointerEvent<HTMLDivElement>) => void;
     onCanvasDeselect?: () => void;
@@ -19,8 +23,23 @@ type DQCanvasProps = {
     children: React.ReactNode;
 };
 
-export function DQCanvas({ containerRef, viewport, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onCanvasDoubleClick, onContextMenu, onDrop, children }: DQCanvasProps) {
+export function DQCanvas({
+    containerRef,
+    viewport,
+    backgroundMode = "lines",
+    performanceMode = "auto",
+    canvasTool = "move",
+    nodes = [],
+    onViewportChange,
+    onCanvasMouseDown,
+    onCanvasDeselect,
+    onCanvasDoubleClick,
+    onContextMenu,
+    onDrop,
+    children,
+}: DQCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const reduceEffects = shouldReduceCanvasEffects(performanceMode, nodes);
     const viewportRef = useRef(viewport);
     const panState = useRef({
         isPanning: false,
@@ -168,7 +187,7 @@ export function DQCanvas({ containerRef, viewport, backgroundMode = "lines", onV
             }
         }
 
-        if (event.button === 0 && (event.ctrlKey || event.metaKey) && isBackgroundClick) {
+        if (event.button === 0 && isBackgroundClick && (canvasTool === "box-select" || event.ctrlKey || event.metaKey)) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
             onCanvasMouseDown?.(event);
@@ -254,7 +273,8 @@ export function DQCanvas({ containerRef, viewport, backgroundMode = "lines", onV
     return (
         <div
             ref={containerRef}
-            className="canvas-surface relative h-full w-full cursor-grab select-none overflow-hidden"
+            className={`canvas-surface relative h-full w-full select-none overflow-hidden ${canvasTool === "box-select" ? "cursor-crosshair" : "cursor-grab"} ${reduceEffects ? "canvas-performance-mode" : ""}`}
+            data-performance-mode={performanceMode}
             style={{ background: theme.canvas.backdrop, touchAction: "none", overscrollBehavior: "none" }}
             onPointerDown={handlePointerDown}
             onDoubleClick={handleDoubleClick}
@@ -263,7 +283,7 @@ export function DQCanvas({ containerRef, viewport, backgroundMode = "lines", onV
             onDragOver={(event) => event.preventDefault()}
             onDrop={onDrop}
         >
-            <CanvasGrid viewport={viewport} mode={backgroundMode} />
+            <CanvasGrid viewport={viewport} mode={backgroundMode} disabled={reduceEffects} />
             <div
                 className="absolute origin-top-left"
                 style={{
@@ -284,9 +304,9 @@ function midpointOf(first: { clientX: number; clientY: number }, second: { clien
     return { clientX: (first.clientX + second.clientX) / 2, clientY: (first.clientY + second.clientY) / 2 };
 }
 
-function CanvasGrid({ viewport, mode }: { viewport: ViewportTransform; mode: CanvasBackgroundMode }) {
+function CanvasGrid({ viewport, mode, disabled }: { viewport: ViewportTransform; mode: CanvasBackgroundMode; disabled: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    if (mode === "blank") return null;
+    if (mode === "blank" || disabled) return null;
 
     const gridSize = 48 * viewport.k;
     const x = viewport.x % gridSize;

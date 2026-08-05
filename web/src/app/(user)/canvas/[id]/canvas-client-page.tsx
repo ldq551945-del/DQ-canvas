@@ -7,6 +7,7 @@ import { Button, Modal } from "antd";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { CanvasConfigComposer } from "../components/canvas-config-composer";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
+import { CanvasActiveTaskPanel } from "../components/canvas-active-task-panel";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { Minimap } from "../components/canvas-mini-map";
@@ -22,12 +23,20 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasTopBar } from "../components/canvas-top-bar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { DQCanvas } from "../components/dq-canvas";
-import { CanvasNodeType, type Position } from "../types";
+import { CanvasNodeType, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "../types";
+import { findBackgroundRefineOriginalNode } from "../utils/canvas-background-refine";
+import { nodeAnchorY } from "../utils/canvas-connection-path";
+import { shouldReduceCanvasEffects } from "../utils/canvas-performance-mode";
+import { canvasActiveTaskForNode, canvasBackgroundRemovalTaskNeedsSync, canvasTaskDescriptorForNode, clearHandledCanvasBackgroundRemovalTaskMetadata } from "../utils/canvas-active-task-binding";
+import { useCanvasActiveTasks } from "../components/use-canvas-active-tasks";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
 const AssetPickerModal = dynamic(loadAssetPickerModal, { ssr: false, loading: () => null });
 const CanvasDrawingEditorModal = dynamic(() => import("../components/canvas-drawing-editor-modal").then((mod) => mod.CanvasDrawingEditorModal), { ssr: false, loading: () => null });
+const CanvasNodeBackgroundRefineDialog = dynamic(() => import("../components/canvas-node-background-refine-dialog").then((mod) => mod.CanvasNodeBackgroundRefineDialog), { ssr: false, loading: () => null });
+const CanvasNodeAnnotationDialog = dynamic(() => import("../components/canvas-node-annotation-dialog").then((mod) => mod.CanvasNodeAnnotationDialog), { ssr: false, loading: () => null });
+const CanvasEmotionWorkspace = dynamic(() => import("../components/canvas-emotion-workspace").then((mod) => mod.CanvasEmotionWorkspace), { ssr: false, loading: () => null });
 
 import { CanvasRefreshShell, ConnectionCreateMenu, NodeCreateMenu, drawingSourceNodeForConnection } from "./canvas-page-elements";
 import { getInputSummary, isHiddenBatchConnectionEndpoint } from "./canvas-page-utils";
@@ -142,8 +151,14 @@ function DQCanvasPage() {
         setInfoNodeId,
         cropNodeId,
         setCropNodeId,
+        annotationNodeId,
+        setAnnotationNodeId,
         maskEditNodeId,
         setMaskEditNodeId,
+        emotionNodeId,
+        setEmotionNodeId,
+        backgroundRefineNodeId,
+        setBackgroundRefineNodeId,
         splitNodeId,
         setSplitNodeId,
         upscaleNodeId,
@@ -172,6 +187,10 @@ function DQCanvasPage() {
         setOpeningBatchIds,
         isNodeDragging,
         setIsNodeDragging,
+        performanceMode,
+        setPerformanceMode,
+        canvasTool,
+        setCanvasTool,
         nodesRef,
         connectionsRef,
         selectedNodeIdsRef,
@@ -230,12 +249,15 @@ function DQCanvasPage() {
         applyAgentOps,
         createNode,
         deleteNodes,
+        groupSelectedNodes,
+        ungroupSelectedNodes,
         deleteConnection,
         deselectCanvas,
         clearCanvas,
         duplicateNode,
         copySelectedNodes,
         pasteCopiedNodes,
+        toggleNodeLocked,
         resetViewport,
         locateCanvasNode,
         setZoomScale,
@@ -271,11 +293,19 @@ function DQCanvasPage() {
         saveNodeAsset,
         createImageReversePromptNodes,
         appendDerivedImageNode,
+        saveAnnotatedImageNode,
+        generatePortraitTextureNode,
+        removeBackgroundImageNode,
+        cancelBackgroundRemovalImageNode,
+        backgroundRemovalNodeIds,
+        backgroundRemovalStoppingNodeIds,
+        refineBackgroundImageNode,
         cropImageNode,
         splitImageNode,
         maskEditImageNode,
         upscaleImageNode,
         generateAngleNode,
+        generateEmotionNode,
         handleFontSizeChange,
         handleUploadRequest,
         handleImageInputChange,
@@ -295,8 +325,48 @@ function DQCanvasPage() {
         openAgent,
         closeAgent,
     } = controller;
+    const { tasks: activeGenerationTasks, recoveryTasks } = useCanvasActiveTasks(projectId, projectLoaded);
+    useEffect(() => {
+        if (!projectLoaded) return;
+        setNodes((current) => {
+            let changed = false;
+            const next = current.map((node) => {
+                const cleanedNode = clearHandledCanvasBackgroundRemovalTaskMetadata(node);
+                if (cleanedNode !== node) changed = true;
+                const task = canvasActiveTaskForNode(recoveryTasks, cleanedNode);
+                if (!task) return cleanedNode;
+                const taskStatus: NonNullable<CanvasNodeMetadata["taskStatus"]> = task.status === "queued" ? "pending" : task.status === "succeeded" ? "success" : task.status === "failed" ? "error" : task.status;
+                const needsTaskDescriptor =
+                    canvasBackgroundRemovalTaskNeedsSync(task, cleanedNode) ||
+                    (task.type !== "image_process" && cleanedNode.metadata?.status === "loading" && !cleanedNode.metadata?.imageTask && !cleanedNode.metadata?.videoTask && !cleanedNode.metadata?.textTask && !cleanedNode.metadata?.audioTask);
+                const descriptor = needsTaskDescriptor ? canvasTaskDescriptorForNode(task, cleanedNode) : {};
+                const metadata = { ...cleanedNode.metadata, taskId: task.id, taskStatus, taskProgress: task.progress, taskStage: task.stage, taskUpdatedAt: task.updatedAt, ...descriptor };
+                if (
+                    metadata.taskProgress === cleanedNode.metadata?.taskProgress &&
+                    metadata.taskStage === cleanedNode.metadata?.taskStage &&
+                    metadata.taskId === cleanedNode.metadata?.taskId &&
+                    metadata.taskStatus === cleanedNode.metadata?.taskStatus &&
+                    metadata.taskUpdatedAt === cleanedNode.metadata?.taskUpdatedAt &&
+                    metadata.backgroundRemovalTask === cleanedNode.metadata?.backgroundRemovalTask
+                )
+                    return cleanedNode;
+                changed = true;
+                return { ...cleanedNode, metadata };
+            });
+            return changed ? next : current;
+        });
+    }, [projectLoaded, recoveryTasks, setNodes]);
     if (!projectLoaded) return <CanvasRefreshShell />;
     const drawingNode = drawingNodeId ? nodes.find((node) => node.id === drawingNodeId) || null : null;
+    const annotationNode = annotationNodeId ? nodes.find((node) => node.id === annotationNodeId) || null : null;
+    const emotionNode = emotionNodeId ? nodes.find((node) => node.id === emotionNodeId) || null : null;
+    const backgroundRefineNode = backgroundRefineNodeId ? nodes.find((node) => node.id === backgroundRefineNodeId) || null : null;
+    const backgroundRefineOriginalNode = findBackgroundRefineOriginalNode(nodes, backgroundRefineNode);
+    const canUngroup = nodes.some((node) => selectedNodeIds.has(node.id) && Boolean(node.metadata?.groupId));
+    const performanceReduced = shouldReduceCanvasEffects(performanceMode, nodes);
+    const connectionSource = connectingParams ? nodeById.get(connectingParams.nodeId) : undefined;
+    const connectionOrigin = connectionSource && connectingParams ? { x: connectionSource.position.x + (connectingParams.handleType === "source" ? connectionSource.width : 0), y: nodeAnchorY(connectionSource, connectingParams.anchorRatio) } : undefined;
+    const connectionSourceFeedbackVisible = !connectionOrigin || Math.hypot((mouseWorld.x - connectionOrigin.x) * viewport.k, (mouseWorld.y - connectionOrigin.y) * viewport.k) <= 44;
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.backdrop, color: theme.node.text }}>
             <section className="relative min-w-0 flex-1 overflow-hidden">
@@ -317,14 +387,22 @@ function DQCanvasPage() {
                     onImportImage={() => handleUploadRequest()}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
+                    performanceMode={performanceMode}
+                    performanceReduced={performanceReduced}
+                    onPerformanceModeChange={setPerformanceMode}
                     agentOpen={assistantOpen}
                     onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
                 />
+
+                <CanvasActiveTaskPanel tasks={activeGenerationTasks} />
 
                 <DQCanvas
                     containerRef={containerRef}
                     viewport={viewport}
                     backgroundMode={backgroundMode}
+                    performanceMode={performanceMode}
+                    canvasTool={canvasTool}
+                    nodes={nodes}
                     onViewportChange={(next) => {
                         setViewport(next);
                         setContextMenu(null);
@@ -342,6 +420,7 @@ function DQCanvasPage() {
                     onContextMenu={preventCanvasContextMenu}
                     onDrop={handleDrop}
                 >
+                    <CanvasGroupOutlines nodes={nodes} selectedNodeIds={selectedNodeIds} selectedConnectionId={selectedConnectionId} stroke={theme.node.stroke} activeStroke={theme.node.activeStroke} activeFill={theme.canvas.selectionFill} />
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
                         {connections
                             .filter((connection) => {
@@ -386,7 +465,13 @@ function DQCanvasPage() {
                             isRelated={relatedHighlight.nodeIds.has(node.id)}
                             isFocusRelated={activeNodeId === node.id}
                             isConnectionTarget={connectionTargetNodeId === node.id}
+                            isConnectionSource={connectingParams?.nodeId === node.id}
+                            connectionSourceFeedbackVisible={connectionSourceFeedbackVisible}
+                            connectingHandleType={connectingParams?.handleType}
                             isConnecting={Boolean(connectingParams)}
+                            isNodeDragging={isNodeDragging}
+                            isMultiSelecting={selectedNodeIds.size > 1}
+                            reduceMediaPreview={performanceReduced}
                             editRequestNonce={editingNodeId === node.id ? editRequestNonce : 0}
                             showPanel={dialogNodeId === node.id && !selectionBox}
                             batchCount={batchChildCountById.get(node.id) || 0}
@@ -456,6 +541,16 @@ function DQCanvasPage() {
                             onRetry={(node) => void handleRetryNode(node)}
                             onGenerateImage={generateImageFromTextNode}
                             onViewImage={(node) => setPreviewNodeId(node.id)}
+                            onReplaceMedia={(node) => handleUploadRequest(node.id)}
+                            onKeyboardSelect={(nodeId, additive) => {
+                                setSelectedNodeIds((current) => {
+                                    const next = additive ? new Set(current) : new Set<string>();
+                                    if (additive && next.has(nodeId)) next.delete(nodeId);
+                                    else next.add(nodeId);
+                                    return next;
+                                });
+                                setSelectedConnectionId(null);
+                            }}
                             onContextMenu={(event, id) => {
                                 event.preventDefault();
                                 event.stopPropagation();
@@ -488,6 +583,8 @@ function DQCanvasPage() {
                         <ConnectionCreateMenu
                             pending={pendingConnectionCreate}
                             allowDrawing={Boolean(drawingSourceNodeForConnection(pendingConnectionCreate, nodes))}
+                            viewport={viewport}
+                            viewportSize={size}
                             onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)}
                             onClose={cancelPendingConnectionCreate}
                         />
@@ -518,7 +615,15 @@ function DQCanvasPage() {
                     onUpload={(node) => handleUploadRequest(node.id)}
                     onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
+                    onAnnotate={(node) => setAnnotationNodeId(node.id)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
+                    onEmotion={(node) => setEmotionNodeId(node.id)}
+                    onPortraitTexture={(node) => void generatePortraitTextureNode(node)}
+                    onRemoveBackground={(node, options) => void removeBackgroundImageNode(node, options)}
+                    onCancelBackgroundRemoval={(node) => void cancelBackgroundRemovalImageNode(node)}
+                    onRefineBackground={(node) => setBackgroundRefineNodeId(node.id)}
+                    backgroundRemovalNodeIds={backgroundRemovalNodeIds}
+                    backgroundRemovalStoppingNodeIds={backgroundRemovalStoppingNodeIds}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onSplit={(node) => setSplitNodeId(node.id)}
                     onUpscale={(node) => setUpscaleNodeId(node.id)}
@@ -528,6 +633,7 @@ function DQCanvasPage() {
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
+                    onToggleLocked={(node) => toggleNodeLocked(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />
 
@@ -549,10 +655,15 @@ function DQCanvasPage() {
                     onRedo={redoCanvas}
                     onUpload={() => handleUploadRequest()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
+                    onGroup={groupSelectedNodes}
+                    canUngroup={canUngroup}
+                    onUngroup={ungroupSelectedNodes}
                     onClear={() => setClearConfirmOpen(true)}
                     onDeselect={deselectCanvas}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
+                    canvasTool={canvasTool}
+                    onCanvasToolChange={setCanvasTool}
                     onOpenMyAssets={() => {
                         setAssetPickerOpen(true);
                     }}
@@ -589,8 +700,35 @@ function DQCanvasPage() {
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 
+                {annotationNode?.metadata?.content ? (
+                    <CanvasNodeAnnotationDialog
+                        image={{ url: annotationNode.metadata.content, storageKey: annotationNode.metadata.storageKey }}
+                        open={Boolean(annotationNode)}
+                        onClose={() => setAnnotationNodeId(null)}
+                        onConfirm={(dataUrl) => saveAnnotatedImageNode(annotationNode, dataUrl)}
+                    />
+                ) : null}
+
+                {emotionNode?.metadata?.content ? (
+                    <CanvasEmotionWorkspace node={emotionNode} viewport={viewport} containerRef={containerRef} onClose={() => setEmotionNodeId(null)} onConfirm={(payload) => generateEmotionNode(emotionNode, payload)} />
+                ) : null}
+
                 {maskEditNode?.metadata?.content ? (
                     <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} />
+                ) : null}
+
+                {backgroundRefineNode?.metadata?.content ? (
+                    <CanvasNodeBackgroundRefineDialog
+                        dataUrl={backgroundRefineNode.metadata.content}
+                        bytes={backgroundRefineNode.metadata.bytes}
+                        originalDataUrl={backgroundRefineOriginalNode?.metadata?.content}
+                        originalBytes={backgroundRefineOriginalNode?.metadata?.bytes}
+                        originalWidth={backgroundRefineOriginalNode?.metadata?.naturalWidth}
+                        originalHeight={backgroundRefineOriginalNode?.metadata?.naturalHeight}
+                        open={Boolean(backgroundRefineNode)}
+                        onClose={() => setBackgroundRefineNodeId(null)}
+                        onConfirm={(image) => refineBackgroundImageNode(backgroundRefineNode, image)}
+                    />
                 ) : null}
 
                 {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
@@ -599,7 +737,7 @@ function DQCanvasPage() {
                     <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} />
                 ) : null}
 
-                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => void generateAngleNode(angleNode!, params)} /> : null}
+                {angleNode?.metadata?.content ? <CanvasNodeAngleDialog dataUrl={angleNode.metadata.content} open={Boolean(angleNode)} onClose={() => setAngleNodeId(null)} onConfirm={(params) => generateAngleNode(angleNode!, params)} /> : null}
 
                 <Modal
                     title="图片详情"
@@ -659,5 +797,55 @@ function DQCanvasPage() {
                 />
             ) : null}
         </main>
+    );
+}
+
+function CanvasGroupOutlines({
+    nodes,
+    selectedNodeIds,
+    selectedConnectionId,
+    stroke,
+    activeStroke,
+    activeFill,
+}: {
+    nodes: CanvasNodeData[];
+    selectedNodeIds: Set<string>;
+    selectedConnectionId: string | null;
+    stroke: string;
+    activeStroke: string;
+    activeFill: string;
+}) {
+    if (selectedConnectionId) return null;
+
+    const groups = new Map<string, CanvasNodeData[]>();
+    nodes.forEach((node) => {
+        const groupId = node.metadata?.groupId;
+        if (!groupId) return;
+        const members = groups.get(groupId) || [];
+        members.push(node);
+        groups.set(groupId, members);
+    });
+
+    return (
+        <>
+            {Array.from(groups.entries()).flatMap(([groupId, members]) => {
+                if (members.length < 2) return [];
+                const padding = 22;
+                const left = Math.min(...members.map((node) => node.position.x)) - padding;
+                const top = Math.min(...members.map((node) => node.position.y)) - padding;
+                const right = Math.max(...members.map((node) => node.position.x + node.width)) + padding;
+                const bottom = Math.max(...members.map((node) => node.position.y + node.height)) + padding;
+                const active = members.some((node) => selectedNodeIds.has(node.id));
+
+                return (
+                    <div
+                        key={groupId}
+                        aria-label={`编组，${members.length} 个节点`}
+                        className="pointer-events-none absolute rounded-xl border border-dashed"
+                        style={{ left, top, width: right - left, height: bottom - top, zIndex: 0, borderColor: active ? activeStroke : stroke, background: active ? activeFill : "transparent" }}
+                    />
+                );
+            })}
+        </>
     );
 }

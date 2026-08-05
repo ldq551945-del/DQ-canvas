@@ -2,12 +2,13 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, Image as ImageIcon, ListChecks, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, Image as ImageIcon, ListChecks, Lock, Music2, Palette, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
+import { resolveCanvasNodeLockBadgeMetrics } from "./canvas-node-lock-badge";
 import { CanvasNodeType, isCanvasDrawingNodeType, isCanvasImageNodeType, type CanvasNodeData, type Position } from "../types";
 import type { CanvasResourceReference } from "../utils/canvas-resource-references";
 
@@ -21,7 +22,13 @@ type CanvasNodeProps = {
     isRelated: boolean;
     isFocusRelated: boolean;
     isConnectionTarget: boolean;
+    isConnectionSource?: boolean;
+    connectionSourceFeedbackVisible?: boolean;
+    connectingHandleType?: "source" | "target";
     isConnecting: boolean;
+    isNodeDragging?: boolean;
+    isMultiSelecting?: boolean;
+    reduceMediaPreview?: boolean;
     editRequestNonce?: number;
     showPanel: boolean;
     showImageInfo: boolean;
@@ -38,7 +45,9 @@ type CanvasNodeProps = {
     onMouseDown: (event: React.MouseEvent | React.PointerEvent, nodeId: string) => void;
     onHoverStart: (nodeId: string) => void;
     onHoverEnd: (nodeId: string) => void;
-    onConnectStart: (event: React.MouseEvent | React.PointerEvent, nodeId: string, handleType: "source" | "target") => void;
+    onConnectStart: (event: React.MouseEvent | React.PointerEvent, nodeId: string, handleType: "source" | "target", handleId?: string, anchorRatio?: number) => void;
+    showTargetHandle?: boolean;
+    showSourceHandle?: boolean;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
     onContentChange: (nodeId: string, content: string) => void;
     onToggleBatch?: (nodeId: string) => void;
@@ -48,6 +57,8 @@ type CanvasNodeProps = {
     onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
     onViewImage?: (node: CanvasNodeData) => void;
     onEditDrawing?: (node: CanvasNodeData) => void;
+    onReplaceMedia?: (node: CanvasNodeData) => void;
+    onKeyboardSelect?: (nodeId: string, additive: boolean) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
@@ -80,7 +91,13 @@ export const CanvasNode = React.memo(function CanvasNode({
     isRelated,
     isFocusRelated,
     isConnectionTarget,
+    isConnectionSource = false,
+    connectionSourceFeedbackVisible = true,
+    connectingHandleType,
     isConnecting,
+    isNodeDragging = false,
+    isMultiSelecting = false,
+    reduceMediaPreview = false,
     editRequestNonce = 0,
     showPanel,
     showImageInfo,
@@ -98,6 +115,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     onHoverStart,
     onHoverEnd,
     onConnectStart,
+    showTargetHandle = true,
+    showSourceHandle = data.type !== CanvasNodeType.Config,
     onResize,
     onContentChange,
     onToggleBatch,
@@ -107,6 +126,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     onImageDimensions,
     onViewImage,
     onEditDrawing,
+    onReplaceMedia,
+    onKeyboardSelect,
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -115,12 +136,20 @@ export const CanvasNode = React.memo(function CanvasNode({
     const hasImageContent = isCanvasImageNodeType(data.type) && Boolean(data.metadata?.content);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const hasAudioContent = data.type === CanvasNodeType.Audio && Boolean(data.metadata?.content);
+    const canReplaceMedia = Boolean(onReplaceMedia && (hasImageContent || hasVideoContent || hasAudioContent));
+    const showMediaReplacement = canReplaceMedia && (hovered || isSelected) && !isConnecting && !isNodeDragging && !isMultiSelecting;
     const isDrawing = isCanvasDrawingNodeType(data.type);
     const hasDrawingPreview = isDrawing && Boolean(data.metadata?.drawingPreview?.serverUrl || data.metadata?.drawingPreview?.storageKey);
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
     const isActive = isConnectionTarget || isSelected || isFocusRelated;
+    const legacyConnecting = isConnecting && !connectingHandleType;
+    const sourceConnectionActive = isConnectionSource && connectionSourceFeedbackVisible;
+    const sourceRailActive = (sourceConnectionActive && connectingHandleType === "source") || (isConnectionTarget && connectingHandleType === "target");
+    const targetRailActive = (sourceConnectionActive && connectingHandleType === "target") || (isConnectionTarget && connectingHandleType === "source");
+    const suppressSourceRails = isConnectionSource && !connectionSourceFeedbackVisible;
     const imageBorderColor = isActive ? selectionBlue : isRelated && !isBatchChild ? theme.node.muted : theme.node.stroke;
+    const lockBadge = resolveCanvasNodeLockBadgeMetrics(data.width, data.height, scale);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const resizeRef = useRef({
         isResizing: false,
@@ -221,6 +250,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
         event.preventDefault();
+        if (data.metadata?.locked) return;
         resizeRef.current = {
             isResizing: true,
             corner,
@@ -248,6 +278,10 @@ export const CanvasNode = React.memo(function CanvasNode({
         <div
             data-node-id={data.id}
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isSelected ? "z-50" : "z-10"}`}
+            tabIndex={0}
+            role="group"
+            aria-label={`${data.title || "画布"}节点`}
+            data-selected={isSelected ? "true" : "false"}
             style={{
                 transform: `translate(${data.position.x}px, ${data.position.y}px)`,
                 width: data.width,
@@ -264,6 +298,12 @@ export const CanvasNode = React.memo(function CanvasNode({
                 onHoverEnd(data.id);
             }}
             onContextMenu={(event) => onContextMenu(event, data.id)}
+            onKeyDown={(event) => {
+                if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+                event.preventDefault();
+                event.stopPropagation();
+                onKeyboardSelect?.(data.id, event.shiftKey || event.ctrlKey || event.metaKey);
+            }}
         >
             <div
                 className="relative h-full w-full overflow-visible rounded-3xl border-2"
@@ -325,26 +365,87 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onImageDimensions={onImageDimensions}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
+                        reduceMediaPreview={reduceMediaPreview}
                     />
                 </div>
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
                 {resourceLabel ? <ResourceLabelBadge reference={resourceLabel} /> : null}
+                {showMediaReplacement ? (
+                    <button
+                        type="button"
+                        className="absolute bottom-3 left-1/2 z-30 inline-flex h-9 -translate-x-1/2 translate-y-0 items-center gap-1.5 rounded-full border px-3 text-xs font-medium opacity-100 shadow-[0_6px_20px_rgba(15,23,42,.14)] transition-[opacity,transform] duration-150 motion-reduce:transition-none"
+                        style={{ background: `${theme.toolbar.panel}e8`, borderColor: theme.toolbar.border, color: theme.toolbar.item, backdropFilter: "blur(8px)" }}
+                        onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onReplaceMedia?.(data);
+                        }}
+                        aria-label={`替换${data.type === CanvasNodeType.Video ? "视频" : data.type === CanvasNodeType.Audio ? "音频" : "图片"}`}
+                    >
+                        <RefreshCw className="size-4" strokeWidth={2.2} />
+                        <span>{data.metadata?.mediaReplacing ? "替换中" : "替换"}</span>
+                    </button>
+                ) : null}
+                {data.metadata?.locked ? (
+                    <span
+                        data-canvas-node-lock-badge
+                        data-lock-badge-screen-size={lockBadge.badgeSize}
+                        className="pointer-events-none absolute z-40 grid place-items-center border backdrop-blur"
+                        style={{
+                            width: lockBadge.badgeSize,
+                            height: lockBadge.badgeSize,
+                            right: lockBadge.inset / lockBadge.safeScale,
+                            top: lockBadge.inset / lockBadge.safeScale,
+                            transform: `scale(${1 / lockBadge.safeScale})`,
+                            transformOrigin: "top right",
+                            borderRadius: Math.max(2, lockBadge.badgeSize * 0.28),
+                            boxShadow: `0 ${lockBadge.badgeSize * 0.16}px ${lockBadge.badgeSize * 0.5}px rgba(15,23,42,.2)`,
+                            background: theme.toolbar.panel,
+                            borderColor: theme.toolbar.border,
+                            color: theme.toolbar.item,
+                        }}
+                        title="节点已锁定"
+                        aria-label="节点已锁定"
+                    >
+                        <Lock style={{ width: lockBadge.iconSize, height: lockBadge.iconSize }} strokeWidth={2.25} />
+                    </span>
+                ) : null}
 
                 {!hasImageContent && !hasVideoContent && !hasAudioContent && !hasDrawingPreview && data.type !== CanvasNodeType.Config ? (
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} />
                 ) : null}
 
-                <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                {!data.metadata?.locked ? (
+                    <>
+                        <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
+                        <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
+                        <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
+                        <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                    </>
+                ) : null}
             </div>
 
-            <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onConnectStart={(event) => onConnectStart(event, data.id, "target")} />
-            <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onConnectStart={(event) => onConnectStart(event, data.id, "source")} />
+            <ConnectionHandleDot
+                side="left"
+                scale={scale}
+                visible={showTargetHandle && !suppressSourceRails && (hovered || isSelected || targetRailActive || legacyConnecting)}
+                active={isSelected || targetRailActive || legacyConnecting}
+                onConnectStart={(event, anchorRatio) => onConnectStart(event, data.id, "target", undefined, anchorRatio)}
+            />
+            <ConnectionHandleDot
+                side="right"
+                scale={scale}
+                visible={showSourceHandle && !suppressSourceRails && (hovered || isSelected || sourceRailActive || legacyConnecting)}
+                active={isSelected || sourceRailActive || legacyConnecting}
+                onConnectStart={(event, anchorRatio) => onConnectStart(event, data.id, "source", undefined, anchorRatio)}
+            />
 
-            {showPanel && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[500px] max-w-[calc(100vw-2rem)] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
+            {showPanel && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[520px] max-w-[calc(100vw-2rem)] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
     );
 });

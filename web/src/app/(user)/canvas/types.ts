@@ -1,3 +1,8 @@
+import type { BackgroundRemovalModel, BackgroundRemovalOptionsV1 } from "@/lib/background-removal-options";
+import type { BackgroundRemovalProgressStage } from "@/lib/background-removal-progress";
+import type { CanvasEmotionEditRegion, CanvasFaceBox } from "./utils/canvas-emotion";
+import type { PortraitTextureSettings } from "./utils/canvas-portrait-texture";
+
 export type Position = {
     x: number;
     y: number;
@@ -29,6 +34,22 @@ export function isCanvasImageNodeType(type: CanvasNodeType | null | undefined) {
 export function isCanvasDrawingNodeType(type: CanvasNodeType | null | undefined) {
     return type === CanvasNodeType.Drawing;
 }
+
+export type CanvasBackgroundRemovalTask = {
+    id: string;
+    sourceNodeId: string;
+    sourceStorageKey: string;
+    sourceContent: string;
+    sourceNaturalWidth?: number;
+    sourceNaturalHeight?: number;
+    sourceBytes?: number;
+    options: BackgroundRemovalOptionsV1;
+    optionsHash?: string;
+    model?: BackgroundRemovalModel;
+    progressStage?: BackgroundRemovalProgressStage;
+    progress?: number;
+    stage?: string;
+};
 
 export type CanvasDrawingPreview = {
     storageKey?: string;
@@ -101,6 +122,7 @@ export type CanvasNodeMetadata = {
     prompt?: string;
     sourcePrompt?: string;
     status?: CanvasNodeStatus;
+    locked?: boolean;
     errorDetails?: string;
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
@@ -121,6 +143,18 @@ export type CanvasNodeMetadata = {
     panoramaProjection?: "equirectangular";
     panoramaSourcePrompt?: string;
     references?: string[];
+    skillIds?: string[];
+    taskId?: string;
+    taskStatus?: "pending" | "running" | "success" | "error" | "paused" | "cancelled";
+    taskProgress?: number;
+    taskStage?: string;
+    taskCreatedAt?: number;
+    taskStartedAt?: number;
+    taskUpdatedAt?: number;
+    taskDetails?: string;
+    groupId?: string;
+    videoStartFrameNodeId?: string;
+    videoEndFrameNodeId?: string;
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;
@@ -135,12 +169,41 @@ export type CanvasNodeMetadata = {
     serverUrl?: string;
     mimeType?: string;
     bytes?: number;
+    /** Local upload replacement is in flight; never persisted as a generation task. */
+    mediaReplacing?: boolean;
+    derivedOperation?: "remove-background" | "refine-background";
+    sourceNodeId?: string;
+    sourceStorageKey?: string;
+    backgroundRemovalOptions?: BackgroundRemovalOptionsV1;
+    backgroundRemovalOptionsHash?: string;
+    /** Persisted server task that is resumed after reopening the canvas. */
+    backgroundRemovalTask?: CanvasBackgroundRemovalTask;
+    /** Prevents a terminal persisted task from being reattached after its result was handled. */
+    backgroundRemovalHandledTaskId?: string;
+    emotionEdit?: {
+        sourceNodeId: string;
+        sourceStorageKey?: string;
+        sourceContent?: string;
+        characterName: string;
+        presetId: string;
+        intimacy: number;
+        arousal: number;
+        label: string;
+        faceBox: CanvasFaceBox;
+        editRegion?: CanvasEmotionEditRegion;
+        sourceWidth?: number;
+        sourceHeight?: number;
+        providerSize?: string;
+    };
+    portraitTexture?: PortraitTextureSettings;
     durationMs?: number;
     videoTask?: {
         id: string;
         provider: "openai" | "seedance" | "generation";
         model: string;
         pollPath?: string;
+        serverTaskId?: string;
+        durationSeconds?: number;
     };
     imageTask?: {
         id: string;
@@ -171,7 +234,18 @@ export type CanvasConnection = {
     id: string;
     fromNodeId: string;
     toNodeId: string;
+    /** Stable port identifiers. Legacy edges omit these and use the default side port. */
+    fromHandleId?: string;
+    toHandleId?: string;
+    /**
+     * Vertical attachment point expressed as a proportion of the node height.
+     * Connections created before anchor positioning continue to use the centre.
+     */
+    fromAnchorRatio?: number;
+    toAnchorRatio?: number;
 };
+
+export type CanvasMediaPerformanceMode = "auto" | "quality" | "performance";
 
 export type CanvasAssistantReference = {
     id: string;
@@ -212,6 +286,10 @@ export type CanvasAssistantSession = {
 export type ConnectionHandle = {
     nodeId: string;
     handleType: "source" | "target";
+    /** Optional port identifier for nodes exposing more than one input/output. */
+    handleId?: string;
+    /** The pointer position within the originating node, clamped to its side handle. */
+    anchorRatio?: number;
 };
 
 export type SelectionBox = {

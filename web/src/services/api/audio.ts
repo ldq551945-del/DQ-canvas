@@ -14,6 +14,8 @@ type RequestOptions = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    sourceNodeId?: string;
+    targetNodeId?: string;
 };
 
 export type AudioGenerationTask = { id: string; status?: "pending" | "running" | "success" | "error" | "cancelled"; model: string };
@@ -107,6 +109,8 @@ function taskContext(options?: RequestOptions) {
         parentTaskId: options.parentTaskId,
         attemptNo: options.attemptNo,
         clientRequestId: options.clientRequestId,
+        sourceNodeId: options.sourceNodeId,
+        targetNodeId: options.targetNodeId,
     };
 }
 

@@ -16,7 +16,15 @@ vi.mock("@/lib/server/data-adapter", () => ({
 }));
 
 import { getDatabaseProvider, postgresQuery } from "@/lib/server/database";
-import { createStoredGenerationTask, getStoredGenerationTask, listStoredGenerationTaskRecords, mutateStoredGenerationTask, summarizeStoredGenerationTaskCosts, withGenerationConcurrencyLimit } from "./generation-task-store";
+import {
+    createStoredGenerationTask,
+    getActiveStoredGenerationTaskBySourceNode,
+    getStoredGenerationTask,
+    listStoredGenerationTaskRecords,
+    mutateStoredGenerationTask,
+    summarizeStoredGenerationTaskCosts,
+    withGenerationConcurrencyLimit,
+} from "./generation-task-store";
 
 type TestTask = {
     id: string;
@@ -29,6 +37,8 @@ type TestTask = {
 
 describe("mutateStoredGenerationTask", () => {
     beforeEach(() => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        vi.mocked(postgresQuery).mockReset();
         const now = Date.now();
         mocks.records = [
             {
@@ -98,6 +108,128 @@ describe("mutateStoredGenerationTask", () => {
         expect(mocks.records).toHaveLength(2);
         expect(mocks.records.every((record) => record.executionPhase === "created")).toBe(true);
     });
+
+    it("keeps only one active image processing task for the same canvas node", async () => {
+        mocks.records = [];
+        const now = Date.now();
+        const first = await createStoredGenerationTask("image_process", { id: "process-one", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "node-one", createdAt: now, updatedAt: now }, 60_000);
+        const duplicate = await createStoredGenerationTask("image_process", { id: "process-two", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "node-one", createdAt: now, updatedAt: now }, 60_000);
+
+        expect(first.id).toBe("process-one");
+        expect(duplicate.id).toBe("process-one");
+        expect(mocks.records).toHaveLength(1);
+    });
+
+    it("persists an image processing schedule in the same file write as task creation", async () => {
+        mocks.records = [];
+        const now = Date.now();
+
+        await createStoredGenerationTask("image_process", { id: "process-scheduled", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "node-one", createdAt: now, updatedAt: now }, 60_000, {
+            executionPhase: "submitting",
+            provider: "rembg",
+            nextPollAt: now,
+            lastUpstreamStatus: "processing",
+        });
+
+        expect(mocks.records[0]).toMatchObject({ executionPhase: "submitting", provider: "rembg", nextPollAt: now, lastUpstreamStatus: "processing" });
+    });
+
+    it("inserts an initial schedule atomically in PostgreSQL", async () => {
+        const now = Date.now();
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery)
+            .mockResolvedValueOnce({ rows: [] } as never)
+            .mockResolvedValueOnce({ rows: [{ payload: { id: "process-scheduled" } }] } as never);
+
+        await createStoredGenerationTask("image_process", { id: "process-scheduled", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "node-one", createdAt: now, updatedAt: now }, 60_000, {
+            executionPhase: "submitting",
+            provider: "rembg",
+            nextPollAt: now,
+            lastUpstreamStatus: "processing",
+        });
+
+        const [query, values] = vi.mocked(postgresQuery).mock.calls[1] || [];
+        expect(String(query)).toContain("execution_phase, provider, next_poll_at, last_upstream_status");
+        expect(values).toEqual(expect.arrayContaining(["submitting", "rembg", new Date(now), "processing"]));
+        vi.mocked(postgresQuery).mockClear();
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+    });
+
+    it("keeps distinct canvas submissions for the same source node while preserving both node bindings", async () => {
+        mocks.records = [];
+        const now = Date.now();
+        const first = await createStoredGenerationTask(
+            "video",
+            { id: "video-one", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "source-one", targetNodeId: "target-one", clientRequestId: "submission-one", createdAt: now, updatedAt: now },
+            60_000,
+        );
+        const second = await createStoredGenerationTask(
+            "video",
+            { id: "video-two", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "source-one", targetNodeId: "target-one", clientRequestId: "submission-two", createdAt: now, updatedAt: now + 1 },
+            60_000,
+        );
+
+        expect(first.id).toBe("video-one");
+        expect(second.id).toBe("video-two");
+        expect(mocks.records).toHaveLength(2);
+        expect(mocks.records.map((record) => record.payload)).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({ sourceNodeId: "source-one", targetNodeId: "target-one", clientRequestId: "submission-one" }),
+                expect.objectContaining({ sourceNodeId: "source-one", targetNodeId: "target-one", clientRequestId: "submission-two" }),
+            ]),
+        );
+    });
+
+    it("keeps source-node deduplication scoped to its canvas project", async () => {
+        mocks.records = [];
+        const now = Date.now();
+        const first = await createStoredGenerationTask("image_process", { id: "process-one", userId: "user", status: "pending", projectId: "canvas-one", sourceNodeId: "node-one", createdAt: now, updatedAt: now }, 60_000);
+        const otherProject = await createStoredGenerationTask("image_process", { id: "process-two", userId: "user", status: "pending", projectId: "canvas-two", sourceNodeId: "node-one", createdAt: now, updatedAt: now }, 60_000);
+
+        expect(first.id).toBe("process-one");
+        expect(otherProject.id).toBe("process-two");
+        expect(mocks.records).toHaveLength(2);
+    });
+
+    it("selects the newest active source-node task in file storage", async () => {
+        const now = Date.now();
+        mocks.records = [
+            {
+                id: "process-old",
+                userId: "user",
+                type: "image_process",
+                status: "running",
+                payload: { id: "process-old", sourceNodeId: "node-one" },
+                projectId: "canvas-one",
+                createdAt: now - 2_000,
+                updatedAt: now - 2_000,
+                expiresAt: now + 60_000,
+            },
+            {
+                id: "process-new",
+                userId: "user",
+                type: "image_process",
+                status: "pending",
+                payload: { id: "process-new", sourceNodeId: "node-one" },
+                projectId: "canvas-one",
+                createdAt: now - 1_000,
+                updatedAt: now - 1_000,
+                expiresAt: now + 60_000,
+            },
+        ];
+
+        await expect(getActiveStoredGenerationTaskBySourceNode<{ id: string }>("image_process", "user", "node-one", "canvas-one")).resolves.toEqual({ id: "process-new", sourceNodeId: "node-one" });
+    });
+
+    it("orders PostgreSQL source-node matches by update time and id", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValueOnce({ rows: [{ payload: { id: "process-new" } }] } as never);
+
+        await expect(getActiveStoredGenerationTaskBySourceNode<{ id: string }>("image_process", "user", "node-one", "canvas-one")).resolves.toEqual({ id: "process-new" });
+        expect(String(vi.mocked(postgresQuery).mock.calls[0]?.[0])).toContain("ORDER BY updated_at DESC, id DESC");
+        vi.mocked(postgresQuery).mockClear();
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+    });
 });
 
 describe("listStoredGenerationTaskRecords", () => {
@@ -112,6 +244,20 @@ describe("listStoredGenerationTaskRecords", () => {
         const result = await listStoredGenerationTaskRecords({ search: "0001", searchUserIds: ["user-one"], includeAll: false });
 
         expect(result.items.map((item) => item.id)).toEqual(["task-one"]);
+    });
+
+    it("filters active statuses before paging so terminal tasks cannot hide a running task", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        const now = Date.now();
+        mocks.records = [
+            { id: "recent-success", userId: "user-one", type: "image", status: "success", payload: {}, surface: "canvas", projectId: "canvas-one", createdAt: now, updatedAt: now + 2, expiresAt: now + 60_000 },
+            { id: "older-running", userId: "user-one", type: "video", status: "running", payload: {}, surface: "canvas", projectId: "canvas-one", createdAt: now, updatedAt: now + 1, expiresAt: now + 60_000 },
+        ];
+
+        const result = await listStoredGenerationTaskRecords({ surface: "canvas", projectId: "canvas-one", userId: "user-one", statuses: ["pending", "running", "paused"], page: 1, pageSize: 1, includeAll: false });
+
+        expect(result.total).toBe(1);
+        expect(result.items.map((item) => item.id)).toEqual(["older-running"]);
     });
 
     it("pushes PostgreSQL filters, pagination and aggregate summary into database queries", async () => {
@@ -141,11 +287,12 @@ describe("listStoredGenerationTaskRecords", () => {
         const [summaryQuery, summaryParams] = vi.mocked(postgresQuery).mock.calls[1] || [];
 
         expect(String(pageQuery)).toContain("payload::text ILIKE");
-        expect(String(pageQuery)).toContain("user_id = ANY($7::text[])");
-        expect(String(pageQuery)).toContain("LIMIT $8 OFFSET $9");
-        expect(pageParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"], 20, 0]);
+        expect(String(pageQuery)).toContain("status = ANY($3::text[])");
+        expect(String(pageQuery)).toContain("user_id = ANY($8::text[])");
+        expect(String(pageQuery)).toContain("LIMIT $9 OFFSET $10");
+        expect(pageParams).toEqual(["video", "success", [], "chat", "project-one", "user-one", "needle", ["user-one"], 20, 0]);
         expect(String(summaryQuery)).toContain("GROUP BY task_type, status");
-        expect(summaryParams).toEqual(["video", "success", "chat", "project-one", "user-one", "needle", ["user-one"]]);
+        expect(summaryParams).toEqual(["video", "success", [], "chat", "project-one", "user-one", "needle", ["user-one"]]);
         expect(result).toMatchObject({ total: 1, items: [{ id: "task-one", type: "video" }], all: [], summary: { total: 1, totalPointsCost: 3 } });
     });
 });

@@ -16,17 +16,17 @@ const CanvasPanoramaSurface = dynamic(() => import("./canvas-panorama-surface").
 
 const stopCanvasInteraction = (event: SyntheticEvent) => event.stopPropagation();
 
-export function CanvasPanoramaViewer({ src, alt }: { src: string; alt: string }) {
+export function CanvasPanoramaViewer({ src, alt, reduced = false }: { src: string; alt: string; reduced?: boolean }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [open, setOpen] = useState(false);
-    const previewSrc = imagePreviewUrl(src, 1920);
+    const previewSrc = imagePreviewUrl(src, reduced ? 960 : 1920);
 
     if (!src) return null;
 
     return (
         <>
             <div className="relative h-full w-full overflow-hidden" data-canvas-no-zoom>
-                <img src={previewSrc} alt={alt} draggable={false} className="block h-full w-full select-none object-cover" />
+                <img src={previewSrc} alt={alt} draggable={false} loading="lazy" decoding="async" className="block h-full w-full select-none object-cover" />
                 <button
                     type="button"
                     className="absolute bottom-3 right-3 z-10 inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium shadow-lg backdrop-blur transition hover:opacity-90"

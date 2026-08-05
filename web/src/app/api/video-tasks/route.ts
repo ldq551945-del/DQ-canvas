@@ -4,6 +4,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, isAuthInputError } from "@/lib/auth/store";
 import { generationModelId, rawModelName, toSystemGenerationChannel } from "@/lib/server/generation-channel";
+import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { resolveLogicalModel } from "@/lib/server/logical-model-router";
 import { createVideoTask } from "@/lib/server/video-task-store";
@@ -37,6 +38,17 @@ export async function POST(request: Request) {
         const upstream = sanitizeRegisteredVideoUpstream(body.upstream);
         if (!config || !resolved || !upstream || ![config.model, resolved.logicalModelId].map(rawModelName).includes(rawModelName(upstream.model))) return NextResponse.json({ error: "视频任务参数不完整" }, { status: 400 });
         const task = await createVideoTask({ userId: user.id, config, upstream: { ...upstream, model: config.model } });
+        const submittedAt = Date.now();
+        await scheduleGenerationTask("video", task.id, {
+            executionPhase: "submitted",
+            upstreamTaskId: task.upstream.id,
+            channelId: config.channelId,
+            provider: task.upstream.provider,
+            queryPath: task.upstream.pollPath,
+            submittedAt,
+            nextPollAt: submittedAt,
+            lastUpstreamStatus: "submitted",
+        });
         return NextResponse.json({ task: publicTask(task) });
     });
     return response || NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429 });

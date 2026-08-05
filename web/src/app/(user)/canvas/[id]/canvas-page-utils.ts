@@ -13,6 +13,7 @@ import { createTextGenerationTask, waitForTextGenerationTask, type TextGeneratio
 import { createServerVideoGenerationTask, storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
 import { defaultConfig, modelMatchesCapability, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import { CANVAS_IMAGE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { droppedFiles, preventFileDragEvent } from "@/lib/file-drop";
 import { resolveImageUrl, resolveStoredImageDataUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
@@ -109,7 +110,7 @@ export function audioExtension(mimeType?: string) {
 }
 
 export async function uploadCanvasImage(input: string | Blob): Promise<UploadedImage> {
-    const image = await uploadImage(input);
+    const image = await uploadImage(input, { maxBytes: CANVAS_IMAGE_UPLOAD_MAX_BYTES, purpose: "canvas-image" });
     return { ...image, url: await resolveStoredImageDataUrl(image.storageKey, image.url) };
 }
 
@@ -131,6 +132,58 @@ export async function uploadGeneratedCanvasImage(url: string, remoteFallback = "
 
 export function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
     return { content: image.url, storageKey: image.storageKey, remoteUrl: image.remoteUrl, serverUrl: image.serverUrl, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
+}
+
+const CANVAS_HISTORY_RUNTIME_METADATA_KEYS = new Set<keyof CanvasNodeMetadata>([
+    "status",
+    "errorDetails",
+    "taskId",
+    "taskStatus",
+    "taskProgress",
+    "taskStage",
+    "taskCreatedAt",
+    "taskStartedAt",
+    "taskUpdatedAt",
+    "taskDetails",
+    "videoTask",
+    "imageTask",
+    "textTask",
+    "audioTask",
+    "backgroundRemovalTask",
+    "backgroundRemovalHandledTaskId",
+]);
+
+export function canvasNodesEqualIgnoringTaskMetadata(previous: CanvasNodeData[], next: CanvasNodeData[]) {
+    if (previous === next) return true;
+    if (previous.length !== next.length) return false;
+    return previous.every((node, index) => canvasNodeEqualIgnoringTaskMetadata(node, next[index]));
+}
+
+function canvasNodeEqualIgnoringTaskMetadata(previous: CanvasNodeData, next: CanvasNodeData | undefined) {
+    if (previous === next) return true;
+    if (!next) return false;
+    const { metadata: previousMetadata, ...previousNode } = previous;
+    const { metadata: nextMetadata, ...nextNode } = next;
+    return canvasHistoryValueEqual(previousNode, nextNode) && canvasMetadataEqualIgnoringTaskMetadata(previousMetadata, nextMetadata);
+}
+
+function canvasMetadataEqualIgnoringTaskMetadata(previous: CanvasNodeMetadata | undefined, next: CanvasNodeMetadata | undefined) {
+    if (previous === next) return true;
+    const previousKeys = Object.keys(previous || {}).filter((key) => !CANVAS_HISTORY_RUNTIME_METADATA_KEYS.has(key as keyof CanvasNodeMetadata));
+    const nextKeys = Object.keys(next || {}).filter((key) => !CANVAS_HISTORY_RUNTIME_METADATA_KEYS.has(key as keyof CanvasNodeMetadata));
+    if (previousKeys.length !== nextKeys.length) return false;
+    return previousKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key) && canvasHistoryValueEqual(previous?.[key as keyof CanvasNodeMetadata], next?.[key as keyof CanvasNodeMetadata]));
+}
+
+function canvasHistoryValueEqual(previous: unknown, next: unknown): boolean {
+    if (Object.is(previous, next)) return true;
+    if (!previous || !next || typeof previous !== "object" || typeof next !== "object") return false;
+    if (Array.isArray(previous) || Array.isArray(next)) return Array.isArray(previous) && Array.isArray(next) && previous.length === next.length && previous.every((value, index) => canvasHistoryValueEqual(value, next[index]));
+    const previousRecord = previous as Record<string, unknown>;
+    const nextRecord = next as Record<string, unknown>;
+    const previousKeys = Object.keys(previousRecord);
+    const nextKeys = Object.keys(nextRecord);
+    return previousKeys.length === nextKeys.length && previousKeys.every((key) => Object.prototype.hasOwnProperty.call(nextRecord, key) && canvasHistoryValueEqual(previousRecord[key], nextRecord[key]));
 }
 
 export function canvasNodeReferenceImage(node: CanvasNodeData): ReferenceImage {
@@ -201,6 +254,10 @@ export function buildAudioGenerationMetadata(config: AiConfig): CanvasNodeMetada
         audioSpeed: config.audioSpeed,
         audioInstructions: config.audioInstructions || "",
     };
+}
+
+export function buildPendingMediaNodeMetadata(sourceNode: CanvasNodeData | undefined, reuseSourceNode: boolean, patch: CanvasNodeMetadata): CanvasNodeMetadata {
+    return { ...(reuseSourceNode ? sourceNode?.metadata : {}), ...patch };
 }
 
 export function referenceUrl(image: ReferenceImage) {
@@ -294,16 +351,20 @@ export function getGenerationCount(count: string) {
 export function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]>) {
     const safePatch = patch || {};
     const next = { ...node, metadata: { ...node.metadata, ...safePatch } };
+    if (node.metadata?.locked) return next;
     const spec = node.type === CanvasNodeType.Video ? NODE_DEFAULT_SIZE[CanvasNodeType.Video] : node.type === CanvasNodeType.Panorama ? NODE_DEFAULT_SIZE[CanvasNodeType.Panorama] : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     const size = typeof safePatch.size === "string" && !node.metadata?.content ? nodeSizeFromRatio(safePatch.size, spec.width, spec.height) : null;
     if (node.type === CanvasNodeType.Panorama) return { ...next, metadata: { ...next.metadata, size: PANORAMA_IMAGE_SIZE } };
     return size && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : next;
 }
 
-export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle) {
+export function getConnectionTargetAnchor(node: CanvasNodeData, current: ConnectionHandle, handleId?: string, anchorRatio?: number) {
+    // Named ports may provide their own vertical anchor through metadata. The
+    // default side port remains the centre for legacy nodes and saved edges.
+    const ratio = typeof anchorRatio === "number" ? anchorRatio : current.handleType === "source" ? (current.anchorRatio ?? 0.5) : 0.5;
     return {
         x: current.handleType === "source" ? node.position.x : node.position.x + node.width,
-        y: node.position.y + node.height / 2,
+        y: node.position.y + node.height * (Number.isFinite(ratio) ? Math.min(0.92, Math.max(0.08, ratio)) : 0.5),
     };
 }
 
@@ -315,6 +376,7 @@ export function normalizeConnection(firstNodeId: string, secondNodeId: string, n
     if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
     if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
     if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
+    if (firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
     return { fromNodeId: first.id, toNodeId: second.id };
 }
 

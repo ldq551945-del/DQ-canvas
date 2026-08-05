@@ -12,8 +12,9 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { App } from "antd";
 import { type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
+import { CANVAS_PERFORMANCE_STORAGE_KEY, normalizeCanvasPerformanceMode } from "../utils/canvas-performance-mode";
 import { useCanvasStore } from "../stores/use-canvas-store";
-import { type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
+import { type CanvasAssistantSession, type CanvasConnection, type CanvasMediaPerformanceMode, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -105,7 +106,10 @@ export function useCanvasPageState() {
     const [editRequestNonce, setEditRequestNonce] = useState(0);
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
+    const [annotationNodeId, setAnnotationNodeId] = useState<string | null>(null);
     const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
+    const [emotionNodeId, setEmotionNodeId] = useState<string | null>(null);
+    const [backgroundRefineNodeId, setBackgroundRefineNodeId] = useState<string | null>(null);
     const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
     const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
@@ -120,6 +124,25 @@ export function useCanvasPageState() {
     const [collapsingBatchIds, setCollapsingBatchIds] = useState<Set<string>>(new Set());
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const [isNodeDragging, setIsNodeDragging] = useState(false);
+    const [performanceMode, setPerformanceModeState] = useState<CanvasMediaPerformanceMode>("auto");
+    const [canvasTool, setCanvasTool] = useState<"move" | "box-select">("move");
+
+    useEffect(() => {
+        try {
+            setPerformanceModeState(normalizeCanvasPerformanceMode(window.localStorage.getItem(CANVAS_PERFORMANCE_STORAGE_KEY)));
+        } catch {
+            setPerformanceModeState("auto");
+        }
+    }, []);
+
+    const setPerformanceMode = (mode: CanvasMediaPerformanceMode) => {
+        setPerformanceModeState(mode);
+        try {
+            window.localStorage.setItem(CANVAS_PERFORMANCE_STORAGE_KEY, mode);
+        } catch {
+            /* storage is optional */
+        }
+    };
 
     const projectIdRef = useRef(projectId);
     const drawingCreateRequestsRef = useRef(new Map<string, symbol>());
@@ -139,6 +162,7 @@ export function useCanvasPageState() {
     const viewportRef = useRef(viewport);
     const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
     const connectingParamsRef = useRef(connectingParams);
+    const connectingPointerStartRef = useRef<{ pointerId?: number; clientX: number; clientY: number } | null>(null);
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
     const agentCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,6 +172,7 @@ export function useCanvasPageState() {
     const resumingVideoTaskIdsRef = useRef(new Set<string>());
     const resumingTextTaskIdsRef = useRef(new Set<string>());
     const resumingAudioTaskIdsRef = useRef(new Set<string>());
+    const backgroundRemovalHandledTaskIdsRef = useRef(new Set<string>());
     return {
         message,
         modal,
@@ -242,8 +267,14 @@ export function useCanvasPageState() {
         setInfoNodeId,
         cropNodeId,
         setCropNodeId,
+        annotationNodeId,
+        setAnnotationNodeId,
         maskEditNodeId,
         setMaskEditNodeId,
+        emotionNodeId,
+        setEmotionNodeId,
+        backgroundRefineNodeId,
+        setBackgroundRefineNodeId,
         splitNodeId,
         setSplitNodeId,
         upscaleNodeId,
@@ -272,6 +303,10 @@ export function useCanvasPageState() {
         setOpeningBatchIds,
         isNodeDragging,
         setIsNodeDragging,
+        performanceMode,
+        setPerformanceMode,
+        canvasTool,
+        setCanvasTool,
         projectIdRef,
         drawingCreateRequestsRef,
         nodesRef,
@@ -280,6 +315,7 @@ export function useCanvasPageState() {
         viewportRef,
         generateNodeRef,
         connectingParamsRef,
+        connectingPointerStartRef,
         connectionTargetNodeIdRef,
         selectionBoxRef,
         agentCloseTimerRef,
@@ -289,6 +325,7 @@ export function useCanvasPageState() {
         resumingVideoTaskIdsRef,
         resumingTextTaskIdsRef,
         resumingAudioTaskIdsRef,
+        backgroundRemovalHandledTaskIdsRef,
     };
 }
 

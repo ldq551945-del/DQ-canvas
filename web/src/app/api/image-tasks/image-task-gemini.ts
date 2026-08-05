@@ -1,4 +1,3 @@
-import { referenceRequestUrl } from "./image-task-reference-urls";
 import { after, NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
@@ -106,6 +105,7 @@ import {
     toGeminiImagePart,
     buildImageEditFormData,
     imageReferenceToFile,
+    imageReferenceToDataUrl,
     dataUrlToFile,
     readFetchError,
     readPointsRemaining,
@@ -126,7 +126,7 @@ export async function runGeminiImageTask(task: ImageTask, origin: string, cookie
     if (task.mask) throw new GenerationSubmissionSafeFailure("Gemini 暂不支持蒙版编辑");
     const config = task.config;
     const parts: GeminiPart[] = [{ text: withSystemPrompt(config, buildImageReferencePromptText(task.prompt, task.references)) }];
-    task.references.forEach((reference) => parts.push(toGeminiImagePart(referenceRequestUrl(reference, origin), reference.type)));
+    parts.push(...(await buildGeminiImageReferenceParts(task, origin, cookie)));
     const response = await imageSubmissionFetch(config, `${geminiApiUrl(config, "generateContent", origin)}`, {
         method: "POST",
         headers: geminiHeaders(config, cookie, imagePointsIdempotencyKey(task)),
@@ -147,4 +147,14 @@ export async function runGeminiImageTask(task: ImageTask, origin: string, cookie
             throw new GenerationSubmissionUncertainError(error instanceof Error ? error.message : "Gemini 没有返回图片，创建结果待确认");
         }
     });
+}
+
+export async function buildGeminiImageReferenceParts(task: ImageTask, origin: string, cookie: string) {
+    return Promise.all(
+        task.references.map(async (reference, index) => {
+            const existingDataUrl = (reference.dataUrl || "").trim();
+            const dataUrl = /^data:image\//i.test(existingDataUrl) ? existingDataUrl : await imageReferenceToDataUrl(reference, reference.name || `reference-${index + 1}.png`, origin, cookie);
+            return toGeminiImagePart(dataUrl, reference.type);
+        }),
+    );
 }

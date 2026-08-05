@@ -20,6 +20,10 @@ import { CanvasNodeType, isCanvasImageNodeType, type CanvasAssistantImage, type 
 import { applyCameraPrompt } from "../utils/canvas-camera";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { buildPanoramaPrompt } from "../utils/canvas-panorama";
+import { buildPortraitTexturePrompt, normalizePortraitTextureSettings, resolvePortraitTextureRetryState } from "../utils/canvas-portrait-texture";
+import { buildEmotionImageArtifacts, emotionGenerationSize } from "../utils/canvas-emotion";
+import { emotionSourceIdentity, resolveEmotionEditRequestConfig, resolveEmotionFirstRetryInputs, sameEmotionSource } from "../utils/canvas-emotion-request";
+import { notifyCanvasGenerationTaskCreated } from "../utils/canvas-generation-task-events";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -31,6 +35,7 @@ import {
     buildAudioGenerationMetadata,
     buildGenerationConfig,
     buildImageGenerationMetadata,
+    buildPendingMediaNodeMetadata,
     canvasNodeReferenceImage,
     findRetrySourceNode,
     generationReferenceUrls,
@@ -74,7 +79,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
         generateNodeRef,
         agentCloseTimerRef,
     } = state;
-    const { startGenerationRequest, finishGenerationRequest, completeVideoTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
+    const { startGenerationRequest, attachGenerationTask, finishGenerationRequest, isGenerationRequestActive, completeVideoTask, startAndCompleteImageTask, completeTextTask, completeAudioTask } = tasks;
     const { screenToCanvas, applyAgentOps } = interactions;
     const deferVideoTask = useCallback(
         (nodeId: string, errorDetails?: string, delayMs = 15_000) => {
@@ -99,22 +104,32 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             const runController = startGenerationRequest(nodeId, nodeId, nodeId);
             const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
             const editingTextNode = mode === "text" && Boolean(sourceTextContent);
-            const generationContext = await hydrateNodeGenerationContext(
-                buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
-            );
-            const sourcePrompt = generationContext.prompt.trim();
+            const portraitTextureSnapshot = mode === "image" && sourceNode?.metadata?.portraitTexture ? normalizePortraitTextureSettings(sourceNode.metadata.portraitTexture) : undefined;
+            let baseGenerationContext: Awaited<ReturnType<typeof hydrateNodeGenerationContext>>;
+            try {
+                baseGenerationContext = await hydrateNodeGenerationContext(
+                    buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt),
+                );
+            } catch (error) {
+                const errorDetails = error instanceof Error ? error.message : "参考图片加载失败";
+                message.error(errorDetails);
+                setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                if (finishGenerationRequest(nodeId, runController)) setRunningNodeId((current) => (current === nodeId ? null : current));
+                return;
+            }
+            const portraitTextureBasePrompt = baseGenerationContext.prompt.trim();
+            const sourcePrompt = portraitTextureSnapshot ? buildPortraitTexturePrompt(portraitTextureBasePrompt, portraitTextureSnapshot) : portraitTextureBasePrompt;
+            const generationContext = { ...baseGenerationContext, prompt: sourcePrompt };
             const panoramaPrompt = sourceNode?.type === CanvasNodeType.Panorama ? buildPanoramaPrompt(sourcePrompt, generationContext.referenceImages.length > 0) : sourcePrompt;
             const effectivePrompt = applyCameraPrompt(panoramaPrompt, sourceNode?.type === CanvasNodeType.Panorama ? undefined : sourceNode?.metadata?.cameraControl);
             if (runController.signal.aborted) {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
+                if (finishGenerationRequest(nodeId, runController)) setRunningNodeId((current) => (current === nodeId ? null : current));
                 return;
             }
             const markSourceStatus = !isCanvasImageNodeType(sourceNode?.type) && !editingTextNode;
             const statusPrompt = sourceNode?.type === CanvasNodeType.Config ? effectivePrompt : prompt;
             if (!effectivePrompt && (mode === "text" || mode === "audio")) {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
+                if (finishGenerationRequest(nodeId, runController)) setRunningNodeId((current) => (current === nodeId ? null : current));
                 return;
             }
             let pendingChildIds: string[] = [];
@@ -169,6 +184,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             batchChildIds: count > 1 ? childIds : undefined,
                             batchUsesReferenceImages: referenceImages.length > 0,
                             ...generationMetadata,
+                            ...(portraitTextureSnapshot ? { composerContent: portraitTextureBasePrompt, portraitTexture: portraitTextureSnapshot } : {}),
                             ...(isPanoramaNode ? { panoramaProjection: "equirectangular" as const, panoramaSourcePrompt: sourcePrompt } : {}),
                             ...(sourceNode?.metadata?.cameraControl && !isPanoramaNode ? { cameraControl: sourceNode.metadata.cameraControl } : {}),
                             imageBatchExpanded: count > 1 ? true : undefined,
@@ -190,6 +206,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             status: NODE_STATUS_LOADING,
                             batchRootId: count > 1 ? rootId : undefined,
                             ...generationMetadata,
+                            ...(portraitTextureSnapshot ? { composerContent: portraitTextureBasePrompt, portraitTexture: portraitTextureSnapshot } : {}),
                             ...(isPanoramaNode ? { panoramaProjection: "equirectangular" as const, panoramaSourcePrompt: sourcePrompt } : {}),
                             ...(sourceNode?.metadata?.cameraControl && !isPanoramaNode ? { cameraControl: sourceNode.metadata.cameraControl } : {}),
                         },
@@ -244,7 +261,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
-                                await startAndCompleteImageTask(targetId, { ...imageGenerationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, controller);
+                                await startAndCompleteImageTask(targetId, { ...imageGenerationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, controller, undefined, nodeId);
                                 hasSuccess = true;
                                 if (isConfigNode) setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
                                 return true;
@@ -280,6 +297,13 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 }
 
                 if (mode === "video") {
+                    const startFrameId = sourceNode?.metadata?.videoStartFrameNodeId;
+                    const endFrameId = sourceNode?.metadata?.videoEndFrameNodeId;
+                    const orderedVideoImages = [startFrameId, endFrameId]
+                        .filter((id, index, values): id is string => Boolean(id) && values.indexOf(id) === index)
+                        .map((id) => generationContext.referenceImages.find((image) => image.id === id))
+                        .filter((image): image is (typeof generationContext.referenceImages)[number] => Boolean(image));
+                    const videoImageReferences = [...orderedVideoImages, ...generationContext.referenceImages.filter((image) => !orderedVideoImages.some((selected) => selected.id === image.id))];
                     const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                     const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
                     const videoId = isEmptyVideoNode ? nodeId : nanoid();
@@ -291,7 +315,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         position: isEmptyVideoNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
                         width: isEmptyVideoNode ? sourceNode.width : spec.width,
                         height: isEmptyVideoNode ? sourceNode.height : spec.height,
-                        metadata: {
+                        metadata: buildPendingMediaNodeMetadata(sourceNode, isEmptyVideoNode, {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
                             model: generationConfig.model,
@@ -300,8 +324,9 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             vquality: generationConfig.vquality,
                             generateAudio: generationConfig.videoGenerateAudio,
                             watermark: generationConfig.videoWatermark,
-                            references: generationReferenceUrls(generationContext),
-                        },
+                            references: generationReferenceUrls({ ...generationContext, referenceImages: videoImageReferences }),
+                            skillIds: sourceNode?.metadata?.skillIds,
+                        }),
                     };
                     pendingChildIds = [videoId];
                     setNodes((prev) =>
@@ -312,14 +337,21 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        const task = await createServerVideoGenerationTask(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, {
+                        const task = await createServerVideoGenerationTask(generationConfig, effectivePrompt, videoImageReferences, generationContext.referenceVideos, generationContext.referenceAudios, {
                             signal: controller.signal,
                             conversationId: currentProject?.creativeConversationId,
                             surface: "canvas",
                             projectId,
-                            clientRequestId: `canvas-video:${projectId}:${nodeId}`,
+                            sourceNodeId: nodeId,
+                            targetNodeId: videoId,
+                            ...createFreshGenerationTaskContext("canvas-video", [projectId, videoId]),
+                            skillIds: sourceNode?.metadata?.skillIds,
                         });
-                        setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, videoTask: task } } : node)));
+                        if (!attachGenerationTask(videoId, controller, { id: task.id, type: "video" })) return;
+                        setNodes((prev) =>
+                            prev.map((node) => (node.id === videoId ? { ...node, metadata: { ...node.metadata, videoTask: task, taskId: task.id, taskStatus: "running", taskStage: "生成中", taskCreatedAt: Date.now(), taskUpdatedAt: Date.now() } } : node)),
+                        );
+                        notifyCanvasGenerationTaskCreated(projectId);
                         await completeVideoTask(videoId, generationConfig, task, controller, effectivePrompt);
                     } finally {
                         finishGenerationRequest(videoId, controller);
@@ -339,7 +371,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         position: isEmptyAudioNode ? sourceNode.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y + ((sourceNode?.height || spec.height) - spec.height) / 2 },
                         width: isEmptyAudioNode ? sourceNode.width : spec.width,
                         height: isEmptyAudioNode ? sourceNode.height : spec.height,
-                        metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...buildAudioGenerationMetadata(generationConfig) },
+                        metadata: buildPendingMediaNodeMetadata(sourceNode, isEmptyAudioNode, { prompt: effectivePrompt, status: NODE_STATUS_LOADING, ...buildAudioGenerationMetadata(generationConfig) }),
                     };
                     pendingChildIds = [audioId];
                     setNodes((prev) =>
@@ -356,9 +388,15 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             conversationId: currentProject?.creativeConversationId,
                             surface: "canvas",
                             projectId,
+                            sourceNodeId: nodeId,
+                            targetNodeId: audioId,
                             ...createFreshGenerationTaskContext("canvas-audio", [projectId, audioId]),
                         });
-                        setNodes((prev) => prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, audioTask: task } } : node)));
+                        if (!attachGenerationTask(audioId, controller, { id: task.id, type: "audio" })) return;
+                        setNodes((prev) =>
+                            prev.map((node) => (node.id === audioId ? { ...node, metadata: { ...node.metadata, audioTask: task, taskId: task.id, taskStatus: "running", taskStage: "生成中", taskCreatedAt: Date.now(), taskUpdatedAt: Date.now() } } : node)),
+                        );
+                        notifyCanvasGenerationTaskCreated(projectId);
                         await completeAudioTask(audioId, generationConfig, task, controller, effectivePrompt);
                     } finally {
                         finishGenerationRequest(audioId, controller);
@@ -397,18 +435,39 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 const answers = await Promise.all(
                     textTargetIds.map(async (targetNodeId) => {
                         try {
-                            const task = await createTextGenerationTask(generationConfig, buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }), { signal: controller.signal });
+                            const task = await createTextGenerationTask(generationConfig, buildNodeResponseMessages({ ...generationContext, prompt: effectivePrompt }), {
+                                signal: controller.signal,
+                                surface: "canvas",
+                                projectId,
+                                conversationId: currentProject?.creativeConversationId,
+                                sourceNodeId: nodeId,
+                                targetNodeId,
+                                ...createFreshGenerationTaskContext("canvas-text", [projectId, targetNodeId]),
+                            });
+                            if (!attachGenerationTask(targetNodeId, controller, { id: task.id, type: "text" })) return { nodeId: targetNodeId, content: "" };
                             setNodes((prev) =>
                                 prev.map((node) =>
                                     node.id === targetNodeId
                                         ? {
                                               ...node,
                                               type: CanvasNodeType.Text,
-                                              metadata: { ...node.metadata, prompt: effectivePrompt, status: NODE_STATUS_LOADING, textTask: { id: task.id, model: task.model }, errorDetails: undefined },
+                                              metadata: {
+                                                  ...node.metadata,
+                                                  prompt: effectivePrompt,
+                                                  status: NODE_STATUS_LOADING,
+                                                  textTask: { id: task.id, model: task.model },
+                                                  taskId: task.id,
+                                                  taskStatus: task.status || "pending",
+                                                  taskStage: "生成中",
+                                                  taskCreatedAt: Date.now(),
+                                                  taskUpdatedAt: Date.now(),
+                                                  errorDetails: undefined,
+                                              },
                                           }
                                         : node,
                                 ),
                             );
+                            notifyCanvasGenerationTaskCreated(projectId);
                             const answer = await completeTextTask(targetNodeId, generationConfig, task, controller, effectivePrompt);
                             streamed = answer;
                             return { nodeId: targetNodeId, content: answer };
@@ -457,19 +516,20 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     ),
                 );
             } finally {
-                finishGenerationRequest(nodeId, runController);
-                setRunningNodeId(null);
+                if (finishGenerationRequest(nodeId, runController)) setRunningNodeId((current) => (current === nodeId ? null : current));
             }
         },
         [
             completeAudioTask,
             completeTextTask,
             completeVideoTask,
+            attachGenerationTask,
             currentProject?.creativeConversationId,
             deferVideoTask,
             effectiveConfig,
             finishGenerationRequest,
             isAiConfigReady,
+            isGenerationRequestActive,
             message,
             openConfigDialog,
             projectId,
@@ -517,9 +577,31 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 return;
             }
 
-            const retryPromptSource = sourceNode.type === CanvasNodeType.Config && sourceNode.metadata?.composerContent ? sourceNode.metadata.composerContent : sourceNode.metadata?.prompt || node.metadata?.prompt || "";
-            const context = hasSavedImageMetadata ? null : await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, retryPromptSource));
-            const sourcePrompt = (savedImageMetadata?.sourcePrompt || sourceNode.metadata?.sourcePrompt || context?.prompt || savedImageMetadata?.prompt || sourceNode.metadata?.prompt || node.metadata?.prompt || "").trim();
+            const retryPromptSource = node.metadata?.emotionEdit
+                ? node.metadata?.prompt || sourceNode.metadata?.prompt || ""
+                : sourceNode.type === CanvasNodeType.Config && sourceNode.metadata?.composerContent
+                  ? sourceNode.metadata.composerContent
+                  : sourceNode.metadata?.prompt || node.metadata?.prompt || "";
+            const portraitTextureRetry = resolvePortraitTextureRetryState({
+                resultSettings: savedImageMetadata?.portraitTexture,
+                sourceSettings: sourceNode.metadata?.portraitTexture,
+                resultBasePrompt: savedImageMetadata?.portraitTexture ? savedImageMetadata.composerContent : undefined,
+                fallbackBasePrompt: retryPromptSource,
+            });
+            let context: Awaited<ReturnType<typeof hydrateNodeGenerationContext>> | null = null;
+            if (!hasSavedImageMetadata) {
+                try {
+                    context = await hydrateNodeGenerationContext(buildNodeGenerationContext(sourceNode.id, nodesRef.current, connectionsRef.current, portraitTextureRetry.basePrompt));
+                } catch (error) {
+                    const errorDetails = error instanceof Error ? error.message : "参考图片加载失败";
+                    message.error(errorDetails);
+                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                    return;
+                }
+            }
+            const contextBasePrompt = context?.prompt.trim() || "";
+            const portraitTexturePrompt = portraitTextureRetry.settings ? buildPortraitTexturePrompt(contextBasePrompt || portraitTextureRetry.basePrompt, portraitTextureRetry.settings) : contextBasePrompt;
+            const sourcePrompt = (portraitTexturePrompt || savedImageMetadata?.sourcePrompt || sourceNode.metadata?.sourcePrompt || savedImageMetadata?.prompt || sourceNode.metadata?.prompt || node.metadata?.prompt || "").trim();
             const panoramaPrompt = node.type === CanvasNodeType.Panorama ? buildPanoramaPrompt(sourcePrompt, Boolean(savedImageMetadata?.references?.length || context?.referenceImages.length)) : sourcePrompt;
             const prompt = applyCameraPrompt(panoramaPrompt, node.type === CanvasNodeType.Text || node.type === CanvasNodeType.Panorama ? undefined : savedImageMetadata?.cameraControl || sourceNode.metadata?.cameraControl);
             if (!prompt) {
@@ -528,8 +610,21 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             }
             const generationType = savedImageMetadata?.generationType;
             const useReferenceImages = generationType ? generationType === "edit" : Boolean(context?.referenceImages.length);
-            const retryReferenceImages =
-                hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
+            const emotionEdit = node.metadata?.emotionEdit;
+            let retryReferenceImages: Awaited<ReturnType<typeof resolveMetadataReferences>> | ReturnType<typeof sourceNodeReferenceImages> = [];
+            let emotionSource: CanvasNodeData | undefined;
+            try {
+                const retryInputs = await resolveEmotionFirstRetryInputs(emotionEdit, nodesRef.current, async () =>
+                    hasSavedImageMetadata && savedImageMetadata ? resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [],
+                );
+                if (retryInputs.kind === "emotion") emotionSource = retryInputs.source;
+                else retryReferenceImages = retryInputs.references;
+            } catch (error) {
+                const errorDetails = error instanceof Error ? error.message : "情绪编辑源图片已删除，无法重试";
+                message.error(errorDetails);
+                setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+                return;
+            }
             if (useReferenceImages && !retryReferenceImages) {
                 message.error("参考图片已丢失，无法继续重试");
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails: "参考图片已丢失，无法继续重试" } } : item)));
@@ -542,12 +637,98 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             const controller = startGenerationRequest(node.id, sourceNode.id, node.id);
 
             try {
+                if (emotionEdit) {
+                    const { supportsMaskedOpenAiEdit } = resolveEmotionEditRequestConfig(generationConfig);
+                    if (!supportsMaskedOpenAiEdit) throw new Error("表情编辑重试需要支持蒙版的 OpenAI Images 渠道");
+                    if (!emotionSource?.metadata?.content) throw new Error("情绪编辑源图片已删除，无法重试");
+                    const artifacts = await buildEmotionImageArtifacts(
+                        emotionSource.metadata.content,
+                        emotionEdit.faceBox,
+                        emotionSource.metadata.naturalWidth || emotionEdit.sourceWidth || 0,
+                        emotionSource.metadata.naturalHeight || emotionEdit.sourceHeight || 0,
+                    );
+                    const emotionConfig = {
+                        ...generationConfig,
+                        size: emotionGenerationSize(artifacts.editRegion),
+                        quality: !generationConfig.quality || generationConfig.quality === "auto" ? "high" : generationConfig.quality,
+                    };
+                    const sourceReference = canvasNodeReferenceImage(emotionSource);
+                    const nextEmotionEdit = {
+                        ...emotionEdit,
+                        ...emotionSourceIdentity(emotionSource),
+                        editRegion: artifacts.editRegion,
+                        sourceWidth: artifacts.imageWidth,
+                        sourceHeight: artifacts.imageHeight,
+                        providerSize: emotionConfig.size,
+                    };
+                    setNodes((current) =>
+                        current.map((item) =>
+                            item.id === node.id
+                                ? {
+                                      ...item,
+                                      metadata: {
+                                          ...item.metadata,
+                                          emotionEdit: nextEmotionEdit,
+                                          ...buildImageGenerationMetadata("edit", emotionConfig, 1, [sourceReference]),
+                                          size: `${artifacts.imageWidth}x${artifacts.imageHeight}`,
+                                      },
+                                  }
+                                : item,
+                        ),
+                    );
+                    await startAndCompleteImageTask(
+                        node.id,
+                        emotionConfig,
+                        prompt,
+                        [
+                            { id: `${emotionSource.id}-${emotionEdit.presetId}-edit-region`, name: "emotion-edit-region.png", type: "image/png", dataUrl: artifacts.sourceDataUrl },
+                            { id: `${emotionSource.id}-${emotionEdit.presetId}-character`, name: `${emotionEdit.characterName}-face.jpg`, type: "image/jpeg", dataUrl: artifacts.characterDataUrl },
+                        ],
+                        { id: `${emotionSource.id}-emotion-mask`, name: "emotion-mask.png", type: "image/png", dataUrl: artifacts.maskDataUrl },
+                        controller,
+                        () => {
+                            const currentSource = nodesRef.current.find((item) => item.id === nextEmotionEdit.sourceNodeId);
+                            if (!sameEmotionSource(nextEmotionEdit, currentSource)) throw new DOMException("Emotion source changed", "AbortError");
+                        },
+                        nextEmotionEdit.sourceNodeId,
+                    );
+                    return;
+                }
                 if (node.type === CanvasNodeType.Text) {
                     if (!context) return;
-                    const task = await createTextGenerationTask(generationConfig, buildNodeResponseMessages({ ...context, prompt }), { signal: controller.signal });
+                    const task = await createTextGenerationTask(generationConfig, buildNodeResponseMessages({ ...context, prompt }), {
+                        signal: controller.signal,
+                        surface: "canvas",
+                        projectId,
+                        conversationId: currentProject?.creativeConversationId,
+                        sourceNodeId: sourceNode.id,
+                        targetNodeId: node.id,
+                        ...createFreshGenerationTaskContext("canvas-text-retry", [projectId, node.id]),
+                    });
+                    if (!attachGenerationTask(node.id, controller, { id: task.id, type: "text" })) return;
                     setNodes((prev) =>
-                        prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, prompt, status: NODE_STATUS_LOADING, textTask: { id: task.id, model: task.model }, errorDetails: undefined } } : item)),
+                        prev.map((item) =>
+                            item.id === node.id
+                                ? {
+                                      ...item,
+                                      type: CanvasNodeType.Text,
+                                      metadata: {
+                                          ...item.metadata,
+                                          prompt,
+                                          status: NODE_STATUS_LOADING,
+                                          textTask: { id: task.id, model: task.model },
+                                          taskId: task.id,
+                                          taskStatus: task.status || "pending",
+                                          taskStage: "生成中",
+                                          taskCreatedAt: Date.now(),
+                                          taskUpdatedAt: Date.now(),
+                                          errorDetails: undefined,
+                                      },
+                                  }
+                                : item,
+                        ),
                     );
+                    notifyCanvasGenerationTaskCreated(projectId);
                     await completeTextTask(node.id, generationConfig, task, controller, prompt);
                     return;
                 }
@@ -557,9 +738,16 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         conversationId: currentProject?.creativeConversationId,
                         surface: "canvas",
                         projectId,
+                        sourceNodeId: sourceNode.id,
+                        targetNodeId: node.id,
                         ...createFreshGenerationTaskContext("canvas-video-retry", [projectId, node.id]),
+                        skillIds: sourceNode.metadata?.skillIds || node.metadata?.skillIds,
                     });
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoTask: task } } : item)));
+                    if (!attachGenerationTask(node.id, controller, { id: task.id, type: "video" })) return;
+                    setNodes((prev) =>
+                        prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, videoTask: task, taskId: task.id, taskStatus: "running", taskStage: "生成中", taskCreatedAt: Date.now(), taskUpdatedAt: Date.now() } } : item)),
+                    );
+                    notifyCanvasGenerationTaskCreated(projectId);
                     await completeVideoTask(node.id, generationConfig, task, controller, prompt);
                     return;
                 }
@@ -570,9 +758,15 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                         conversationId: currentProject?.creativeConversationId,
                         surface: "canvas",
                         projectId,
+                        sourceNodeId: sourceNode.id,
+                        targetNodeId: node.id,
                         ...createFreshGenerationTaskContext("canvas-audio-retry", [projectId, node.id]),
                     });
-                    setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, audioTask: task } } : item)));
+                    if (!attachGenerationTask(node.id, controller, { id: task.id, type: "audio" })) return;
+                    setNodes((prev) =>
+                        prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, audioTask: task, taskId: task.id, taskStatus: "running", taskStage: "生成中", taskCreatedAt: Date.now(), taskUpdatedAt: Date.now() } } : item)),
+                    );
+                    notifyCanvasGenerationTaskCreated(projectId);
                     await completeAudioTask(node.id, generationConfig, task, controller, prompt);
                     return;
                 }
@@ -586,12 +780,19 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                             ? {
                                   ...item,
                                   type: node.type === CanvasNodeType.Panorama ? CanvasNodeType.Panorama : CanvasNodeType.Image,
-                                  metadata: { ...item.metadata, prompt, sourcePrompt, ...generationMetadata, ...(node.type === CanvasNodeType.Panorama ? { panoramaProjection: "equirectangular" as const, panoramaSourcePrompt: sourcePrompt } : {}) },
+                                  metadata: {
+                                      ...item.metadata,
+                                      prompt,
+                                      sourcePrompt,
+                                      ...generationMetadata,
+                                      ...(portraitTextureRetry.settings ? { composerContent: contextBasePrompt || portraitTextureRetry.basePrompt, portraitTexture: portraitTextureRetry.settings } : {}),
+                                      ...(node.type === CanvasNodeType.Panorama ? { panoramaProjection: "equirectangular" as const, panoramaSourcePrompt: sourcePrompt } : {}),
+                                  },
                               }
                             : item,
                     ),
                 );
-                await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, undefined, controller);
+                await startAndCompleteImageTask(node.id, generationConfig, prompt, retryImages, undefined, controller, undefined, sourceNode.id);
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
@@ -600,12 +801,12 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                     prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails, imageTask: undefined, textTask: undefined, videoTask: undefined, audioTask: undefined } } : item)),
                 );
             } finally {
-                finishGenerationRequest(node.id, controller);
-                setRunningNodeId(null);
+                if (finishGenerationRequest(node.id, controller)) setRunningNodeId((current) => (current === node.id ? null : current));
             }
         },
         [
             applyAgentOps,
+            attachGenerationTask,
             completeAudioTask,
             completeTextTask,
             completeVideoTask,
@@ -614,6 +815,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
             effectiveConfig,
             finishGenerationRequest,
             isAiConfigReady,
+            isGenerationRequestActive,
             message,
             openConfigDialog,
             projectId,

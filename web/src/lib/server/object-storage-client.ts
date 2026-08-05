@@ -64,15 +64,44 @@ export async function objectExists(config: ObjectStorageRuntimeConfig, key: stri
     }
 }
 
-export async function getObjectBytes(config: ObjectStorageRuntimeConfig, key: string) {
+export async function getObjectBytes(config: ObjectStorageRuntimeConfig, key: string, maxBytes?: number) {
     const client = createObjectStorageClient(config);
     try {
         const result = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
         if (!result.Body) throw new Error("外部存储对象没有可读取内容");
-        return Buffer.from(await result.Body.transformToByteArray());
+        const limit = Number(maxBytes);
+        if (Number.isFinite(limit) && limit > 0 && Number(result.ContentLength || 0) > limit) throw new Error("object exceeds byte limit");
+        return readObjectBody(result.Body, limit);
     } finally {
         client.destroy();
     }
+}
+
+async function readObjectBody(body: { transformToByteArray(): Promise<Uint8Array> }, limit: number) {
+    const stream = body as unknown as {
+        [Symbol.asyncIterator]?: () => AsyncIterator<Uint8Array>;
+        destroy?: () => void;
+    };
+    if (typeof stream[Symbol.asyncIterator] === "function") {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        try {
+            for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+                const bytes = Buffer.from(chunk);
+                total += bytes.length;
+                if (Number.isFinite(limit) && limit > 0 && total > limit) throw new Error("object exceeds byte limit");
+                chunks.push(bytes);
+            }
+        } catch (error) {
+            stream.destroy?.();
+            throw error;
+        }
+        return Buffer.concat(chunks, total);
+    }
+
+    const bytes = Buffer.from(await body.transformToByteArray());
+    if (Number.isFinite(limit) && limit > 0 && bytes.length > limit) throw new Error("object exceeds byte limit");
+    return bytes;
 }
 
 export async function signObjectRead(config: ObjectStorageRuntimeConfig, input: { key: string; contentType?: string; contentDisposition?: string; expiresIn?: number }) {

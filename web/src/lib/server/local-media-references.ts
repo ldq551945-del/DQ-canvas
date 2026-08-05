@@ -40,6 +40,12 @@ export async function countLocalMediaReferences(storageKeys: string[]) {
                 UNION ALL
                 SELECT r.storage_key, count(*)::int
                 FROM requested r
+                JOIN generation_tasks t ON t.expires_at > now()
+                    AND position(r.storage_key in COALESCE(t.payload::text, '')) > 0
+                GROUP BY r.storage_key
+                UNION ALL
+                SELECT r.storage_key, count(*)::int
+                FROM requested r
                 JOIN published_work_assets a ON a.storage_key = r.storage_key
                 GROUP BY r.storage_key
                 UNION ALL
@@ -63,14 +69,22 @@ export async function countLocalMediaReferences(storageKeys: string[]) {
         readJsonDataFile<unknown>("canvas-projects.json", {}),
         readJsonDataFile<unknown>("drama-projects.json", {}),
         readJsonDataFile<unknown>("generation-logs.json", {}),
+        readJsonDataFile<unknown>("generation-tasks.json", []),
         readJsonDataFile<unknown>("auth.json", {}),
     ]);
+    databases[5] = activeGenerationTasks(databases[5]);
     for (const key of keys)
         counts.set(
             key,
             databases.reduce<number>((total, database) => total + countEntitiesContaining(database, key), 0),
         );
     return counts;
+}
+
+function activeGenerationTasks(value: unknown) {
+    if (!Array.isArray(value)) return value;
+    const now = Date.now();
+    return value.filter((item) => item && typeof item === "object" && Number((item as { expiresAt?: unknown }).expiresAt) > now);
 }
 
 export function collectLocalMediaStorageKeys(value: unknown) {
@@ -108,6 +122,7 @@ function decodeStoragePath(value: string) {
 
 function countEntitiesContaining(value: unknown, key: string): number {
     if (!value || typeof value !== "object") return 0;
+    if (Array.isArray(value)) return value.reduce<number>((total, item) => total + (contains(item, key) ? 1 : 0), 0);
     const roots = Object.values(value as Record<string, unknown>)
         .filter(Array.isArray)
         .flat() as unknown[];

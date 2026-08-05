@@ -22,12 +22,12 @@ export default function nextConfig(phase: string): NextConfig {
     const releases = parseChangelog(localChangelog);
     const contentSecurityPolicy = [
         "default-src 'self'",
-        `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ""}`,
+        `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ""}`,
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob: https:",
         "media-src 'self' data: blob: https:",
         "font-src 'self' data: https:",
-        "connect-src 'self' http: https:",
+        "connect-src 'self' blob: http: https:",
         "worker-src 'self' blob:",
         "frame-src 'self'",
         "object-src 'none'",

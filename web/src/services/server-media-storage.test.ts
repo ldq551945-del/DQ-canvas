@@ -70,6 +70,19 @@ describe("server media storage", () => {
         expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
     });
 
+    it("forwards the canvas-image purpose to the scoped upload boundary", async () => {
+        fetchMock.mockResolvedValueOnce(
+            new Response(JSON.stringify({ token: "permanent/2026/07/27/images/canvas.png", key: "permanent/2026/07/27/images/canvas.png", url: "/api/reference-assets/permanent/2026/07/27/images/canvas.png", bytes: 1, mimeType: "image/png" }), {
+                headers: { "Content-Type": "application/json" },
+            }),
+        );
+
+        await uploadServerMedia(new Blob(["x"], { type: "image/png" }), "image", 30 * 1024 * 1024, { purpose: "canvas-image" });
+
+        const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+        expect(request).toMatchObject({ type: "image", purpose: "canvas-image", persistent: true });
+    });
+
     it("continues to copy an external url into managed storage", async () => {
         fetchMock.mockResolvedValueOnce(new Response("x", { headers: { "Content-Type": "image/png" } })).mockResolvedValueOnce(
             new Response(JSON.stringify({ token: "permanent/2026/07/27/images/external.png", url: "/api/reference-assets/permanent/2026/07/27/images/external.png", mimeType: "image/png" }), {

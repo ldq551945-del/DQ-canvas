@@ -5,6 +5,7 @@ import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import type { GenerationLogSource } from "@/lib/server/generation-log-store";
 import { countActiveStoredGenerationTasks, createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
+import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 
 type ImageTaskKind = "generation" | "edit";
 type ImageTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
@@ -60,11 +61,15 @@ export type ImageTask = GenerationTaskContext & {
 };
 
 const TASK_STALE_MS = 3 * 60 * 1000;
-export async function createImageTask(input: Omit<ImageTask, "id" | "status" | "createdAt" | "updatedAt">) {
+export function createImageTaskId() {
+    return randomUUID();
+}
+
+export async function createImageTask(input: Omit<ImageTask, "id" | "status" | "createdAt" | "updatedAt">, id = createImageTaskId()) {
     const now = Date.now();
     const task: ImageTask = {
         ...input,
-        id: randomUUID(),
+        id,
         status: "pending",
         createdAt: now,
         updatedAt: now,
@@ -90,4 +95,24 @@ export function touchImageTask(id: string) {
 
 export async function updateImageTask(id: string, patch: Partial<Pick<ImageTask, "config" | "candidateConfigs" | "attempts" | "attemptNo" | "upstream" | "billing">>) {
     return mutateStoredGenerationTask<ImageTask>("image", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
+}
+
+export async function failImageTaskSetup(id: string, userId: string, error = "图片任务初始化失败，请重试") {
+    let storageKeys: string[] = [];
+    const failed = await mutateStoredGenerationTask<ImageTask>("image", id, GENERATION_TASK_RETENTION_MS, (task) => {
+        if (task.userId !== userId || task.status !== "pending" || task.upstream?.id) return null;
+        storageKeys = collectLocalMediaStorageKeys([task.references, task.mask]);
+        return {
+            ...task,
+            status: "error",
+            error: error.trim().slice(0, 500) || "图片任务初始化失败，请重试",
+            references: [],
+            mask: undefined,
+            candidateConfigs: [],
+        };
+    });
+    if (failed) return { outcome: "failed" as const, task: failed, storageKeys };
+
+    const current = await getImageTask(id);
+    return current ? { outcome: "active" as const, task: current, storageKeys: [] } : { outcome: "missing" as const, task: null, storageKeys: [] };
 }

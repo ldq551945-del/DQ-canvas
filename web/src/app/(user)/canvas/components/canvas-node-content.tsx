@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, Pencil, RefreshCw, Star, Video } from "lucide-react";
+import { BriefcaseBusiness, ChevronRight, CircleCheck, CircleX, Globe2, Image as ImageIcon, ListChecks, Music2, Palette, Pencil, Plus, RefreshCw, Star, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
@@ -35,12 +35,13 @@ export type NodeContentRendererProps = {
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     onImageDimensions?: (nodeId: string, naturalWidth: number, naturalHeight: number) => void;
+    reduceMediaPreview?: boolean;
 };
 
 export function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
     if (props.node.metadata?.status === "cancelled") return <CancelledContent theme={props.theme} />;
 
@@ -221,11 +222,24 @@ export function BrandKitNodeContent({ node, theme }: NodeContentRendererProps) {
     );
 }
 
-export function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+export function LoadingContent({ node, theme }: Pick<NodeContentRendererProps, "node" | "theme">) {
+    const progress = typeof node.metadata?.taskProgress === "number" ? Math.max(0, Math.min(100, node.metadata.taskProgress)) : undefined;
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">生成中</span>
+            <span className="text-[10px] tracking-[0.12em]">
+                {node.metadata?.taskStage || "生成中"}
+                {progress === undefined ? "" : ` · ${progress}%`}
+            </span>
+            <div className="h-1 w-28 overflow-hidden rounded-full" style={{ background: theme.node.stroke }}>
+                {progress === undefined ? (
+                    <div className="canvas-task-progress-indeterminate h-full w-2/5 rounded-full motion-reduce:animate-none" style={{ background: theme.node.activeStroke }} />
+                ) : (
+                    <div className="relative h-full overflow-hidden rounded-full transition-[width] duration-300" style={{ width: `${progress}%`, background: theme.node.activeStroke }}>
+                        <span className="canvas-task-progress-shimmer absolute inset-0 motion-reduce:hidden" />
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
@@ -330,7 +344,7 @@ export function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
-                <LoadingContent theme={props.theme} />
+                <LoadingContent node={props.node} theme={props.theme} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
             ) : props.node.metadata?.status === "cancelled" ? (
@@ -379,7 +393,7 @@ export function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpande
     return content;
 }
 
-export function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
+export function VideoNodeContent({ node, theme, reduceMediaPreview = false }: NodeContentRendererProps) {
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
@@ -387,10 +401,10 @@ export function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">空视频节点</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+    return <video src={node.metadata.content} controls preload={reduceMediaPreview ? "none" : "metadata"} className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
-export function PanoramaNodeContent({ node, theme }: NodeContentRendererProps) {
+export function PanoramaNodeContent({ node, theme, reduceMediaPreview = false }: NodeContentRendererProps) {
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
@@ -399,10 +413,10 @@ export function PanoramaNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-[10px] opacity-55">360° · 2:1</span>
             </div>
         );
-    return <CanvasPanoramaViewer src={node.metadata.content} alt={node.title || "全景图"} />;
+    return <CanvasPanoramaViewer src={node.metadata.content} alt={node.title || "全景图"} reduced={reduceMediaPreview} />;
 }
 
-export function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
+export function AudioNodeContent({ node, theme, reduceMediaPreview = false }: NodeContentRendererProps) {
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
@@ -416,7 +430,7 @@ export function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{node.title || "音频"}</span>
             </div>
-            <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+            <audio src={node.metadata.content} controls preload={reduceMediaPreview ? "none" : "metadata"} className="w-full" data-canvas-no-zoom />
         </div>
     );
 }
@@ -584,21 +598,132 @@ export function ResizeHandle({ corner, onMouseDown }: { corner: ResizeCorner; on
     return <div className={`absolute z-50 size-7 ${positionClass}`} onMouseDown={(event) => onMouseDown(event, corner)} />;
 }
 
-export function ConnectionHandleDot({ side, visible, onConnectStart }: { side: "left" | "right"; visible: boolean; onConnectStart: (event: React.MouseEvent | React.PointerEvent) => void }) {
+export function ConnectionHandleDot({
+    side,
+    scale = 1,
+    visible,
+    active = false,
+    onConnectStart,
+}: {
+    side: "left" | "right";
+    scale?: number;
+    visible: boolean;
+    active?: boolean;
+    onConnectStart: (event: React.MouseEvent | React.PointerEvent, anchorRatio?: number) => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const handleRef = useRef<HTMLSpanElement>(null);
+    const anchorRatioRef = useRef(0.5);
+    const inverseScale = 1 / Math.max(scale, 0.05);
+    const connectionLabel = side === "left" ? "连接到此节点" : "从此节点连接";
+
+    const resetAnchor = useCallback(() => {
+        anchorRatioRef.current = 0.5;
+        if (handleRef.current) handleRef.current.style.top = "50%";
+    }, []);
+
+    useEffect(() => {
+        if (!visible) resetAnchor();
+    }, [resetAnchor, visible]);
+
+    const updateAnchor = useCallback(
+        (event: React.PointerEvent<HTMLButtonElement> | React.MouseEvent<HTMLButtonElement>) => {
+            const railBounds = event.currentTarget.getBoundingClientRect();
+            const nodeBounds = event.currentTarget.parentElement?.getBoundingClientRect() || railBounds;
+            const railHeight = Math.max(railBounds.height, 1);
+            const screenPadding = Math.min(railHeight * 0.35, 12);
+            const railRatio = Math.min(1 - screenPadding / railHeight, Math.max(screenPadding / railHeight, (event.clientY - railBounds.top) / railHeight));
+            const anchorY = railBounds.top + railHeight * railRatio;
+            anchorRatioRef.current = Math.min(1, Math.max(0, (anchorY - nodeBounds.top) / Math.max(nodeBounds.height, 1)));
+            if (handleRef.current) handleRef.current.style.top = `${railRatio * 100}%`;
+        },
+        [inverseScale],
+    );
+
+    const handleMouseDown = useCallback(
+        (event: React.MouseEvent<HTMLButtonElement>) => {
+            updateAnchor(event);
+            onConnectStart(event, anchorRatioRef.current);
+        },
+        [onConnectStart, updateAnchor],
+    );
+
+    const handlePointerDown = useCallback(
+        (event: React.PointerEvent<HTMLButtonElement>) => {
+            updateAnchor(event);
+            if (event.pointerType !== "mouse") onConnectStart(event, anchorRatioRef.current);
+        },
+        [onConnectStart, updateAnchor],
+    );
 
     return (
-        <div
-            className={`absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${
-                side === "left" ? "-left-6" : "-right-6"
-            } ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
-            onMouseDown={onConnectStart}
-            onPointerDown={(event) => {
-                if (event.pointerType !== "mouse") onConnectStart(event);
+        <button
+            type="button"
+            data-canvas-connection-handle={side}
+            className={`group absolute top-1/2 z-30 flex h-[72px] w-[56px] -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border-0 bg-transparent p-0 outline-none transition-opacity duration-150 focus-visible:ring-2 focus-visible:ring-[#2f80ff]/70 ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+            style={{
+                width: 56 * inverseScale,
+                height: `min(100%, ${72 * inverseScale}px)`,
+                touchAction: "none",
+                ...(side === "left" ? { right: "100%" } : { left: "100%" }),
             }}
-            style={{ touchAction: "none" }}
+            onMouseEnter={updateAnchor}
+            onMouseMove={updateAnchor}
+            onPointerEnter={updateAnchor}
+            onPointerMove={updateAnchor}
+            onPointerLeave={resetAnchor}
+            onMouseLeave={resetAnchor}
+            onMouseDown={handleMouseDown}
+            onPointerDown={handlePointerDown}
+            tabIndex={0}
+            aria-label={connectionLabel}
+            title={connectionLabel}
+            onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                const rect = event.currentTarget.getBoundingClientRect();
+                onConnectStart(
+                    {
+                        clientX: rect.left + rect.width / 2,
+                        clientY: rect.top + rect.height / 2,
+                        currentTarget: event.currentTarget,
+                        preventDefault: () => undefined,
+                        stopPropagation: () => undefined,
+                    } as unknown as React.MouseEvent | React.PointerEvent,
+                    0.5,
+                );
+            }}
         >
-            <div className="size-3 rounded-full border-2 transition-all hover:scale-125" style={{ background: theme.node.panel, borderColor: theme.node.muted }} />
-        </div>
+            <span ref={handleRef} className={`absolute flex -translate-y-1/2 items-center gap-2 ${side === "left" ? "flex-row-reverse" : "flex-row"}`} style={{ top: "50%", ...(side === "left" ? { right: 4 * inverseScale } : { left: 4 * inverseScale }) }}>
+                <span
+                    aria-hidden="true"
+                    className="h-[38px] w-[7px] rounded-full border shrink-0 transition-[transform,background-color,border-color,box-shadow] duration-150 ease-out group-hover:scale-y-105"
+                    style={{
+                        width: 7 * inverseScale,
+                        height: 38 * inverseScale,
+                        background: active ? theme.node.activeStroke : theme.node.panel,
+                        borderColor: active ? theme.node.activeStroke : theme.node.muted,
+                        borderWidth: Math.max(0.75, inverseScale * 0.8),
+                        boxShadow: active ? `0 0 0 ${2 * inverseScale}px ${theme.node.activeStroke}24, 0 ${3 * inverseScale}px ${10 * inverseScale}px rgba(15,23,42,.14)` : "0 1px 4px rgba(15,23,42,.10)",
+                    }}
+                />
+                <span
+                    aria-hidden="true"
+                    data-canvas-connection-plus={side}
+                    className="grid shrink-0 place-items-center rounded-full border bg-white shadow-[0_4px_12px_rgba(15,23,42,.16)] transition-[transform,background-color,border-color,box-shadow] duration-150 group-hover:scale-105"
+                    style={{
+                        width: 18 * inverseScale,
+                        height: 18 * inverseScale,
+                        borderWidth: inverseScale,
+                        background: theme.toolbar.panel,
+                        borderColor: active ? theme.node.activeStroke : theme.toolbar.border,
+                        color: active ? theme.node.activeStroke : theme.node.text,
+                        boxShadow: active ? `0 0 0 ${3 * inverseScale}px ${theme.node.activeStroke}24, 0 ${4 * inverseScale}px ${12 * inverseScale}px rgba(15,23,42,.16)` : undefined,
+                    }}
+                >
+                    <Plus style={{ width: 10 * inverseScale, height: 10 * inverseScale }} strokeWidth={2} />
+                </span>
+            </span>
+        </button>
     );
 }

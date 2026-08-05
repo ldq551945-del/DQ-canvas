@@ -1,6 +1,7 @@
 import { copyFile, mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve, sep } from "node:path";
 
+import { CANVAS_IMAGE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { cleanupExpiredLocalMediaAssets, createDatedMediaPath, REFERENCE_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
 import { persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
@@ -25,6 +26,7 @@ export type ReferenceMediaWriteContext = {
     taskId?: string;
     projectId?: string;
     maxBytes?: number;
+    ttlMs?: number;
 };
 
 export async function writeReferenceImageDataUrl(dataUrl: string, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
@@ -39,11 +41,36 @@ export async function writePersistentMediaDataUrl(dataUrl: string, expectedType:
     return writeMediaDataUrl(dataUrl, expectedType, true, context);
 }
 
+const MAX_PERSISTENT_BUFFER_IMAGE_BYTES = CANVAS_IMAGE_UPLOAD_MAX_BYTES;
+
+/** Persists an already validated PNG without converting it through a data URL. */
+export async function writePersistentReferenceImageBuffer(bytes: Buffer, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
+    await cleanupExpiredLocalMediaAssets().catch(() => undefined);
+    if (!Buffer.isBuffer(bytes) || !bytes.length) throw new Error("图片文件为空");
+    if (bytes.length < 8 || !bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) throw new Error("图片文件不是有效 PNG");
+    const maxBytes = Math.min(Math.max(1, Math.floor(Number(context.maxBytes) || MAX_PERSISTENT_BUFFER_IMAGE_BYTES)), MAX_PERSISTENT_BUFFER_IMAGE_BYTES);
+    if (bytes.length > maxBytes) throw new Error("图片文件过大");
+    const token = createDatedMediaPath("permanent", "image", ".png");
+    const registration = referenceRegistration(token, true, "image", "image/png", bytes.length, context);
+    const external = await persistExternalMediaIfEnabled({ registration, bytes });
+    if (external) return { token, bytes: bytes.length, mimeType: "image/png", storage: "object" };
+    const filePath = resolve(REFERENCE_MEDIA_ROOT, token);
+    await mkdir(dirname(filePath), { recursive: true });
+    await writeFile(filePath, bytes);
+    try {
+        await registerLocalMediaAsset(registration);
+    } catch (error) {
+        await unlink(filePath).catch(() => undefined);
+        throw error;
+    }
+    return { token, bytes: bytes.length, mimeType: "image/png", storage: "local" };
+}
+
 async function writeMediaDataUrl(dataUrl: string, expectedType: "image" | "video" | "audio", persistent: boolean, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
     await cleanupExpiredLocalMediaAssets().catch(() => undefined);
     const parsed = parseMediaDataUrl(dataUrl);
     if (!parsed || !parsed.mimeType.startsWith(`${expectedType}/`)) throw new Error("参考素材格式不正确");
-    if (parsed.bytes.length > Math.min(context.maxBytes || MAX_REFERENCE_BYTES[expectedType], MAX_REFERENCE_BYTES[expectedType])) throw new Error(`参考${expectedType === "image" ? "图" : expectedType === "video" ? "视频" : "音频"}文件过大`);
+    if (parsed.bytes.length > referenceMediaMaxBytes(expectedType, context.maxBytes)) throw new Error(`参考${expectedType === "image" ? "图" : expectedType === "video" ? "视频" : "音频"}文件过大`);
 
     const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(parsed.mimeType));
     const registration = referenceRegistration(token, persistent, expectedType, parsed.mimeType, parsed.bytes.length, context);
@@ -93,12 +120,15 @@ export async function readReferenceAsset(token: string) {
 
     try {
         const fileStat = await stat(filePath);
-        if (safeToken.startsWith("temporary/") && Date.now() - fileStat.mtimeMs > REFERENCE_ASSET_TTL_MS) {
+        const registration = await getLocalMediaRegistration(safeToken);
+        const registeredExpiry = registration?.expiresAt ? Date.parse(registration.expiresAt) : Number.NaN;
+        const expired = Number.isFinite(registeredExpiry) ? registeredExpiry <= Date.now() : Date.now() - fileStat.mtimeMs > REFERENCE_ASSET_TTL_MS;
+        if (safeToken.startsWith("temporary/") && expired) {
             await unlink(filePath).catch(() => undefined);
             await deleteLocalMediaRegistrations([safeToken]).catch(() => undefined);
             return null;
         }
-        return { filePath, size: fileStat.size, mimeType: mimeTypeFromToken(basename(safeToken)), mtimeMs: fileStat.mtimeMs, registration: await getLocalMediaRegistration(safeToken) };
+        return { filePath, size: fileStat.size, mimeType: mimeTypeFromToken(basename(safeToken)), mtimeMs: fileStat.mtimeMs, registration };
     } catch {
         return null;
     }
@@ -107,6 +137,7 @@ export async function readReferenceAsset(token: string) {
 function referenceRegistration(token: string, persistent: boolean, type: "image" | "video" | "audio", mimeType: string, bytes: number, context: ReferenceMediaWriteContext) {
     if (!context.ownerUserId.trim()) throw new Error("媒体文件缺少用户归属");
     const createdAt = new Date().toISOString();
+    const ttlMs = Math.max(1, Math.floor(Number(context.ttlMs) || REFERENCE_ASSET_TTL_MS));
     return {
         storageKey: token,
         scope: "reference",
@@ -122,7 +153,7 @@ function referenceRegistration(token: string, persistent: boolean, type: "image"
         mimeType,
         bytes,
         createdAt,
-        expiresAt: persistent ? undefined : new Date(Date.parse(createdAt) + REFERENCE_ASSET_TTL_MS).toISOString(),
+        expiresAt: persistent ? undefined : new Date(Date.parse(createdAt) + ttlMs).toISOString(),
     } as const;
 }
 
@@ -137,6 +168,13 @@ function parseMediaDataUrl(dataUrl: string) {
 function normalizeMimeType(value: string) {
     const mimeType = value.toLowerCase();
     return mimeType === "image/jpg" ? "image/jpeg" : mimeType;
+}
+
+function referenceMediaMaxBytes(expectedType: "image" | "video" | "audio", requestedMaxBytes?: number) {
+    const defaultMaxBytes = MAX_REFERENCE_BYTES[expectedType];
+    const upperBound = expectedType === "image" ? CANVAS_IMAGE_UPLOAD_MAX_BYTES : defaultMaxBytes;
+    const requested = Math.floor(Number(requestedMaxBytes));
+    return Number.isFinite(requested) && requested > 0 ? Math.min(requested, upperBound) : defaultMaxBytes;
 }
 
 function extensionFromMime(mimeType: string) {

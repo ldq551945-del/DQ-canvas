@@ -182,6 +182,43 @@ describe("video generation candidate failover", () => {
         expect((await response.json()).task.model).toBe("video");
     });
 
+    it("expands selected enabled video Skills only for the upstream request", async () => {
+        mocks.getAuthSettings.mockResolvedValue({
+            ...settings,
+            agentSkills: [
+                {
+                    id: "image-motion",
+                    name: "Image motion",
+                    description: "Animate a still image.",
+                    instructions: "Preserve the source subject.",
+                    enabled: true,
+                    keywords: [],
+                    workspaces: ["video"],
+                },
+                {
+                    id: "disabled-motion",
+                    name: "Disabled motion",
+                    description: "Must not expand.",
+                    instructions: "Hidden instruction.",
+                    enabled: false,
+                    keywords: [],
+                    workspaces: ["video"],
+                },
+            ],
+        });
+        mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-skill", status: "queued" }));
+        const prompt = "Create a clip @\[skill:image-motion\] @\[skill:disabled-motion\]";
+
+        const response = await POST(request({ model: "video" }, [], undefined, ["image-motion", "disabled-motion"], prompt));
+        const init = mocks.fetchInternalApi.mock.calls[0]?.[1] as RequestInit;
+        const upstreamBody = JSON.parse(String(init.body)) as { prompt: string };
+
+        expect(response.status).toBe(200);
+        expect(upstreamBody.prompt).toContain("Instructions:\nPreserve the source subject.");
+        expect(upstreamBody.prompt).toContain("@\[skill:disabled-motion\]");
+        expect(mocks.createVideoTask).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+    });
+
     it("forwards the authenticated maintenance worker identity to the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
         vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
@@ -567,8 +604,8 @@ describe("video generation candidate failover", () => {
     });
 });
 
-function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string }> = [], context?: Record<string, unknown>) {
-    return new Request("http://localhost/api/video-generation-tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config, prompt: "A test video", references, context }) });
+function request(config: Record<string, unknown> = { model: "video" }, references: Array<{ type: string; url: string }> = [], context?: Record<string, unknown>, skillIds?: string[], prompt = "A test video") {
+    return new Request("http://localhost/api/video-generation-tasks", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config, prompt, references, context, skillIds }) });
 }
 
 function qingyanSettings() {

@@ -20,6 +20,7 @@ import type { CanvasInteractionCore } from "./use-canvas-interaction-core";
 
 export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; core: CanvasInteractionCore }) {
     const {
+        message,
         clipboardRef,
         effectiveConfig,
         nodes,
@@ -39,7 +40,9 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setEditingNodeId,
         setInfoNodeId,
         setCropNodeId,
+        setAnnotationNodeId,
         setMaskEditNodeId,
+        setEmotionNodeId,
         setAngleNodeId,
         setPreviewNodeId,
         setDrawingNodeId,
@@ -105,7 +108,9 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setEditingNodeId((current) => (current && allIds.has(current) ? null : current));
         setInfoNodeId((current) => (current && allIds.has(current) ? null : current));
         setCropNodeId((current) => (current && allIds.has(current) ? null : current));
+        setAnnotationNodeId((current) => (current && allIds.has(current) ? null : current));
         setMaskEditNodeId((current) => (current && allIds.has(current) ? null : current));
+        setEmotionNodeId((current) => (current && allIds.has(current) ? null : current));
         setAngleNodeId((current) => (current && allIds.has(current) ? null : current));
         setPreviewNodeId((current) => (current && allIds.has(current) ? null : current));
         setDrawingNodeId((current) => (current && allIds.has(current) ? null : current));
@@ -118,6 +123,61 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setSelectedConnectionId((current) => (current === connectionId ? null : current));
         setContextMenu((current) => (current?.type === "connection" && current.connectionId === connectionId ? null : current));
     }, []);
+
+    const groupSelectedNodes = useCallback(() => {
+        const ids = selectedNodeIdsRef.current;
+        if (ids.size < 2) return;
+        const groupId = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+        setNodes((prev) => {
+            const remainingMembers = new Map<string, number>();
+            prev.forEach((node) => {
+                const previousGroupId = node.metadata?.groupId;
+                if (!previousGroupId || ids.has(node.id)) return;
+                remainingMembers.set(previousGroupId, (remainingMembers.get(previousGroupId) || 0) + 1);
+            });
+            const staleGroupIds = new Set(
+                Array.from(remainingMembers.entries())
+                    .filter(([, count]) => count < 2)
+                    .map(([id]) => id),
+            );
+            return prev.map((node) => {
+                if (ids.has(node.id)) return { ...node, metadata: { ...node.metadata, groupId } };
+                if (!node.metadata?.groupId || !staleGroupIds.has(node.metadata.groupId)) return node;
+                const { groupId: _groupId, ...metadata } = node.metadata;
+                return { ...node, metadata };
+            });
+        });
+        message.success("已编组");
+    }, [message, setNodes]);
+
+    const ungroupSelectedNodes = useCallback(() => {
+        const groupIds = new Set(
+            nodesRef.current
+                .filter((node) => selectedNodeIdsRef.current.has(node.id))
+                .map((node) => node.metadata?.groupId)
+                .filter((groupId): groupId is string => Boolean(groupId)),
+        );
+        if (!groupIds.size) return;
+        setNodes((prev) =>
+            prev.map((node) => {
+                if (!node.metadata?.groupId || !groupIds.has(node.metadata.groupId)) return node;
+                const { groupId: _groupId, ...metadata } = node.metadata;
+                return { ...node, metadata };
+            }),
+        );
+        message.success("已解除编组");
+    }, [message, setNodes]);
+
+    const toggleNodeLocked = useCallback(
+        (nodeId: string) => {
+            const target = nodesRef.current.find((node) => node.id === nodeId);
+            if (!target) return;
+            const locked = !target.metadata?.locked;
+            setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, locked } } : node)));
+            message.success(locked ? "节点已锁定位置和尺寸" : "节点已解锁");
+        },
+        [message, setNodes],
+    );
 
     const handleImageDimensions = useCallback((nodeId: string, naturalWidth: number, naturalHeight: number) => {
         setNodes((prev) => {
@@ -149,7 +209,9 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         setConnections([]);
         setInfoNodeId(null);
         setCropNodeId(null);
+        setAnnotationNodeId(null);
         setMaskEditNodeId(null);
+        setEmotionNodeId(null);
         setAngleNodeId(null);
         setPreviewNodeId(null);
         setDrawingNodeId(null);
@@ -214,11 +276,16 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         );
         const dx = center.x - (bounds.left + bounds.right) / 2;
         const dy = center.y - (bounds.top + bounds.bottom) / 2;
-        const idMap = new Map<string, string>();
-        const nextNodes = clipboard.nodes.map((node, index) => {
-            const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
-            idMap.set(node.id, id);
+        const pasteTimestamp = Date.now();
+        const idMap = new Map(clipboard.nodes.map((node, index) => [node.id, `${node.type}-${pasteTimestamp}-${index}-${Math.random().toString(36).slice(2, 7)}`]));
+        const nextNodes = clipboard.nodes.map((node) => {
+            const id = idMap.get(node.id)!;
             const metadata = cloneNodeMetadata(node.metadata);
+            if (metadata?.emotionEdit) metadata.emotionEdit = { ...metadata.emotionEdit, sourceNodeId: idMap.get(metadata.emotionEdit.sourceNodeId) || metadata.emotionEdit.sourceNodeId };
+            if (metadata?.sourceNodeId) metadata.sourceNodeId = idMap.get(metadata.sourceNodeId) || metadata.sourceNodeId;
+            if (metadata?.batchRootId) metadata.batchRootId = idMap.get(metadata.batchRootId) || metadata.batchRootId;
+            if (metadata?.batchChildIds) metadata.batchChildIds = metadata.batchChildIds.map((childId) => idMap.get(childId) || childId);
+            if (metadata?.primaryImageId) metadata.primaryImageId = idMap.get(metadata.primaryImageId) || metadata.primaryImageId;
             if (node.type === CanvasNodeType.Drawing && metadata) metadata.drawingId = `${id}-document`;
             return {
                 ...node,
@@ -258,6 +325,9 @@ export function useCanvasNodeActions({ state, core }: { state: CanvasPageState; 
         createNode,
         deleteNodes,
         deleteConnection,
+        groupSelectedNodes,
+        ungroupSelectedNodes,
+        toggleNodeLocked,
         handleImageDimensions,
         deselectCanvas,
         clearCanvas,

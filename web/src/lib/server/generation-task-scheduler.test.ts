@@ -21,7 +21,16 @@ vi.mock("@/lib/server/generation-task-store", () => ({
     }),
 }));
 
-import { claimDueGenerationTasks, generationTaskNextPollAt, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask } from "./generation-task-scheduler";
+import {
+    claimDueBackgroundRemovalTask,
+    claimDueGenerationTasks,
+    finalizeCancelledBackgroundRemovalTask,
+    generationTaskNextPollAt,
+    releaseGenerationTaskLease,
+    renewGenerationTaskLeases,
+    repairUnscheduledImageProcessTask,
+    scheduleGenerationTask,
+} from "./generation-task-scheduler";
 
 describe("generation task scheduler", () => {
     beforeEach(() => {
@@ -72,6 +81,108 @@ describe("generation task scheduler", () => {
         await expect(claimDueGenerationTasks({ workerId: "review-worker", now: 1_000 })).resolves.toEqual([expect.objectContaining({ id: "review", status: "success", executionPhase: "review_pending" })]);
     });
 
+    it("excludes image processing from the regular task claim", async () => {
+        mocks.records = [{ ...record("process", 900), type: "image_process", status: "pending", executionPhase: "created" }];
+
+        await expect(claimDueGenerationTasks({ workerId: "regular-worker", now: 1_000 })).resolves.toEqual([]);
+    });
+
+    it("claims exactly one due image processing task across workers", async () => {
+        mocks.records = Array.from({ length: 10 }, (_, index) => ({
+            ...record(`process-${index}`, 900 - index),
+            userId: `user-${index}`,
+            type: "image_process",
+            status: "pending",
+            executionPhase: "created",
+            createdAt: 100 + index,
+        }));
+
+        await expect(claimDueBackgroundRemovalTask({ workerId: "process-worker-one", now: 1_000 })).resolves.toMatchObject({ id: "process-0", type: "image_process" });
+        await expect(claimDueBackgroundRemovalTask({ workerId: "process-worker-two", now: 1_001 })).resolves.toBeNull();
+        expect(mocks.records.filter((item) => item.type === "image_process" && Number(item.leaseUntil || 0) > 1_001)).toHaveLength(1);
+        expect(mocks.records.filter((item) => item.type === "image_process" && !item.workerId)).toHaveLength(9);
+    });
+
+    it("uses source creation order for image processing FIFO instead of retry due time", async () => {
+        mocks.records = [
+            { ...record("older", 990), type: "image_process", status: "pending", executionPhase: "polling", createdAt: 100 },
+            { ...record("newer", 100), type: "image_process", status: "pending", executionPhase: "created", createdAt: 200 },
+        ];
+
+        await expect(claimDueBackgroundRemovalTask({ workerId: "process-worker", now: 1_000 })).resolves.toMatchObject({ id: "older" });
+    });
+
+    it("atomically repairs only an active unscheduled image processing task", async () => {
+        mocks.records = [
+            { ...record("orphan", 900), type: "image_process", status: "pending", nextPollAt: undefined },
+            { ...record("scheduled", 2_000), type: "image_process", status: "running" },
+            { ...record("terminal", 900), type: "image_process", status: "error", nextPollAt: undefined },
+        ];
+
+        await expect(repairUnscheduledImageProcessTask("orphan", 1_000)).resolves.toMatchObject({ id: "orphan", executionPhase: "submitting", provider: "rembg", nextPollAt: 1_000, lastUpstreamStatus: "processing" });
+        await expect(repairUnscheduledImageProcessTask("scheduled", 1_000)).resolves.toBeNull();
+        await expect(repairUnscheduledImageProcessTask("terminal", 1_000)).resolves.toBeNull();
+
+        expect(mocks.records.find((item) => item.id === "scheduled")?.nextPollAt).toBe(2_000);
+        expect(mocks.records.find((item) => item.id === "terminal")?.nextPollAt).toBeUndefined();
+    });
+
+    it("does not repair across a live lease and preserves the owner release schedule", async () => {
+        mocks.records = [{ ...record("process", 900), type: "image_process", status: "running", nextPollAt: undefined, workerId: "worker-one", leaseUntil: 60_000 }];
+
+        await expect(repairUnscheduledImageProcessTask("process", 1_000)).resolves.toBeNull();
+        await expect(releaseGenerationTaskLease("image_process", "process", "worker-one", { executionPhase: "polling", nextPollAt: 20_000, lastUpstreamStatus: "process_error:1" })).resolves.toMatchObject({
+            executionPhase: "polling",
+            nextPollAt: 20_000,
+            lastUpstreamStatus: "process_error:1",
+        });
+
+        expect(mocks.records[0]).toMatchObject({ executionPhase: "polling", nextPollAt: 20_000, workerId: undefined, leaseUntil: undefined });
+    });
+
+    it("finalizes a confirmed file-backed cancellation and releases the global slot", async () => {
+        mocks.records = [{ ...record("process", 900), type: "image_process", status: "cancelled", executionPhase: "submitting", workerId: "worker-one", leaseUntil: 60_000, lastHeartbeatAt: 900 }];
+
+        await expect(finalizeCancelledBackgroundRemovalTask("process")).resolves.toMatchObject({
+            id: "process",
+            status: "cancelled",
+            executionPhase: "completed",
+            lastUpstreamStatus: "cancelled",
+            nextPollAt: undefined,
+            workerId: undefined,
+            leaseUntil: undefined,
+        });
+        await expect(claimDueBackgroundRemovalTask({ workerId: "worker-two", now: 1_000 })).resolves.toBeNull();
+    });
+
+    it("uses one status-qualified PostgreSQL update to finalize cancellation", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValueOnce({ rows: [] });
+
+        await expect(finalizeCancelledBackgroundRemovalTask("process")).resolves.toBeNull();
+
+        const [query, values] = mocks.postgresQuery.mock.calls[0] || [];
+        expect(String(query)).toContain("execution_phase = 'completed'");
+        expect(String(query)).toContain("task_type = 'image_process' AND status = 'cancelled'");
+        expect(String(query)).toContain("worker_id = NULL");
+        expect(String(query)).toContain("lease_until = NULL");
+        expect(values).toEqual(["process"]);
+    });
+
+    it("uses one conditional PostgreSQL update for orphan repair", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValueOnce({ rows: [] });
+
+        await expect(repairUnscheduledImageProcessTask("process", 1_000)).resolves.toBeNull();
+
+        const [query, values] = mocks.postgresQuery.mock.calls[0] || [];
+        expect(String(query)).toContain("task_type = 'image_process'");
+        expect(String(query)).toContain("status IN ('pending', 'running')");
+        expect(String(query)).toContain("next_poll_at IS NULL");
+        expect(String(query)).toContain("worker_id IS NULL OR lease_until IS NULL OR lease_until <= $2");
+        expect(values).toEqual(["process", new Date(1_000)]);
+    });
+
     it("uses SKIP LOCKED and an owner-qualified release in PostgreSQL", async () => {
         mocks.provider = "postgres";
         mocks.transactionQuery.mockResolvedValueOnce({ rows: [] });
@@ -84,6 +195,18 @@ describe("generation task scheduler", () => {
         expect(mocks.transactionQuery.mock.calls[0]?.[1]).toEqual([new Date(1_000), 20, "worker-one", ["due"], new Date(91_000)]);
         expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("worker_id = $3");
         expect(mocks.postgresQuery.mock.calls[0]?.[1]).toHaveLength(13);
+    });
+
+    it("serializes the PostgreSQL background-removal slot and claims in FIFO order", async () => {
+        mocks.provider = "postgres";
+        mocks.transactionQuery.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
+
+        await expect(claimDueBackgroundRemovalTask({ workerId: "process-worker", now: 1_000 })).resolves.toBeNull();
+
+        expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("pg_advisory_xact_lock");
+        expect(String(mocks.transactionQuery.mock.calls[1]?.[0])).toContain("lease_until > $1");
+        expect(String(mocks.transactionQuery.mock.calls[2]?.[0])).toContain("FOR UPDATE SKIP LOCKED");
+        expect(String(mocks.transactionQuery.mock.calls[2]?.[0])).toContain("ORDER BY created_at ASC, id ASC");
     });
 
     it("uses adaptive polling and bounded network-error backoff", () => {

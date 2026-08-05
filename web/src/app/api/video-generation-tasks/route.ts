@@ -24,13 +24,14 @@ import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHtt
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
+import { expandCanvasVideoSkillMentions } from "@/lib/server/canvas-skill-mentions";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
-type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext };
+type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: Array<{ type?: string; url?: string }>; source?: string; context?: GenerationTaskContext; skillIds?: string[] };
 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
         if (!channels.length || !prompt) return NextResponse.json({ error: "视频任务参数不完整或渠道不支持" }, { status: 400 });
         const publicOrigin = requestPublicOrigin(request);
         const references = (Array.isArray(body.references) ? body.references : []).map((reference) => ({ ...reference, url: signReferenceAssetInputUrl(String(reference.url || ""), publicOrigin) }));
-        const providerPrompt = withVideoReferenceFidelity(prompt, references);
+        const providerPrompt = withVideoReferenceFidelity(expandCanvasVideoSkillMentions(prompt, body.skillIds, settings.agentSkills), references);
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = requestRuntimeCredential(request, user.id);
         const requestedParameters = resolveVideoGenerationParameters(body.config || {}, settings.generationDefaults);

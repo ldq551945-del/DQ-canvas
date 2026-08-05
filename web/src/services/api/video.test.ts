@@ -53,6 +53,29 @@ describe("video API service", () => {
         expect(mocks.imageToDataUrl).not.toHaveBeenCalled();
     });
 
+    it("sends selected Skill ids without adding their instructions to the browser request", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-1", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createServerVideoGenerationTask(config, "Create a short clip @\[skill:image-motion\]", [], [], [], { skillIds: ["image-motion"] });
+
+        const init = fetchMock.mock.calls[0][1] as RequestInit;
+        const body = JSON.parse(String(init.body)) as { prompt: string; skillIds?: string[] };
+        expect(body).toMatchObject({ prompt: "Create a short clip @\[skill:image-motion\]", skillIds: ["image-motion"] });
+        expect(body.prompt).not.toContain("Instructions:");
+    });
+
+    it("sends stable source and target canvas node bindings with the task context", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-task-2", model: "video-v1" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await createServerVideoGenerationTask(config, "short clip", [], [], [], { surface: "canvas", projectId: "canvas-one", sourceNodeId: "source-one", targetNodeId: "target-one" });
+
+        const init = fetchMock.mock.calls[0][1] as RequestInit;
+        const body = JSON.parse(String(init.body)) as { context?: Record<string, unknown> };
+        expect(body.context).toMatchObject({ surface: "canvas", projectId: "canvas-one", sourceNodeId: "source-one", targetNodeId: "target-one" });
+    });
+
     it("returns a terminal failure when the upstream submission needs manual review", async () => {
         const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-review", status: "running", needsReview: true } }));
         vi.stubGlobal("fetch", fetchMock);

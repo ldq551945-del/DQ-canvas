@@ -4,7 +4,19 @@ const dnsMocks = vi.hoisted(() => ({ lookup: vi.fn() }));
 
 vi.mock("node:dns/promises", () => ({ lookup: dnsMocks.lookup }));
 
-import { checkGenerationRateLimit, checkLocalMediaRateLimit, checkMediaProxyRateLimit, checkPublicMediaRateLimit, checkRateLimit, getClientIp, isClashFakeIpAddress, isSafeOutboundUrl, rateLimitHeaders } from "./security";
+import {
+    checkGenerationRateLimit,
+    checkLocalMediaRateLimit,
+    checkMediaProxyRateLimit,
+    checkPublicMediaRateLimit,
+    checkRateLimit,
+    fetchSafeOutboundUrl,
+    getClientIp,
+    isClashFakeIpAddress,
+    isSafeOutboundUrl,
+    rateLimitHeaders,
+    resolveSafeOutboundUrl,
+} from "./security";
 
 describe("checkRateLimit", () => {
     it("blocks requests beyond the configured window limit", async () => {
@@ -30,6 +42,12 @@ describe("checkRateLimit", () => {
         const userId = `user:${crypto.randomUUID()}`;
         for (let index = 0; index < 6; index += 1) expect((await checkGenerationRateLimit(userId, new Request("http://localhost"), "video")).allowed).toBe(true);
         expect((await checkGenerationRateLimit(userId, new Request("http://localhost"), "video")).allowed).toBe(false);
+    });
+
+    it("allows 30 background-removal requests per user in the initial minute window", async () => {
+        const userId = `image-process:${crypto.randomUUID()}`;
+        for (let index = 0; index < 30; index += 1) expect((await checkGenerationRateLimit(userId, new Request("http://localhost"), "image_process")).allowed).toBe(true);
+        expect((await checkGenerationRateLimit(userId, new Request("http://localhost"), "image_process")).allowed).toBe(false);
     });
 
     it("limits generation requests across users sharing an IP", async () => {
@@ -113,6 +131,7 @@ describe("checkRateLimit", () => {
 
         vi.stubEnv("DQ_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1, provider.internal");
         await expect(isSafeOutboundUrl("http://127.0.0.1:4010/v1/models")).resolves.toBe(true);
+        await expect(isSafeOutboundUrl("http://127.0.0.1:4010/private.png", { allowPrivateUpstreams: false })).resolves.toBe(false);
         await expect(isSafeOutboundUrl("http://127.0.0.2:4010/v1/models")).resolves.toBe(false);
         await expect(isSafeOutboundUrl("ftp://127.0.0.1/file")).resolves.toBe(false);
         await expect(isSafeOutboundUrl("http://user:secret@127.0.0.1/file")).resolves.toBe(false);
@@ -134,5 +153,43 @@ describe("checkRateLimit", () => {
         expect(isClashFakeIpAddress("198.19.255.254")).toBe(true);
         expect(isClashFakeIpAddress("198.20.0.1")).toBe(false);
         vi.unstubAllEnvs();
+    });
+
+    it("pins a validated DNS result on the outbound dispatcher instead of handing the hostname back to fetch", async () => {
+        dnsMocks.lookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+        const resolved = await resolveSafeOutboundUrl("https://provider.example/v1/models");
+        expect(resolved).toMatchObject({ hostname: "provider.example", address: "203.0.113.10" });
+
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+        await fetchSafeOutboundUrl("https://provider.example/v1/models");
+
+        const [url, init] = fetchMock.mock.calls[0];
+        expect(String(url)).toBe("https://provider.example/v1/models");
+        expect((init as (RequestInit & { dispatcher?: unknown }) | undefined)?.dispatcher).toBeDefined();
+    });
+
+    it("pins the CONNECT destination when an outbound proxy is configured", async () => {
+        dnsMocks.lookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+        const previousProxy = process.env.HTTPS_PROXY;
+        process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
+        try {
+            vi.resetModules();
+            const { fetchSafeOutboundUrl: fetchWithConfiguredProxy } = await import("./security");
+            const { getOutboundProxyUrl } = await import("./proxy-dispatcher");
+            expect(getOutboundProxyUrl()).toBe("http://127.0.0.1:8080");
+            vi.restoreAllMocks();
+            const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+
+            await fetchWithConfiguredProxy("https://provider.example/v1/models");
+
+            const [url, init] = fetchMock.mock.calls[0];
+            expect(new Headers(init?.headers).get("host")).toBe("provider.example");
+            expect(String(url)).toBe("https://203.0.113.10/v1/models");
+            expect((init as (RequestInit & { dispatcher?: unknown }) | undefined)?.dispatcher).toBeDefined();
+        } finally {
+            if (previousProxy === undefined) delete process.env.HTTPS_PROXY;
+            else process.env.HTTPS_PROXY = previousProxy;
+            vi.resetModules();
+        }
     });
 });

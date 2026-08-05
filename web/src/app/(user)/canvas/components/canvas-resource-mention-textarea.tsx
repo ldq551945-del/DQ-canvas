@@ -1,20 +1,33 @@
-"use client";
-
-import { forwardRef, useMemo, useRef, useState } from "react";
-import type { CSSProperties, MouseEvent, PointerEvent, TextareaHTMLAttributes } from "react";
+import { forwardRef, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, ClipboardEvent, KeyboardEvent, MouseEvent, PointerEvent, TextareaHTMLAttributes } from "react";
 import { createPortal } from "react-dom";
-import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
+import { FileText, Image as ImageIcon, Music2, Sparkles, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
-import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { CanvasResourceReference } from "../utils/canvas-resource-references";
-import { handleMentionNavigation } from "../utils/canvas-mention-navigation";
+import { imagePreviewUrl } from "@/lib/media-image-url";
+import { canvasResourceMentionToken, type CanvasResourceReference } from "../utils/canvas-resource-references";
 
 type MentionState = {
     start: number;
     query: string;
 };
+
+type EditableSelection = {
+    start: number;
+    end: number;
+};
+
+type MentionTextPart =
+    | {
+          type: "text";
+          text: string;
+      }
+    | {
+          type: "mention";
+          token: string;
+          reference: CanvasResourceReference;
+      };
 
 type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "value"> & {
     value: string;
@@ -23,35 +36,91 @@ type Props = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "onChange" | "val
     onSubmit?: () => void;
     containerClassName?: string;
     highlightLabels?: boolean;
+    mentionMenuWidth?: number;
+    sendOnEnter?: boolean;
+    onContentSizeChange?: (height: number) => void;
 };
 
 export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Props>(function CanvasResourceMentionTextarea(
-    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, ...props },
+    { value, references, onChange, onSubmit, onKeyDown, className, containerClassName, style, highlightLabels = true, mentionMenuWidth = 256, sendOnEnter = true, onContentSizeChange, ...props },
     forwardedRef,
 ) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const containerRef = useRef<HTMLDivElement | null>(null);
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-    const overlayRef = useRef<HTMLDivElement | null>(null);
+    const editorRef = useRef<HTMLDivElement | null>(null);
+    const composingRef = useRef(false);
+    const pendingSelectionRef = useRef<number | null>(null);
+    const lastRenderedValueRef = useRef("");
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
-    const [hasSelection, setHasSelection] = useState(false);
-    const [focused, setFocused] = useState(false);
     const candidates = useMemo(() => {
         if (!mention) return [];
         const query = mention.query.trim().toLowerCase();
-        const activeReferences = references.filter((item) => item.active);
-        if (!query) return activeReferences;
-        return activeReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
+        const activeItems = references.filter((item) => item.active);
+        if (!query) return activeItems;
+        return activeItems.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
     }, [mention, references]);
-    const activeLabels = useMemo(() => (highlightLabels ? Array.from(new Set(references.filter((item) => item.active).map((item) => item.label))).sort((a, b) => b.length - a.length) : []), [highlightLabels, references]);
+    const activeReferences = useMemo(() => (highlightLabels ? references.filter((item) => item.active) : []), [highlightLabels, references]);
+    const useRichEditor = Boolean(activeReferences.length);
+    const reportContentSize = useCallback(
+        (element: HTMLElement | null) => {
+            if (!element || !onContentSizeChange) return;
+            const previousHeight = element.style.height;
+            element.style.height = "0px";
+            const height = element.scrollHeight;
+            element.style.height = previousHeight;
+            onContentSizeChange(height);
+        },
+        [onContentSizeChange],
+    );
+
+    useLayoutEffect(() => {
+        if (!useRichEditor) return;
+        const editor = editorRef.current;
+        if (!editor || composingRef.current) return;
+        const isFocused = document.activeElement === editor;
+        const currentValue = serializeEditableValue(editor);
+        if (currentValue === value && lastRenderedValueRef.current === value) {
+            pendingSelectionRef.current = null;
+            return;
+        }
+        const selection = pendingSelectionRef.current ?? (isFocused ? (getEditableSelection(editor)?.start ?? null) : null);
+        renderEditableContent(editor, value, activeReferences);
+        lastRenderedValueRef.current = value;
+        if (isFocused && selection !== null) setEditableSelection(editor, selection);
+        pendingSelectionRef.current = null;
+        reportContentSize(editor);
+    }, [activeReferences, reportContentSize, useRichEditor, value]);
+
+    useLayoutEffect(() => {
+        const element = useRichEditor ? editorRef.current : textareaRef.current;
+        const container = containerRef.current;
+        if (!element || !container || !onContentSizeChange) return;
+        reportContentSize(element);
+        const observer = new ResizeObserver(() => reportContentSize(element));
+        observer.observe(container);
+        return () => observer.disconnect();
+    }, [onContentSizeChange, reportContentSize, useRichEditor]);
+
+    const focusEditor = (selectionStart?: number) => {
+        requestAnimationFrame(() => {
+            if (useRichEditor) {
+                const editor = editorRef.current;
+                if (!editor) return;
+                editor.focus();
+                if (typeof selectionStart === "number") setEditableSelection(editor, selectionStart);
+                return;
+            }
+            textareaRef.current?.focus();
+            if (typeof selectionStart === "number") textareaRef.current?.setSelectionRange(selectionStart, selectionStart);
+        });
+    };
 
     const updateValue = (next: string, selectionStart?: number) => {
+        if (typeof selectionStart === "number") pendingSelectionRef.current = selectionStart;
         onChange(next);
-        if (typeof selectionStart !== "number") return;
-        requestAnimationFrame(() => {
-            textareaRef.current?.focus();
-            textareaRef.current?.setSelectionRange(selectionStart, selectionStart);
-        });
+        if (typeof selectionStart === "number") focusEditor(selectionStart);
     };
 
     const closeMention = () => {
@@ -61,53 +130,164 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
 
     const syncMention = (nextValue: string, cursor: number) => {
         const prefix = nextValue.slice(0, cursor);
-        const match = /(^|\s)@([^\s@]*)$/.exec(prefix);
+        const match = /@([^\s@,.;:!?，。；：！？、)\]}】）]*)$/.exec(prefix);
         if (!match || !references.some((item) => item.active)) {
             closeMention();
             return;
         }
-        setMention({ start: cursor - match[2].length - 1, query: match[2] });
-        setActiveIndex(0);
+        const nextMention = { start: match.index, query: match[1] };
+        const isSameMention = mention?.start === nextMention.start && mention.query === nextMention.query;
+        if (!isSameMention) {
+            setMention(nextMention);
+            setActiveIndex(0);
+        }
     };
 
     const insertReference = (reference: CanvasResourceReference) => {
         if (!mention) return;
-        const textarea = textareaRef.current;
-        const end = textarea?.selectionStart ?? value.length;
-        const insertText = `${reference.label} `;
+        const selection = useRichEditor ? getEditableSelection(editorRef.current) : null;
+        const end = selection?.end ?? textareaRef.current?.selectionStart ?? value.length;
+        const insertText = `${canvasResourceMentionToken(reference)} `;
         const next = `${value.slice(0, mention.start)}${insertText}${value.slice(end)}`;
         closeMention();
         updateValue(next, mention.start + insertText.length);
     };
 
-    const syncOverlayScroll = () => {
-        if (!overlayRef.current || !textareaRef.current) return;
-        overlayRef.current.scrollTop = textareaRef.current.scrollTop;
-        overlayRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    const replaceEditableSelection = (insertText: string) => {
+        const currentValue = editorRef.current ? serializeEditableValue(editorRef.current) : value;
+        const selection = getEditableSelection(editorRef.current) || { start: currentValue.length, end: currentValue.length };
+        const next = `${currentValue.slice(0, selection.start)}${insertText}${currentValue.slice(selection.end)}`;
+        const cursor = selection.start + insertText.length;
+        updateValue(next, cursor);
+        syncMention(next, cursor);
     };
 
-    const updateSelectionState = () => {
-        const textarea = textareaRef.current;
-        setHasSelection(Boolean(textarea && textarea.selectionStart !== textarea.selectionEnd));
+    const syncEditableValue = () => {
+        if (composingRef.current) return;
+        const editor = editorRef.current;
+        if (!editor) return;
+        const next = serializeEditableValue(editor);
+        const cursor = getEditableSelection(editor)?.start ?? next.length;
+        pendingSelectionRef.current = cursor;
+        lastRenderedValueRef.current = next;
+        onChange(next);
+        syncMention(next, cursor);
+        reportContentSize(editor);
     };
 
-    const hasActiveLabelInValue = activeLabels.some((label) => value.includes(label));
-    const showOverlay = Boolean(value && hasActiveLabelInValue && !hasSelection && !focused);
+    const syncEditableMentionFromSelection = () => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        const cursor = getEditableSelection(editor)?.start;
+        if (typeof cursor === "number") syncMention(serializeEditableValue(editor), cursor);
+    };
+
     const mergedStyle = {
         ...(style || {}),
-        color: showOverlay ? "transparent" : style?.color,
         caretColor: style?.color || theme.node.text,
-        ...(showOverlay ? { background: "transparent", backgroundColor: "transparent" } : {}),
     } as CSSProperties;
-    const menu = mention && candidates.length && textareaRef.current ? <MentionMenu textarea={textareaRef.current} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} /> : null;
+    const menuAnchor = useRichEditor ? editorRef.current : textareaRef.current;
+    const menu =
+        mention && candidates.length && menuAnchor ? <MentionMenu anchor={menuAnchor} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} preferredWidth={mentionMenuWidth} onSelect={insertReference} /> : null;
+
+    if (useRichEditor) {
+        return (
+            <div ref={containerRef} data-canvas-no-zoom className={`relative w-full min-h-0 overflow-hidden ${containerClassName || "h-full"}`}>
+                {!value && props.placeholder ? (
+                    <div aria-hidden className={`${className || ""} pointer-events-none absolute inset-0 z-0`} style={{ ...style, color: style?.color || theme.node.text, opacity: 0.4 }}>
+                        {props.placeholder}
+                    </div>
+                ) : null}
+                <div
+                    ref={editorRef}
+                    role="textbox"
+                    aria-multiline="true"
+                    aria-label={props["aria-label"]}
+                    aria-disabled={props.disabled}
+                    contentEditable={!props.disabled && !props.readOnly}
+                    suppressContentEditableWarning
+                    spellCheck={props.spellCheck}
+                    tabIndex={props.tabIndex}
+                    className={`${className || ""} relative z-10 cursor-text select-text whitespace-pre-wrap break-words`}
+                    style={{ ...mergedStyle, color: style?.color || theme.node.text }}
+                    onInput={syncEditableValue}
+                    onCompositionStart={(event) => {
+                        composingRef.current = true;
+                        props.onCompositionStart?.(event as unknown as React.CompositionEvent<HTMLTextAreaElement>);
+                    }}
+                    onCompositionEnd={(event) => {
+                        composingRef.current = false;
+                        syncEditableValue();
+                        props.onCompositionEnd?.(event as unknown as React.CompositionEvent<HTMLTextAreaElement>);
+                    }}
+                    onPaste={(event: ClipboardEvent<HTMLDivElement>) => {
+                        event.preventDefault();
+                        replaceEditableSelection(event.clipboardData.getData("text/plain"));
+                    }}
+                    onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
+                        if (mention && candidates.length) {
+                            if (event.key === "ArrowDown") {
+                                event.preventDefault();
+                                setActiveIndex((index) => (index + 1) % candidates.length);
+                                return;
+                            }
+                            if (event.key === "ArrowUp") {
+                                event.preventDefault();
+                                setActiveIndex((index) => (index - 1 + candidates.length) % candidates.length);
+                                return;
+                            }
+                            if (event.key === "Enter" || event.key === "Tab") {
+                                event.preventDefault();
+                                insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
+                                return;
+                            }
+                            if (event.key === "Escape") {
+                                event.preventDefault();
+                                closeMention();
+                                return;
+                            }
+                        }
+                        if (event.key === "Enter") {
+                            event.preventDefault();
+                            const shouldSubmit = sendOnEnter ? !event.ctrlKey && !event.metaKey && !event.shiftKey : (event.ctrlKey || event.metaKey) && !event.shiftKey;
+                            if (onSubmit && shouldSubmit) {
+                                onSubmit();
+                                return;
+                            }
+                            replaceEditableSelection("\n");
+                            return;
+                        }
+                        onKeyDown?.(event as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+                    }}
+                    onKeyUp={(event) => {
+                        syncEditableMentionFromSelection();
+                        props.onKeyUp?.(event as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+                    }}
+                    onMouseDown={(event) => props.onMouseDown?.(event as unknown as React.MouseEvent<HTMLTextAreaElement>)}
+                    onPointerDown={(event) => props.onPointerDown?.(event as unknown as React.PointerEvent<HTMLTextAreaElement>)}
+                    onPointerUp={(event) => {
+                        syncEditableMentionFromSelection();
+                        props.onPointerUp?.(event as unknown as React.PointerEvent<HTMLTextAreaElement>);
+                    }}
+                    onSelect={(event) => props.onSelect?.(event as unknown as React.SyntheticEvent<HTMLTextAreaElement>)}
+                    onWheel={(event) => {
+                        event.stopPropagation();
+                        props.onWheel?.(event as unknown as React.WheelEvent<HTMLTextAreaElement>);
+                    }}
+                    onScroll={(event) => props.onScroll?.(event as unknown as React.UIEvent<HTMLTextAreaElement>)}
+                    onFocus={(event) => props.onFocus?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>)}
+                    onBlur={(event) => {
+                        window.setTimeout(closeMention, 120);
+                        props.onBlur?.(event as unknown as React.FocusEvent<HTMLTextAreaElement>);
+                    }}
+                ></div>
+                {menu}
+            </div>
+        );
+    }
 
     return (
-        <div className={`relative h-full w-full ${containerClassName || ""}`}>
-            {showOverlay ? (
-                <div ref={overlayRef} className={`${className || ""} pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words`} style={{ ...style, color: theme.node.text }}>
-                    <MentionHighlightText value={value || props.placeholder?.toString() || ""} labels={activeLabels} placeholder={!value} />
-                </div>
-            ) : null}
+        <div ref={containerRef} data-canvas-no-zoom className={`relative w-full min-h-0 overflow-hidden ${containerClassName || "h-full"}`}>
             <textarea
                 {...props}
                 ref={(node) => {
@@ -116,50 +296,57 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
                     else if (forwardedRef) forwardedRef.current = node;
                 }}
                 value={value}
-                className={className}
+                className={`${className || ""} relative z-10`}
                 style={mergedStyle}
                 onChange={(event) => {
                     const next = event.target.value;
                     onChange(next);
                     syncMention(next, event.target.selectionStart);
-                    requestAnimationFrame(() => {
-                        syncOverlayScroll();
-                        updateSelectionState();
-                    });
-                }}
-                onSelect={(event) => {
-                    updateSelectionState();
-                    props.onSelect?.(event);
-                }}
-                onFocus={(event) => {
-                    setFocused(true);
-                    updateSelectionState();
-                    props.onFocus?.(event);
-                }}
-                onKeyUp={(event) => {
-                    updateSelectionState();
-                    props.onKeyUp?.(event);
-                }}
-                onPointerUp={(event) => {
-                    updateSelectionState();
-                    props.onPointerUp?.(event);
+                    reportContentSize(event.currentTarget);
                 }}
                 onKeyDown={(event) => {
-                    if (mention && handleMentionNavigation(event, candidates, activeIndex, setActiveIndex, insertReference, closeMention)) return;
-                    if (event.key === "Enter" && onSubmit && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                    if (mention && candidates.length) {
+                        if (event.key === "ArrowDown") {
+                            event.preventDefault();
+                            setActiveIndex((index) => (index + 1) % candidates.length);
+                            return;
+                        }
+                        if (event.key === "ArrowUp") {
+                            event.preventDefault();
+                            setActiveIndex((index) => (index - 1 + candidates.length) % candidates.length);
+                            return;
+                        }
+                        if (event.key === "Enter") {
+                            event.preventDefault();
+                            insertReference(candidates[Math.min(activeIndex, candidates.length - 1)]);
+                            return;
+                        }
+                        if (event.key === "Escape") {
+                            event.preventDefault();
+                            closeMention();
+                            return;
+                        }
+                    }
+                    const shouldSubmit = event.key === "Enter" && (sendOnEnter ? !event.ctrlKey && !event.metaKey && !event.shiftKey : (event.ctrlKey || event.metaKey) && !event.shiftKey);
+                    if (shouldSubmit && onSubmit) {
                         event.preventDefault();
                         onSubmit();
                         return;
                     }
                     onKeyDown?.(event);
                 }}
-                onScroll={(event) => {
-                    syncOverlayScroll();
-                    props.onScroll?.(event);
+                onWheel={(event) => {
+                    event.stopPropagation();
+                    const textarea = event.currentTarget;
+                    const deltaY = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * textarea.clientHeight : event.deltaY;
+                    if (deltaY) {
+                        const previousTop = textarea.scrollTop;
+                        textarea.scrollTop += deltaY;
+                        if (textarea.scrollTop !== previousTop) event.preventDefault();
+                    }
+                    props.onWheel?.(event);
                 }}
                 onBlur={(event) => {
-                    setFocused(false);
-                    setHasSelection(false);
                     window.setTimeout(closeMention, 120);
                     props.onBlur?.(event);
                 }}
@@ -169,42 +356,64 @@ export const CanvasResourceMentionTextarea = forwardRef<HTMLTextAreaElement, Pro
     );
 });
 
-function MentionHighlightText({ value, labels, placeholder }: { value: string; labels: string[]; placeholder: boolean }) {
-    if (placeholder) return <span className="opacity-45">{value}</span>;
-    if (!labels.length) return <>{value}</>;
-    const pattern = new RegExp(`(${labels.map(escapeRegExp).join("|")})`, "g");
-    return (
-        <>
-            {value.split(pattern).map((part, index) =>
-                labels.includes(part) ? (
-                    <span key={`${part}-${index}`} className="rounded-md bg-[#2f80ff]/16 px-1 py-0.5 font-medium text-[#2f80ff] ring-1 ring-[#2f80ff]/24">
-                        {part}
-                    </span>
-                ) : (
-                    <span key={`${part}-${index}`}>{part}</span>
-                ),
-            )}
-        </>
-    );
+function createInlineMentionChip(reference: CanvasResourceReference, token: string) {
+    const chip = document.createElement("span");
+    chip.contentEditable = "false";
+    chip.dataset.mentionToken = token;
+    chip.className = "mx-[0.06em] inline-flex h-[1.68em] translate-y-[0.08em] select-none items-center gap-[0.18em] rounded-[0.38em] bg-black/[0.06] px-[0.22em] text-[0.92em] font-medium leading-none text-current align-baseline dark:bg-white/[0.1]";
+
+    const at = document.createElement("span");
+    at.className = "shrink-0 opacity-90";
+    at.textContent = "@";
+    chip.appendChild(at);
+
+    chip.appendChild(createInlinePreview(reference));
+
+    const label = document.createElement("span");
+    label.className = "shrink-0";
+    label.textContent = reference.label;
+    chip.appendChild(label);
+
+    return chip;
+}
+
+function createInlinePreview(reference: CanvasResourceReference) {
+    if ((reference.kind === "image" || reference.kind === "video") && reference.previewUrl) {
+        const media = document.createElement(reference.kind === "video" ? "video" : "img");
+        media.className = `size-[1.18em] shrink-0 rounded-[0.24em] ${reference.kind === "video" ? "bg-black object-cover" : "object-cover"}`;
+        media.setAttribute("src", reference.kind === "image" ? imagePreviewUrl(reference.previewUrl, 64) : reference.previewUrl);
+        media.setAttribute("alt", "");
+        if (media instanceof HTMLVideoElement) {
+            media.muted = true;
+            media.preload = "metadata";
+        }
+        return media;
+    }
+    const fallback = document.createElement("span");
+    fallback.className = "grid size-[1.18em] shrink-0 place-items-center rounded-[0.24em] bg-current/10";
+    fallback.textContent = reference.kind === "audio" ? "A" : reference.kind === "video" ? "V" : reference.kind === "image" ? "I" : reference.kind === "skill" ? "S" : "T";
+    return fallback;
 }
 
 function MentionMenu({
-    textarea,
+    anchor,
     references,
     activeIndex,
     theme,
+    preferredWidth,
     onSelect,
 }: {
-    textarea: HTMLTextAreaElement;
+    anchor: HTMLElement;
     references: CanvasResourceReference[];
     activeIndex: number;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    preferredWidth: number;
     onSelect: (reference: CanvasResourceReference) => void;
 }) {
     const selectedRef = useRef(false);
-    const rect = textarea.getBoundingClientRect();
-    const boundary = textarea.closest(".ant-modal-content")?.getBoundingClientRect() || { left: 8, top: 8, right: window.innerWidth - 8, bottom: window.innerHeight - 8 };
-    const menuWidth = 256;
+    const rect = anchor.getBoundingClientRect();
+    const boundary = anchor.closest(".ant-modal-content")?.getBoundingClientRect() || { left: 8, top: 8, right: window.innerWidth - 8, bottom: window.innerHeight - 8 };
+    const menuWidth = Math.min(preferredWidth, Math.max(0, boundary.right - boundary.left - 16));
     const maxMenuHeight = 224;
     const gap = 6;
     const left = clamp(rect.left, boundary.left + 8, boundary.right - menuWidth - 8);
@@ -223,8 +432,8 @@ function MentionMenu({
     return createPortal(
         <div
             data-canvas-resource-mention-menu="true"
-            className="fixed z-[120] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-md"
-            style={{ left, top, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+            className="fixed z-[var(--z-tooltip)] max-h-56 overflow-y-auto rounded-xl border p-1 shadow-2xl backdrop-blur-md"
+            style={{ left, top, width: menuWidth, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={stopCanvasInteraction}
             onMouseDown={stopCanvasInteraction}
             onClick={(event) => event.stopPropagation()}
@@ -248,8 +457,10 @@ function MentionMenu({
                 >
                     <ReferencePreview reference={reference} />
                     <span className="min-w-0 flex-1">
-                        <span className="block font-medium">{reference.label}</span>
-                        <span className="block truncate opacity-65">{reference.text || reference.title}</span>
+                        <span className="block truncate font-medium" title={reference.label}>
+                            {reference.label}
+                        </span>
+                        {reference.kind !== "skill" ? <span className="block truncate opacity-65">{reference.text || reference.title}</span> : null}
                     </span>
                 </button>
             ))}
@@ -261,6 +472,13 @@ function MentionMenu({
 function ReferencePreview({ reference }: { reference: CanvasResourceReference }) {
     if (reference.kind === "image" && reference.previewUrl) return <img src={imagePreviewUrl(reference.previewUrl, 96)} alt="" className="size-9 rounded-md object-cover" />;
     if (reference.kind === "video" && reference.previewUrl) return <video src={reference.previewUrl} className="size-9 rounded-md bg-black object-cover" muted preload="metadata" />;
+    if (reference.kind === "skill") {
+        return (
+            <span className="grid size-9 shrink-0 place-items-center rounded-md bg-cyan-500/12 text-cyan-600 dark:text-cyan-200">
+                <Sparkles className="size-4" />
+            </span>
+        );
+    }
     const Icon = reference.kind === "audio" ? Music2 : reference.kind === "video" ? Video : reference.kind === "image" ? ImageIcon : FileText;
     return (
         <span className="grid size-9 shrink-0 place-items-center rounded-md bg-black/10">
@@ -269,11 +487,142 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     );
 }
 
+export function splitMentionText(value: string, references: CanvasResourceReference[]) {
+    if (!references.length || !value) return value ? [{ type: "text", text: value } as MentionTextPart] : [];
+    const referenceByToken = new Map<string, { reference: CanvasResourceReference; serializedToken: string }>();
+    references.forEach((reference) => {
+        const serializedToken = canvasResourceMentionToken(reference);
+        referenceByToken.set(serializedToken, { reference, serializedToken });
+        referenceByToken.set(`@${reference.label}`, { reference, serializedToken });
+    });
+    const tokens = [...referenceByToken.keys()].sort((a, b) => b.length - a.length);
+    const parts: MentionTextPart[] = [];
+    let index = 0;
+    while (index < value.length) {
+        const token = tokens.find((item) => value.startsWith(item, index) && hasMentionBoundary(value, index + item.length));
+        if (!token) {
+            const nextTokenIndex = findNextMentionIndex(value, tokens, index + 1);
+            const end = nextTokenIndex < 0 ? value.length : nextTokenIndex;
+            parts.push({ type: "text", text: value.slice(index, end) });
+            index = end;
+            continue;
+        }
+        const matched = referenceByToken.get(token)!;
+        parts.push({ type: "mention", token: matched.serializedToken, reference: matched.reference });
+        index += token.length;
+    }
+    return parts;
+}
+
+function renderEditableContent(editor: HTMLElement, value: string, references: CanvasResourceReference[]) {
+    const parts = splitMentionText(value, references);
+    const nodes = parts.map((part) => (part.type === "mention" ? createInlineMentionChip(part.reference, part.token) : document.createTextNode(part.text)));
+    editor.replaceChildren(...nodes);
+}
+
+function findNextMentionIndex(value: string, tokens: string[], fromIndex: number) {
+    let next = -1;
+    tokens.forEach((token) => {
+        const index = value.indexOf(token, fromIndex);
+        if (index >= 0 && hasMentionBoundary(value, index + token.length) && (next < 0 || index < next)) next = index;
+    });
+    return next;
+}
+
+function hasMentionBoundary(value: string, index: number) {
+    const char = value[index];
+    return !char || /\s|[,.!?;:，。！？；：、)\]}】）]/.test(char);
+}
+
+function serializeEditableValue(root: HTMLElement) {
+    return serializeNodeList(root.childNodes).replace(/\u00a0/g, " ");
+}
+
+function serializeNodeList(nodes: NodeListOf<ChildNode> | ChildNode[]) {
+    let text = "";
+    nodes.forEach((node) => {
+        text += serializeNode(node);
+    });
+    return text;
+}
+
+function serializeNode(node: ChildNode): string {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+    if (!(node instanceof HTMLElement)) return "";
+    const token = node.dataset.mentionToken;
+    if (token) return token;
+    if (node.tagName === "BR") return "\n";
+    return serializeNodeList(node.childNodes);
+}
+
+function getEditableSelection(root: HTMLElement | null): EditableSelection | null {
+    if (!root) return null;
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+    const start = offsetForPoint(root, range.startContainer, range.startOffset);
+    const end = offsetForPoint(root, range.endContainer, range.endOffset);
+    return start <= end ? { start, end } : { start: end, end: start };
+}
+
+function offsetForPoint(root: Node, target: Node, targetOffset: number): number {
+    if (root === target) {
+        if (root.nodeType === Node.TEXT_NODE) return targetOffset;
+        return Array.from(root.childNodes)
+            .slice(0, targetOffset)
+            .reduce((offset, node) => offset + plainTextLength(node), 0);
+    }
+    let offset = 0;
+    for (const child of Array.from(root.childNodes)) {
+        if (child === target || child.contains(target)) return offset + offsetForPoint(child, target, targetOffset);
+        offset += plainTextLength(child);
+    }
+    return offset;
+}
+
+function setEditableSelection(root: HTMLElement, offset: number) {
+    const range = document.createRange();
+    const point = pointForOffset(root, Math.max(0, offset));
+    range.setStart(point.node, point.offset);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+}
+
+function pointForOffset(root: Node, offset: number): { node: Node; offset: number } {
+    if (root.nodeType === Node.TEXT_NODE) return { node: root, offset: Math.min(offset, root.textContent?.length || 0) };
+    let remaining = offset;
+    const children = Array.from(root.childNodes);
+    for (let index = 0; index < children.length; index += 1) {
+        const child = children[index];
+        const length = plainTextLength(child);
+        if (remaining > length) {
+            remaining -= length;
+            continue;
+        }
+        if (isMentionElement(child)) return { node: root, offset: remaining <= length / 2 ? index : index + 1 };
+        return pointForOffset(child, remaining);
+    }
+    return { node: root, offset: children.length };
+}
+
+function plainTextLength(node: Node): number {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent?.length || 0;
+    if (node instanceof HTMLElement) {
+        const token = node.dataset.mentionToken;
+        if (token) return token.length;
+        if (node.tagName === "BR") return 1;
+    }
+    return Array.from(node.childNodes).reduce((total, child) => total + plainTextLength(child), 0);
+}
+
+function isMentionElement(node: Node): node is HTMLElement {
+    return node instanceof HTMLElement && Boolean(node.dataset.mentionToken);
+}
+
 function clamp(value: number, min: number, max: number) {
     if (max < min) return min;
     return Math.min(Math.max(value, min), max);
-}
-
-function escapeRegExp(value: string) {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

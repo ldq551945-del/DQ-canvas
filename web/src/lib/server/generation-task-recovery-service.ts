@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { generationTaskNextPollAt, claimDueGenerationTasks, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, type GenerationTaskLease } from "@/lib/server/generation-task-scheduler";
+import { generationTaskNextPollAt, claimDueBackgroundRemovalTask, claimDueGenerationTasks, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, type GenerationTaskLease } from "@/lib/server/generation-task-scheduler";
 import { failVideoTaskFromWorker, persistVideoTaskResult, queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import { getVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { createAudioTaskUpstreamStep, markAudioTaskFailed, persistAudioTaskResult, queryAudioTaskUpstreamStep } from "@/lib/server/audio-task-runtime";
@@ -13,12 +13,29 @@ import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
 import { executeAgentRun } from "@/lib/server/agent-run-executor";
 import { processAgentRunReview } from "@/lib/server/agent-run-execution";
 import { getAgentRun, type AgentRun } from "@/lib/server/agent-run-store";
+import { getBackgroundRemovalTask } from "@/lib/server/background-removal-task-store";
+import { runBackgroundRemovalTaskStep } from "@/lib/server/background-removal-task-runtime";
 
 type RecoveryResult = "pending" | "result_ready" | "completed" | "failed" | "needs_review" | "deferred";
 
 export async function runGenerationTaskRecoveryBatch(input: { origin: string; publicOrigin?: string; cookie?: string; limit?: number; taskIds?: string[]; workerId?: string }) {
     const workerId = input.workerId?.trim().slice(0, 160) || `generation-worker:${process.pid}:${randomUUID()}`;
-    const leases = await claimDueGenerationTasks({ workerId, limit: input.limit, taskIds: input.taskIds, leaseMs: 90_000 });
+    const limit = Math.max(1, Math.min(50, Math.floor(Number(input.limit) || 20)));
+    const backgroundRemovalLease = input.taskIds?.length ? null : await claimDueBackgroundRemovalTask({ workerId, leaseMs: 90_000 });
+    let regularLeases: GenerationTaskLease[];
+    try {
+        regularLeases = limit > (backgroundRemovalLease ? 1 : 0) ? await claimDueGenerationTasks({ workerId, limit: limit - (backgroundRemovalLease ? 1 : 0), taskIds: input.taskIds, leaseMs: 90_000 }) : [];
+    } catch (error) {
+        if (backgroundRemovalLease) {
+            await releaseGenerationTaskLease("image_process", backgroundRemovalLease.id, workerId, {
+                executionPhase: backgroundRemovalLease.executionPhase,
+                nextPollAt: backgroundRemovalLease.nextPollAt,
+                lastUpstreamStatus: backgroundRemovalLease.lastUpstreamStatus,
+            }).catch(() => undefined);
+        }
+        throw error;
+    }
+    const leases = [...(backgroundRemovalLease ? [backgroundRemovalLease] : []), ...regularLeases];
     if (!leases.length) return { claimed: 0, pending: 0, resultReady: 0, completed: 0, failed: 0, needsReview: 0, deferred: 0 };
 
     const taskIds = leases.map((lease) => lease.id);
@@ -26,12 +43,15 @@ export async function runGenerationTaskRecoveryBatch(input: { origin: string; pu
         void renewGenerationTaskLeases(workerId, taskIds, 90_000).catch((error) => console.error("Generation worker lease heartbeat failed", { workerId, error }));
     }, 25_000);
     try {
-        const persistence = leases.filter(needsPersistence);
-        const queries = leases.filter((lease) => !needsPersistence(lease));
-        const results = [
-            ...(await runWithConcurrency(queries, 20, (lease) => processGenerationTaskLease(lease, workerId, input.origin, input.publicOrigin || input.origin, input.cookie || ""))),
-            ...(await runWithConcurrency(persistence, 4, (lease) => processGenerationTaskLease(lease, workerId, input.origin, input.publicOrigin || input.origin, input.cookie || ""))),
-        ];
+        const backgroundRemoval = leases.filter((lease) => lease.type === "image_process");
+        const persistence = leases.filter((lease) => needsPersistence(lease) && lease.type !== "image_process");
+        const queries = leases.filter((lease) => !needsPersistence(lease) && lease.type !== "image_process");
+        const groups = await Promise.all([
+            runWithConcurrency(queries, 20, (lease) => processGenerationTaskLease(lease, workerId, input.origin, input.publicOrigin || input.origin, input.cookie || "")),
+            runWithConcurrency(persistence, 4, (lease) => processGenerationTaskLease(lease, workerId, input.origin, input.publicOrigin || input.origin, input.cookie || "")),
+            runWithConcurrency(backgroundRemoval, 1, (lease) => processGenerationTaskLease(lease, workerId, input.origin, input.publicOrigin || input.origin, input.cookie || "")),
+        ]);
+        const results = groups.flat();
         return summarize(results);
     } finally {
         clearInterval(heartbeat);
@@ -42,12 +62,52 @@ async function processGenerationTaskLease(lease: GenerationTaskLease, workerId: 
     if (lease.type === "text") return processTextLease(lease, workerId, origin, cookie);
     if (lease.type === "image") return processImageLease(lease, workerId, origin, publicOrigin, cookie);
     if (lease.type === "audio") return processAudioLease(lease, workerId, origin, cookie);
+    if (lease.type === "image_process") return processBackgroundRemovalLease(lease, workerId);
     if (lease.type === "agent") return processAgentLease(lease, workerId, origin, cookie);
     if (lease.type !== "video") {
         await releaseGenerationTaskLease(lease.type, lease.id, workerId, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "worker_handler_missing" });
         return "needs_review";
     }
     return processVideoLease(lease, workerId, origin, cookie);
+}
+
+async function processBackgroundRemovalLease(lease: GenerationTaskLease, workerId: string): Promise<RecoveryResult> {
+    const task = await getBackgroundRemovalTask(lease.id);
+    if (!task || task.status === "success" || task.status === "error" || task.status === "cancelled") {
+        await releaseGenerationTaskLease("image_process", lease.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: task?.status || "missing" });
+        return task?.status === "success" ? "completed" : "failed";
+    }
+    try {
+        const step = await runBackgroundRemovalTaskStep(task);
+        if (step.state === "completed") {
+            await releaseGenerationTaskLease("image_process", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "completed" });
+            return "completed";
+        }
+        if (step.state === "cancelled") {
+            await releaseGenerationTaskLease("image_process", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: step.state });
+            return "failed";
+        }
+        if (step.state === "failed") {
+            await releaseGenerationTaskLease("image_process", task.id, workerId, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "failed" });
+            return "failed";
+        }
+        await releaseGenerationTaskLease("image_process", task.id, workerId, {
+            executionPhase: "polling",
+            nextPollAt: step.nextPollAt,
+            lastPollAt: Date.now(),
+            lastUpstreamStatus: `process_error:${step.attempt}`,
+        });
+        return "deferred";
+    } catch (error) {
+        await releaseGenerationTaskLease("image_process", task.id, workerId, {
+            executionPhase: "polling",
+            nextPollAt: generationTaskNextPollAt({ consecutiveErrors: errorCount(lease.lastUpstreamStatus) + 1 }),
+            lastPollAt: Date.now(),
+            lastUpstreamStatus: `process_error:${errorCount(lease.lastUpstreamStatus) + 1}`,
+        });
+        console.warn("Background removal task deferred", { taskId: task.id, error: safeError(error) });
+        return "deferred";
+    }
 }
 
 async function processAgentLease(lease: GenerationTaskLease, workerId: string, origin: string, cookie: string): Promise<RecoveryResult> {
@@ -435,7 +495,7 @@ function summarize(results: RecoveryResult[]) {
 }
 
 function errorCount(status?: string) {
-    const count = Number(status?.match(/(?:query|persist)_error:(\d+)/)?.[1] || 0);
+    const count = Number(status?.match(/(?:query|persist|process)_error:(\d+)/)?.[1] || 0);
     return Number.isFinite(count) ? Math.max(0, count) : 0;
 }
 

@@ -38,6 +38,34 @@ describe("reference asset upload boundary", () => {
         });
     });
 
+    it("does not raise the limit for non-image uploads that claim the canvas purpose", async () => {
+        const response = await POST(
+            new Request("http://localhost/api/reference-assets", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "video", purpose: "canvas-image", persistent: true, dataUrl: "data:video/mp4;base64,AAAA" }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.writePersistent).toHaveBeenCalledWith(expect.any(String), "video", expect.objectContaining({ maxBytes: 20 * 1024 * 1024 }));
+    });
+
+    it("allows the scoped 30MiB canvas-image upload purpose", async () => {
+        mocks.writePersistent.mockResolvedValue({ token: "permanent/canvas.png", bytes: 4, mimeType: "image/png", storage: "local" });
+
+        const response = await POST(
+            new Request("http://localhost/api/reference-assets", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ type: "image", purpose: "canvas-image", persistent: true, dataUrl: "data:image/png;base64,AAAA" }),
+            }),
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.writePersistent).toHaveBeenCalledWith(expect.any(String), "image", expect.objectContaining({ maxBytes: 30 * 1024 * 1024 }));
+    });
+
     it("returns the stable internal storage key for object-backed uploads", async () => {
         mocks.writePersistent.mockResolvedValue({ token: "permanent/asset.png", bytes: 4, mimeType: "image/png", storage: "object" });
         const response = await POST(

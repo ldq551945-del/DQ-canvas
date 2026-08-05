@@ -30,6 +30,12 @@ describe("Canvas image node sizing", () => {
         expect(resized).toMatchObject({ width: 340, height: 240, position: { x: 100, y: 200 } });
     });
 
+    it("records natural dimensions without changing a locked frame", () => {
+        const resized = resizeImageNodeToNaturalRatio({ ...imageNode, metadata: { ...imageNode.metadata, locked: true } }, 1024, 1024);
+
+        expect(resized).toMatchObject({ width: 340, height: 240, position: { x: 100, y: 200 }, metadata: { locked: true, naturalWidth: 1024, naturalHeight: 1024 } });
+    });
+
     it("returns the original node after dimensions and ratio are already synchronized", () => {
         const squareNode = { ...imageNode, width: 340, height: 340, metadata: { ...imageNode.metadata, naturalWidth: 1024, naturalHeight: 1024 } };
 

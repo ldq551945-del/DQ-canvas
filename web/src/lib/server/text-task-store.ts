@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { LogicalModelCapabilityProfile, SystemChannelAdvancedConfig } from "@/lib/auth/store";
 import type { AiTextMessage } from "@/types/ai";
-import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask } from "@/lib/server/generation-task-store";
+import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
@@ -39,10 +39,11 @@ export type TextTask = {
     attemptNo?: number;
 };
 
-export async function createTextTask(input: Omit<TextTask, "id" | "status" | "createdAt" | "updatedAt">) {
+export async function createTextTask(input: Omit<TextTask, "id" | "status" | "createdAt" | "updatedAt"> & { context?: GenerationTaskContext }) {
     const now = Date.now();
     const task: TextTask = {
         ...input,
+        ...input.context,
         id: randomUUID(),
         status: "pending",
         createdAt: now,

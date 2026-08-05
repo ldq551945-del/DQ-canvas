@@ -6,6 +6,7 @@ import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { normalizeModelConfigs } from "@/lib/server/admin-model-catalog";
 import { sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
 import { buildProviderRequest, isProviderBusinessError, readProviderString } from "@/lib/server/provider-task-config";
+import { fetchSafeOutboundUrl } from "@/lib/server/security";
 
 export type ChannelHealthKind = SharedChannelHealthKind;
 export type ChannelHealthResult = SharedChannelHealthResult;
@@ -47,7 +48,7 @@ export async function testDeclarativeChannelProtocol(baseUrl: string, apiKey: st
         content: [{ type: "text", text: prompt }],
     };
     const payload = protocol === "seedance-special" ? buildSeedanceSpecialRequest({ model, prompt, ratio: "16:9", duration: 4, generateAudio: false }) : buildProviderRequest(requestTemplate, values, values);
-    const response = await fetch(literalChannelHealthUrl(baseUrl, createPath), {
+    const response = await fetchSafeOutboundUrl(literalChannelHealthUrl(baseUrl, createPath), {
         method: "POST",
         headers: { ...protocolAuthHeaders(apiKey, advanced), "content-type": "application/json" },
         body: JSON.stringify(payload),

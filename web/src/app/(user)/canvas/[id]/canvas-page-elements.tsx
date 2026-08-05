@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { getNodeSpec } from "../constants";
-import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type Position } from "../types";
+import { CanvasNodeType, type CanvasAssistantSession, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type Position, type ViewportTransform } from "../types";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -20,11 +20,20 @@ export type CanvasClipboard = {
 export type PendingConnectionCreate = {
     connection: ConnectionHandle;
     position: Position;
+    /** A click on a port opens the same menu, then places the chosen node beside its source. */
+    quick?: boolean;
+    /** Existing edge replaced after the user selects an intermediate node type. */
+    splitConnectionId?: string;
+    /** A config node would create an invalid config-to-config edge in this split. */
+    allowConfig?: boolean;
 };
 
 export type ConnectionDropTarget = {
     nodeId: string | null;
+    /** Target port when the node exposes named ports. */
+    handleId?: string;
     isNearNode: boolean;
+    anchorRatio?: number;
 };
 
 export type CanvasCreatableNodeType = CanvasNodeType.Image | CanvasNodeType.Panorama | CanvasNodeType.Drawing | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video | CanvasNodeType.Audio;
@@ -47,13 +56,16 @@ export type CanvasGenerationRequest = {
     originNodeId: string;
     runningNodeId: string;
     controller: AbortController;
+    persistedTask?: { id: string; type: string };
 };
 
 export const VIDEO_NODE_MAX_WIDTH = 420;
 export const VIDEO_NODE_MAX_HEIGHT = 420;
 export const CANVAS_DROP_NODE_OFFSET = 48;
-export const CONNECTION_HANDLE_HIT_RADIUS = 40;
-export const CONNECTION_NODE_HIT_PADDING = 32;
+// Screen-space measurements. The rendered capsule is deliberately small; the
+// surrounding target keeps connecting forgiving at every zoom level.
+export const CONNECTION_HANDLE_HIT_RADIUS = 48;
+export const CONNECTION_NODE_HIT_PADDING = 40;
 export const NODE_STATUS_IDLE = "idle" as const;
 export const NODE_STATUS_LOADING = "loading" as const;
 export const NODE_STATUS_SUCCESS = "success" as const;
@@ -160,19 +172,35 @@ export function NodeCreateMenu({ position, onCreate, onClose }: { position: Posi
     );
 }
 
-export function ConnectionCreateMenu({ pending, allowDrawing, onCreate, onClose }: { pending: PendingConnectionCreate; allowDrawing: boolean; onCreate: (type: CanvasCreatableNodeType) => void; onClose: () => void }) {
+export function ConnectionCreateMenu({
+    pending,
+    allowDrawing,
+    viewport,
+    viewportSize,
+    onCreate,
+    onClose,
+}: {
+    pending: PendingConnectionCreate;
+    allowDrawing: boolean;
+    viewport: ViewportTransform;
+    viewportSize: { width: number; height: number };
+    onCreate: (type: CanvasCreatableNodeType) => void;
+    onClose: () => void;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const position = getClampedConnectionMenuPosition(pending.position, viewport, viewportSize, allowDrawing ? 510 : 450);
     return (
         <div
             className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur"
             data-connection-create-menu
-            style={{ left: pending.position.x, top: pending.position.y, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
+            data-canvas-no-zoom
+            style={{ left: position.x, top: position.y, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
         >
             <div className="mb-2 flex items-center justify-between px-1">
                 <span className="text-sm font-medium" style={{ color: theme.node.muted }}>
-                    引用该节点生成
+                    {pending.splitConnectionId ? "在线条中插入节点" : "引用该节点生成"}
                 </span>
                 <button
                     type="button"
@@ -192,10 +220,28 @@ export function ConnectionCreateMenu({ pending, allowDrawing, onCreate, onClose 
                 <ConnectionCreateOption theme={theme} icon={<Globe2 className="size-5" />} title="全景生成" description="生成 2:1 环境全景" onClick={() => onCreate(CanvasNodeType.Panorama)} />
                 <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
                 <ConnectionCreateOption theme={theme} icon={<Music2 className="size-5" />} title="音频参考" onClick={() => onCreate(CanvasNodeType.Audio)} />
-                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title="配置节点" description="模型、尺寸、数量和输入顺序" onClick={() => onCreate(CanvasNodeType.Config)} />
+                {pending.allowConfig !== false ? <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title="配置节点" description="模型、尺寸、数量和输入顺序" onClick={() => onCreate(CanvasNodeType.Config)} /> : null}
             </div>
         </div>
     );
+}
+
+/**
+ * The create menu lives in canvas coordinates, while its visible bounds are in
+ * screen coordinates. Clamp in screen space first so the result stays usable
+ * at every zoom level, then translate it back into the transformed layer.
+ */
+export function getClampedConnectionMenuPosition(position: Position, viewport: ViewportTransform, viewportSize: { width: number; height: number }, menuHeight: number, menuWidth = 300) {
+    const scale = Math.max(viewport.k, 0.05);
+    const gap = 12;
+    const topBoundary = 72;
+    const screenX = viewport.x + position.x * scale;
+    const screenY = viewport.y + position.y * scale;
+    const visualWidth = menuWidth * scale;
+    const visualHeight = menuHeight * scale;
+    const clampedX = Math.min(Math.max(screenX, gap), Math.max(gap, viewportSize.width - visualWidth - gap));
+    const clampedY = Math.min(Math.max(screenY, topBoundary), Math.max(topBoundary, viewportSize.height - visualHeight - gap));
+    return { x: (clampedX - viewport.x) / scale, y: (clampedY - viewport.y) / scale };
 }
 
 export function ConnectionCreateOption({ theme, icon, title, description, onClick }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; icon: React.ReactNode; title: string; description?: string; onClick?: () => void }) {

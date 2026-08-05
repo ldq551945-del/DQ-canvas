@@ -1,7 +1,9 @@
 import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { resolveServerDataPath } from "@/lib/server/data-dir";
+import { withExclusiveFileLock } from "@/lib/server/exclusive-file-lock";
 
-export type GenerationTaskType = "text" | "image" | "video" | "audio" | "agent" | "render";
+export type GenerationTaskType = "text" | "image" | "video" | "audio" | "agent" | "render" | "image_process";
 type GenerationTaskStatus = "pending" | "running" | "success" | "error" | "paused" | "cancelled";
 
 export type GenerationTaskContext = {
@@ -15,6 +17,8 @@ export type GenerationTaskContext = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    sourceNodeId?: string;
+    targetNodeId?: string;
 };
 
 export type StoredGenerationTaskRecord = {
@@ -46,6 +50,12 @@ export type GenerationTaskRecordListOptions = {
     pageSize?: number;
     type?: string;
     status?: string;
+    /**
+     * Matches any of the supplied statuses. This is intentionally separate
+     * from the legacy single-status filter so task dashboards can query all
+     * active states without fetching a page of terminal records first.
+     */
+    statuses?: string[];
     surface?: string;
     projectId?: string;
     userId?: string;
@@ -79,13 +89,16 @@ type GenerationTaskSummaryAccumulator = Omit<GenerationTaskRecordSummary, "avera
 };
 
 const TASK_FILE = "generation-tasks.json";
+const TASK_LOCK_FILE = `${TASK_FILE}.lock`;
 const ACTIVE_CONCURRENCY_PHASES = ["created", "submitting", "submitted", "polling", "result_ready", "persisting"] as const;
 let fileMutationQueue = Promise.resolve();
 const concurrencyQueues = new Map<string, Promise<void>>();
 
-export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
+export type GenerationTaskInitialSchedule = Pick<StoredGenerationTaskRecord, "executionPhase" | "provider" | "nextPollAt" | "lastUpstreamStatus">;
+
+export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number, initialSchedule?: GenerationTaskInitialSchedule) {
     await cleanupStoredGenerationTasks();
-    return insertTask(type, task, ttlMs);
+    return insertTask(type, task, ttlMs, initialSchedule);
 }
 
 type GenerationTaskExecutionState = Pick<StoredGenerationTaskRecord, "executionPhase" | "lastUpstreamStatus">;
@@ -120,16 +133,77 @@ export async function getStoredGenerationTaskByRequest<T>(type: GenerationTaskTy
     const attempt = normalizedAttemptNo(attemptNo);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const result = await postgresQuery<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND client_request_id = $3 AND COALESCE(attempt_no, 0) = $4 AND expires_at > now() LIMIT 1", [
-            userId,
-            type,
-            requestId,
-            attempt,
-        ]);
+        const result = await postgresQuery<{ payload: T }>(
+            "SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND client_request_id = $3 AND COALESCE(attempt_no, 0) = $4 AND expires_at > now() ORDER BY updated_at DESC, id DESC LIMIT 1",
+            [userId, type, requestId, attempt],
+        );
         return result.rows[0]?.payload || null;
     }
     const tasks = await readFileTasks();
-    return (tasks.find((task) => sameTaskRequest(task, type, userId, requestId, attempt) && task.expiresAt > Date.now())?.payload as T | undefined) || null;
+    return (tasks.filter((task) => sameTaskRequest(task, type, userId, requestId, attempt) && task.expiresAt > Date.now()).sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0]?.payload as T | undefined) || null;
+}
+
+/** Finds an active canvas processing task without trusting a caller supplied request id. */
+export async function getActiveStoredGenerationTaskBySourceNode<T>(type: GenerationTaskType, userId: string, sourceNodeId: string, projectId?: string): Promise<T | null> {
+    const normalizedUserId = cleanContextText(userId);
+    const normalizedSourceNodeId = cleanContextText(sourceNodeId);
+    const normalizedProjectId = cleanContextText(projectId);
+    if (!normalizedUserId || !normalizedSourceNodeId) return null;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ payload: T }>(
+            `SELECT payload
+             FROM generation_tasks
+             WHERE user_id = $1 AND task_type = $2
+               AND status IN ('pending', 'running')
+               AND expires_at > now()
+               AND payload->>'sourceNodeId' = $3
+               AND ($4::text IS NULL OR project_id = $4)
+             ORDER BY updated_at DESC, id DESC
+             LIMIT 1`,
+            [normalizedUserId, type, normalizedSourceNodeId, normalizedProjectId || null],
+        );
+        return result.rows[0]?.payload || null;
+    }
+    const task = (await readFileTasks())
+        .filter(
+            (item) =>
+                item.type === type &&
+                item.userId === normalizedUserId &&
+                ["pending", "running"].includes(item.status) &&
+                item.expiresAt > Date.now() &&
+                String(item.payload.sourceNodeId || "") === normalizedSourceNodeId &&
+                (!normalizedProjectId || item.projectId === normalizedProjectId),
+        )
+        .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
+    return (task?.payload as T | undefined) || null;
+}
+
+/** Returns the newest processing task for a canvas source node, including terminal results. */
+export async function getLatestStoredGenerationTaskBySourceNode<T>(type: GenerationTaskType, userId: string, sourceNodeId: string, projectId?: string): Promise<T | null> {
+    const normalizedUserId = cleanContextText(userId);
+    const normalizedSourceNodeId = cleanContextText(sourceNodeId);
+    const normalizedProjectId = cleanContextText(projectId);
+    if (!normalizedUserId || !normalizedSourceNodeId) return null;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ payload: T }>(
+            `SELECT payload
+             FROM generation_tasks
+             WHERE user_id = $1 AND task_type = $2
+               AND expires_at > now()
+               AND payload->>'sourceNodeId' = $3
+               AND ($4::text IS NULL OR project_id = $4)
+             ORDER BY updated_at DESC, id DESC
+             LIMIT 1`,
+            [normalizedUserId, type, normalizedSourceNodeId, normalizedProjectId || null],
+        );
+        return result.rows[0]?.payload || null;
+    }
+    const task = (await readFileTasks())
+        .filter((item) => item.type === type && item.userId === normalizedUserId && item.expiresAt > Date.now() && String(item.payload.sourceNodeId || "") === normalizedSourceNodeId && (!normalizedProjectId || item.projectId === normalizedProjectId))
+        .sort((a, b) => b.updatedAt - a.updatedAt || b.id.localeCompare(a.id))[0];
+    return (task?.payload as T | undefined) || null;
 }
 
 export async function listStoredGenerationTasks<T>(type: GenerationTaskType, userId: string, limit = 20): Promise<T[]> {
@@ -158,18 +232,19 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
         await ensurePostgresSchema();
         const type = isTaskType(options.type) ? options.type : null;
         const status = isTaskStatus(options.status) ? options.status : null;
+        const statuses = normalizedTaskStatuses(options.statuses);
         const surface = isTaskSurface(options.surface) ? options.surface : null;
         const userId = options.userId?.trim() || null;
         const search = (options.search || "").trim().slice(0, 160);
         const searchUserIds = Array.from(new Set((options.searchUserIds || []).map((id) => id.trim()).filter(Boolean))).slice(0, 100);
-        const params = [type, status, surface, projectId, userId, search, searchUserIds];
+        const params = [type, status, statuses, surface, projectId, userId, search, searchUserIds];
         if (!includeAll) {
             const [pageResult, summaryResult] = await Promise.all([
                 postgresQuery<Record<string, unknown>>(
                     `${generationTaskSelect()}
                      ${generationTaskWhere()}
                      ORDER BY updated_at DESC
-                     LIMIT $8 OFFSET $9`,
+                     LIMIT $9 OFFSET $10`,
                     [...params, pageSize, (page - 1) * pageSize],
                 ),
                 postgresQuery<Record<string, unknown>>(`${generationTaskSummarySelect()} ${generationTaskWhere()} GROUP BY task_type, status`, params),
@@ -192,9 +267,11 @@ export async function listStoredGenerationTaskRecords(options: GenerationTaskRec
     }
     const search = (options.search || "").trim().toLowerCase();
     const searchUserIds = new Set((options.searchUserIds || []).map((id) => id.trim()).filter(Boolean));
+    const statuses = normalizedTaskStatuses(options.statuses);
     const filtered = records
         .filter((record) => (isTaskType(options.type) ? record.type === options.type : true))
         .filter((record) => (isTaskStatus(options.status) ? record.status === options.status : true))
+        .filter((record) => (!statuses.length ? true : statuses.includes(record.status)))
         .filter((record) => (isTaskSurface(options.surface) ? record.surface === options.surface : true))
         .filter((record) => (projectId ? record.projectId === projectId : true))
         .filter((record) => (options.userId ? record.userId === options.userId : true))
@@ -265,18 +342,19 @@ function generationTaskWhere() {
     return `WHERE expires_at > now()
               AND ($1::text IS NULL OR task_type = $1)
               AND ($2::text IS NULL OR status = $2)
-              AND ($3::text IS NULL OR surface = $3)
-              AND ($4::text IS NULL OR project_id = $4)
-              AND ($5::text IS NULL OR user_id = $5)
+              AND (cardinality($3::text[]) = 0 OR status = ANY($3::text[]))
+              AND ($4::text IS NULL OR surface = $4)
+              AND ($5::text IS NULL OR project_id = $5)
+              AND ($6::text IS NULL OR user_id = $6)
               AND (
-                  $6 = ''
-                  OR id ILIKE '%' || $6 || '%'
-                  OR user_id ILIKE '%' || $6 || '%'
-                  OR coalesce(conversation_id, '') ILIKE '%' || $6 || '%'
-                  OR coalesce(run_id, '') ILIKE '%' || $6 || '%'
-                  OR coalesce(project_id, '') ILIKE '%' || $6 || '%'
-                  OR payload::text ILIKE '%' || $6 || '%'
-                  OR user_id = ANY($7::text[])
+                  $7 = ''
+                  OR id ILIKE '%' || $7 || '%'
+                  OR user_id ILIKE '%' || $7 || '%'
+                  OR coalesce(conversation_id, '') ILIKE '%' || $7 || '%'
+                  OR coalesce(run_id, '') ILIKE '%' || $7 || '%'
+                  OR coalesce(project_id, '') ILIKE '%' || $7 || '%'
+                  OR payload::text ILIKE '%' || $7 || '%'
+                  OR user_id = ANY($8::text[])
               )`;
 }
 
@@ -581,18 +659,20 @@ async function upsertTask<T extends { id: string; userId: string; status: string
     });
 }
 
-async function insertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number): Promise<T> {
+async function insertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number, initialSchedule?: GenerationTaskInitialSchedule): Promise<T> {
     const status = normalizeGenerationTaskStatus(task.status);
     const context = normalizeGenerationTaskContext(task as GenerationTaskContext);
+    const schedule = normalizeInitialSchedule(initialSchedule);
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
-        const values = taskValues(type, task, ttlMs, status, context);
+        const values = taskValues(type, task, ttlMs, status, context, schedule);
         const inserted = await postgresQuery<{ payload: T }>(
             `INSERT INTO generation_tasks (
                 id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
-                conversation_id, run_id, surface, project_id, parent_task_id, attempt_no, client_request_id
+                conversation_id, run_id, surface, project_id, parent_task_id, attempt_no, client_request_id,
+                execution_phase, provider, next_poll_at, last_upstream_status
              )
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
              ON CONFLICT DO NOTHING
              RETURNING payload`,
             values,
@@ -600,10 +680,28 @@ async function insertTask<T extends { id: string; userId: string; status: string
         if (inserted.rows[0]?.payload) return inserted.rows[0].payload;
         const existing = context.clientRequestId ? await getStoredGenerationTaskByRequest<T>(type, task.userId, context.clientRequestId, context.attemptNo) : await getStoredGenerationTask<T>(type, task.id);
         if (existing) return existing;
+        const sourceNodeId = typeof (task as unknown as Record<string, unknown>).sourceNodeId === "string" ? String((task as unknown as Record<string, unknown>).sourceNodeId) : "";
+        if (sourceNodeId && type === "image_process") {
+            const active = await getActiveStoredGenerationTaskBySourceNode<T>(type, task.userId, sourceNodeId, context.projectId);
+            if (active) return active;
+        }
         throw new Error("生成任务写入冲突，请重试");
     }
     return withGenerationTaskFileMutation(async (tasks) => {
-        const duplicate = tasks.find((item) => item.id === task.id || (context.clientRequestId && sameTaskRequest(item, type, task.userId, context.clientRequestId, normalizedAttemptNo(context.attemptNo))));
+        const sourceNodeId = typeof (task as unknown as Record<string, unknown>).sourceNodeId === "string" ? String((task as unknown as Record<string, unknown>).sourceNodeId) : "";
+        const duplicate = tasks.find(
+            (item) =>
+                item.id === task.id ||
+                (context.clientRequestId && sameTaskRequest(item, type, task.userId, context.clientRequestId, normalizedAttemptNo(context.attemptNo))) ||
+                (type === "image_process" &&
+                    sourceNodeId &&
+                    item.type === type &&
+                    item.userId === task.userId &&
+                    ["pending", "running"].includes(item.status) &&
+                    item.expiresAt > Date.now() &&
+                    String(item.payload.sourceNodeId || "") === sourceNodeId &&
+                    (!context.projectId || item.projectId === context.projectId)),
+        );
         if (duplicate) return { tasks, result: duplicate.payload as T };
         const record: StoredGenerationTaskRecord = {
             id: task.id,
@@ -614,14 +712,14 @@ async function insertTask<T extends { id: string; userId: string; status: string
             createdAt: task.createdAt,
             updatedAt: task.updatedAt,
             expiresAt: task.updatedAt + ttlMs,
-            executionPhase: "created",
+            ...schedule,
             ...context,
         };
         return { tasks: [record, ...tasks], result: task };
     });
 }
 
-function taskValues<T extends { id: string; userId: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number, status: GenerationTaskStatus, context: GenerationTaskContext) {
+function taskValues<T extends { id: string; userId: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number, status: GenerationTaskStatus, context: GenerationTaskContext, schedule: GenerationTaskInitialSchedule) {
     return [
         task.id,
         task.userId,
@@ -638,7 +736,21 @@ function taskValues<T extends { id: string; userId: string; createdAt: number; u
         context.parentTaskId || null,
         context.attemptNo ?? null,
         context.clientRequestId || null,
+        schedule.executionPhase,
+        schedule.provider || null,
+        schedule.nextPollAt ? new Date(schedule.nextPollAt) : null,
+        schedule.lastUpstreamStatus || null,
     ];
+}
+
+function normalizeInitialSchedule(schedule?: GenerationTaskInitialSchedule): GenerationTaskInitialSchedule {
+    const nextPollAt = Number(schedule?.nextPollAt);
+    return {
+        executionPhase: isExecutionPhase(schedule?.executionPhase) ? schedule.executionPhase : "created",
+        provider: cleanContextText(schedule?.provider),
+        nextPollAt: Number.isFinite(nextPollAt) && nextPollAt > 0 ? Math.floor(nextPollAt) : undefined,
+        lastUpstreamStatus: cleanContextText(schedule?.lastUpstreamStatus),
+    };
 }
 
 async function cleanupStoredGenerationTasks() {
@@ -660,9 +772,11 @@ function mutateFileTasks(mutator: (tasks: StoredGenerationTaskRecord[]) => Store
 
 export function withGenerationTaskFileMutation<T>(mutator: (tasks: StoredGenerationTaskRecord[]) => Promise<{ tasks: StoredGenerationTaskRecord[]; result: T }>) {
     const run = fileMutationQueue.then(async () => {
-        const mutation = await mutator(await readFileTasks());
-        await writeJsonDataFile(TASK_FILE, mutation.tasks);
-        return mutation.result;
+        return withExclusiveFileLock(resolveServerDataPath(TASK_LOCK_FILE), async () => {
+            const mutation = await mutator(await readFileTasks());
+            await writeJsonDataFile(TASK_FILE, mutation.tasks);
+            return mutation.result;
+        });
     });
     fileMutationQueue = run.then(
         () => undefined,
@@ -684,6 +798,8 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
         parentTaskId: cleanContextText(context.parentTaskId),
         attemptNo: Number.isFinite(attempt) && attempt >= 0 ? Math.floor(attempt) : undefined,
         clientRequestId: cleanContextText(context.clientRequestId),
+        sourceNodeId: cleanContextText(context.sourceNodeId),
+        targetNodeId: cleanContextText(context.targetNodeId),
     };
 }
 
@@ -699,6 +815,8 @@ function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, n
         parentTaskId: next.parentTaskId || previous?.parentTaskId,
         attemptNo: next.attemptNo ?? previous?.attemptNo,
         clientRequestId: next.clientRequestId || previous?.clientRequestId,
+        sourceNodeId: next.sourceNodeId || previous?.sourceNodeId,
+        targetNodeId: next.targetNodeId || previous?.targetNodeId,
     };
 }
 
@@ -801,11 +919,15 @@ function mapGenerationTaskCostAggregate(row: Record<string, unknown>): Generatio
 }
 
 function isTaskType(value: unknown): value is GenerationTaskType {
-    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "agent" || value === "render";
+    return value === "text" || value === "image" || value === "video" || value === "audio" || value === "agent" || value === "render" || value === "image_process";
 }
 
 function isTaskStatus(value: unknown): value is GenerationTaskStatus {
     return value === "pending" || value === "running" || value === "success" || value === "error" || value === "paused" || value === "cancelled";
+}
+
+function normalizedTaskStatuses(values: string[] | undefined): GenerationTaskStatus[] {
+    return Array.from(new Set((values || []).filter(isTaskStatus)));
 }
 
 function isTaskSurface(value: unknown): value is NonNullable<GenerationTaskContext["surface"]> {

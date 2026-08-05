@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback } from "react";
 
 import { useCanvasStore } from "../stores/use-canvas-store";
+import { reconcileCanvasHistoryBackgroundRemovalTasks } from "../utils/canvas-active-task-binding";
 
 const CanvasAssistantPanel = dynamic(() => import("../components/canvas-assistant-panel").then((mod) => mod.CanvasAssistantPanel), { ssr: false });
 const loadAssetPickerModal = () => import("../components/asset-picker-modal").then((mod) => mod.AssetPickerModal);
@@ -44,6 +45,7 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
         setHistoryState,
         nodesRef,
         viewportRef,
+        backgroundRemovalHandledTaskIdsRef,
     } = state;
 
     const resetViewport = useCallback(() => {
@@ -81,7 +83,9 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
             historyCommitTimerRef.current = null;
         }
         applyingHistoryRef.current = true;
-        setNodes(entry.nodes);
+        const restoredNodes = reconcileCanvasHistoryBackgroundRemovalTasks(entry.nodes, nodesRef.current, backgroundRemovalHandledTaskIdsRef.current);
+        const restoredEntry = restoredNodes === entry.nodes ? entry : { ...entry, nodes: restoredNodes };
+        setNodes(restoredNodes);
         setConnections(entry.connections);
         setChatSessions(entry.chatSessions);
         setActiveChatId(entry.activeChatId);
@@ -91,7 +95,7 @@ export function useCanvasNavigationActions({ state }: { state: CanvasPageState }
         setSelectedConnectionId(null);
         setContextMenu(null);
         setTimeout(() => {
-            lastHistoryRef.current = entry;
+            lastHistoryRef.current = restoredEntry;
             applyingHistoryRef.current = false;
             setHistoryState({ canUndo: historyRef.current.past.length > 0, canRedo: historyRef.current.future.length > 0 });
         });

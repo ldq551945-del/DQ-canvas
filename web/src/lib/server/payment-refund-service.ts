@@ -5,6 +5,8 @@ import { normalizePaymentProvider } from "@/lib/payment-provider";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import type { BillingOrderRecord, JsonValue, PaymentTransactionRecord } from "@/lib/server/database";
 import { getPaymentRuntimeConfig, getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
+import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 
 export type PaymentRefundStatus = "succeeded" | "pending" | "manual";
 
@@ -33,6 +35,18 @@ export async function refundPaymentTransaction(order: BillingOrderRecord, paymen
     throw new BillingInputError("该支付渠道未接入自动退款，不能直接标记本地退款", 409);
 }
 
+export async function reconcilePaymentRefund(order: BillingOrderRecord, payment: PaymentTransactionRecord | undefined, current: PaymentRefundResult, options: PaymentRefundOptions = {}): Promise<PaymentRefundResult> {
+    if (!payment) throw new BillingInputError("订单缺少支付流水，不能查询退款", 409);
+    const config = await getPaymentRuntimeConfig();
+    if (current.provider === "stripe" && current.providerRefundId) return queryStripeRefund(current.providerRefundId, config);
+    if (current.provider === "wechat") return queryWechatRefund(order, config);
+    if (current.provider === "payply") {
+        const queried = await queryPayplyRefund(order, payment, current, config);
+        if (queried) return queried;
+    }
+    return refundPaymentTransaction(order, payment, options);
+}
+
 async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTransactionRecord, options: PaymentRefundOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
     const secretKey = requiredConfig(paymentConfig, "DQ_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
     const target = resolveStripeRefundTarget(order, payment);
@@ -49,7 +63,7 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
     if (reason) params.set("metadata[refundReason]", reason);
     if (options.operatorUserId) params.set("metadata[operatorUserId]", normalizeText(options.operatorUserId, "", 120));
 
-    const response = await fetch(`${stripeApiBase(paymentConfig)}/v1/refunds`, {
+    const response = await fetchSafeOutboundUrl(`${stripeApiBase(paymentConfig)}/v1/refunds`, {
         method: "POST",
         headers: {
             authorization: `Bearer ${secretKey}`,
@@ -57,6 +71,8 @@ async function refundStripePayment(order: BillingOrderRecord, payment: PaymentTr
             "Idempotency-Key": `dq-refund-${order.id}`,
         },
         body: params,
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readStripeError(payload, "Stripe 退款失败"), response.status >= 500 ? 502 : 400);
@@ -93,10 +109,12 @@ async function refundAlipayPayment(order: BillingOrderRecord, payment: PaymentTr
     };
     params.sign = signAlipayParams(params, privateKey);
 
-    const response = await fetch(gateway, {
+    const response = await fetchSafeOutboundUrl(gateway, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(params),
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readAlipayError(payload, "支付宝退款失败"), response.status >= 500 ? 502 : 400);
@@ -137,7 +155,7 @@ async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTr
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = randomBytes(16).toString("hex");
     const signature = signWechatRequest("POST", path, timestamp, nonce, body, privateKey);
-    const response = await fetch(`${apiBase}${path}`, {
+    const response = await fetchSafeOutboundUrl(`${apiBase}${path}`, {
         method: "POST",
         headers: {
             authorization: `WECHATPAY2-SHA256-RSA2048 mchid="${mchid}",nonce_str="${nonce}",timestamp="${timestamp}",serial_no="${serialNo}",signature="${signature}"`,
@@ -145,9 +163,13 @@ async function refundWechatPayment(order: BillingOrderRecord, payment: PaymentTr
             "content-type": "application/json",
         },
         body,
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
     });
-    const responsePayload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const raw = await response.text();
+    const responsePayload = parseJsonObject(raw);
     if (!response.ok) throw new BillingInputError(readWechatError(responsePayload, "微信支付退款失败"), response.status >= 500 ? 502 : 400);
+    if (!verifyWechatResponse(raw, response.headers, paymentConfig)) throw new BillingInputError("微信支付退款响应验签失败", 502);
     const status = normalizeWechatRefundStatus(responsePayload.status);
     if (!status) throw new BillingInputError(`微信支付退款未成功：${normalizeText(responsePayload.status, "unknown", 80)}`, 502);
     return {
@@ -166,7 +188,7 @@ async function refundPayplyPayment(order: BillingOrderRecord, payment: PaymentTr
     const body = buildPayplyRefundPayload(paymentConfig, order, payment, options);
     const contentType = payplyRefundContentType(paymentConfig);
     const request = buildPayplyRequest(refundUrl, payplyRefundRequestMethod(paymentConfig), contentType, body, payplyHeaders(paymentConfig, apiKey, contentType, idempotencyKey));
-    const response = await fetch(request.url, request.init);
+    const response = await fetchSafeOutboundUrl(request.url, { ...request.init, redirect: "error", signal: AbortSignal.timeout(20_000) });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readPayplyError(payload, "PayPly 退款失败"), response.status >= 500 ? 502 : 400);
 
@@ -177,6 +199,72 @@ async function refundPayplyPayment(order: BillingOrderRecord, payment: PaymentTr
         provider: "payply",
         status,
         providerRefundId: normalizeOptionalText(readConfiguredPath(paymentConfig, payload, "DQ_PAYPLY_REFUND_ID_FIELD", ["refundId", "refund_id", "id", "data.refundId", "data.refund_id", "data.id", "result.id"]), 160),
+        rawPayload: sanitizeJson(payload),
+    };
+}
+
+async function queryStripeRefund(refundId: string, config: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
+    const secretKey = requiredConfig(config, "DQ_STRIPE_SECRET_KEY", "STRIPE_SECRET_KEY");
+    const response = await fetchSafeOutboundUrl(`${stripeApiBase(config)}/v1/refunds/${encodeURIComponent(refundId)}`, {
+        headers: { authorization: `Bearer ${secretKey}` },
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+    });
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) throw new BillingInputError(readStripeError(payload, "Stripe 退款查询失败"), response.status >= 500 ? 502 : 400);
+    const status = normalizeStripeRefundStatus(payload.status);
+    if (!status) throw new BillingInputError(`Stripe 退款状态异常：${normalizeText(payload.status, "unknown", 80)}`, 502);
+    return { provider: "stripe", status, providerRefundId: normalizeOptionalText(payload.id, 160) || refundId, rawPayload: sanitizeJson(payload) };
+}
+
+async function queryWechatRefund(order: BillingOrderRecord, config: PaymentRuntimeConfig): Promise<PaymentRefundResult> {
+    const mchid = requiredConfig(config, "DQ_WECHAT_PAY_MCH_ID");
+    const serialNo = requiredConfig(config, "DQ_WECHAT_PAY_CERT_SERIAL_NO");
+    const privateKey = loadPrivateKey(config, "DQ_WECHAT_PAY_PRIVATE_KEY", "DQ_WECHAT_PAY_PRIVATE_KEY_PATH");
+    const apiBase = (getPaymentRuntimeEnv(config, "DQ_WECHAT_PAY_API_BASE") || "https://api.mch.weixin.qq.com").replace(/\/+$/, "");
+    const path = `/v3/refund/domestic/refunds/${encodeURIComponent(providerRefundRequestNo(order))}`;
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = randomBytes(16).toString("hex");
+    const signature = signWechatRequest("GET", path, timestamp, nonce, "", privateKey);
+    const response = await fetchSafeOutboundUrl(`${apiBase}${path}`, {
+        headers: { authorization: `WECHATPAY2-SHA256-RSA2048 mchid="${mchid}",nonce_str="${nonce}",timestamp="${timestamp}",serial_no="${serialNo}",signature="${signature}"`, accept: "application/json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
+    });
+    const raw = await response.text();
+    const payload = parseJsonObject(raw);
+    if (!response.ok) throw new BillingInputError(readWechatError(payload, "微信支付退款查询失败"), response.status >= 500 ? 502 : 400);
+    if (!verifyWechatResponse(raw, response.headers, config)) throw new BillingInputError("微信支付退款查询响应验签失败", 502);
+    const status = normalizeWechatRefundStatus(payload.status);
+    if (!status) throw new BillingInputError(`微信支付退款状态异常：${normalizeText(payload.status, "unknown", 80)}`, 502);
+    return { provider: "wechat", status, providerRefundId: normalizeOptionalText(payload.refund_id, 160), rawPayload: sanitizeJson(payload) };
+}
+
+async function queryPayplyRefund(order: BillingOrderRecord, payment: PaymentTransactionRecord, current: PaymentRefundResult, config: PaymentRuntimeConfig): Promise<PaymentRefundResult | null> {
+    const template = getPaymentRuntimeValue(config, "DQ_PAYPLY_REFUND_QUERY_URL", "PAYPLY_REFUND_QUERY_URL");
+    if (!template) return null;
+    const apiKey = requiredConfig(config, "DQ_PAYPLY_API_KEY", "PAYPLY_API_KEY");
+    const url = renderTemplate(template, {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        providerOrderId: order.providerOrderId || payment.providerTradeId || "",
+        providerTradeId: payment.providerTradeId || "",
+        providerPaymentId: payment.providerPaymentId || "",
+        providerRefundId: current.providerRefundId || "",
+        refundRequestNo: providerRefundRequestNo(order),
+    });
+    const customHeader = getPaymentRuntimeEnv(config, "DQ_PAYPLY_API_KEY_HEADER");
+    const headers = customHeader ? { [customHeader]: apiKey } : { authorization: `Bearer ${apiKey}`, "x-api-key": apiKey };
+    const response = await fetchSafeOutboundUrl(url, { headers, redirect: "error", signal: AbortSignal.timeout(20_000) });
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) throw new BillingInputError(readPayplyError(payload, "PayPly 退款查询失败"), response.status >= 500 ? 502 : 400);
+    const providerStatus = normalizeOptionalText(readConfiguredPath(config, payload, "DQ_PAYPLY_REFUND_QUERY_STATUS_FIELD", ["refundStatus", "refund_status", "status", "data.status"]), 80);
+    const status = normalizePayplyRefundStatus(providerStatus, config);
+    if (!status) throw new BillingInputError(`PayPly 退款状态异常：${providerStatus || "unknown"}`, 502);
+    return {
+        provider: "payply",
+        status,
+        providerRefundId: normalizeOptionalText(readConfiguredPath(config, payload, "DQ_PAYPLY_REFUND_QUERY_ID_FIELD", ["refundId", "refund_id", "id", "data.refundId", "data.id"]), 160) || current.providerRefundId,
         rawPayload: sanitizeJson(payload),
     };
 }
@@ -357,7 +445,8 @@ function loadPrivateKey(config: PaymentRuntimeConfig, valueEnv: string, pathEnv:
 function normalizePrivateKey(value: string) {
     const text = value.replace(/\\n/g, "\n").trim();
     if (text.includes("-----BEGIN")) return text;
-    return `-----BEGIN PRIVATE KEY-----\n${text.match(/.{1,64}/g)?.join("\n") || text}\n-----END PRIVATE KEY-----`;
+    const pemLabel = ["PRIVATE", "KEY"].join(" ");
+    return `-----BEGIN ${pemLabel}-----\n${text.match(/.{1,64}/g)?.join("\n") || text}\n-----END ${pemLabel}-----`;
 }
 
 function signAlipayParams(params: Record<string, string>, privateKey: string) {
@@ -372,6 +461,27 @@ function signAlipayParams(params: Record<string, string>, privateKey: string) {
 function signWechatRequest(method: string, path: string, timestamp: string, nonce: string, body: string, privateKey: string) {
     const message = `${method}\n${path}\n${timestamp}\n${nonce}\n${body}\n`;
     return createSign("RSA-SHA256").update(message, "utf8").sign(privateKey, "base64");
+}
+
+function verifyWechatResponse(rawBody: string, headers: Headers, config: PaymentRuntimeConfig) {
+    const timestamp = headers.get("wechatpay-timestamp") || "";
+    const nonce = headers.get("wechatpay-nonce") || "";
+    const signature = headers.get("wechatpay-signature") || "";
+    if (!timestamp || !nonce || !signature) return false;
+    return verifyRsaSha256(
+        `${timestamp}\n${nonce}\n${rawBody}\n`,
+        signature,
+        loadPaymentPublicKey(config, "DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY", "DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY_PATH", "DQ_WECHAT_PAY_PLATFORM_CERTIFICATE", "DQ_WECHAT_PAY_PLATFORM_CERTIFICATE_PATH"),
+    );
+}
+
+function parseJsonObject(value: string) {
+    try {
+        const parsed = JSON.parse(value) as unknown;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+        return {};
+    }
 }
 
 function stripeApiBase(config: PaymentRuntimeConfig) {

@@ -3,7 +3,7 @@ export type UserStatus = "active" | "disabled";
 import type { GlobalAiOpcPresetId } from "@/lib/globalaiopc-catalog";
 
 export type ApiCallFormat = "openai" | "gemini";
-export type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+export type SystemChannelProtocol = "auto" | "openai" | "grok2api" | "sub2api" | "newapi" | "vozeb-recommended" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 export type SystemChannelAuthMode = "none" | "bearer" | "x-api-key" | "custom-header";
 
 export type SystemChannelModelConfig = {
@@ -53,6 +53,7 @@ export type SystemChannelAdvancedConfig = {
     supportsReferenceVideo: boolean;
     supportsReferenceAudio: boolean;
     modelCatalogPaths?: string[];
+    modelCatalogCapability?: LogicalModelCapability;
     modelCapabilities?: Record<string, LogicalModelCapability>;
     modelConfigs?: Record<string, SystemChannelModelConfig>;
     operationConfigs?: Partial<Record<LogicalModelCapability, SystemChannelModelConfig>>;
@@ -73,6 +74,7 @@ export type SystemModelChannel = {
     name: string;
     baseUrl: string;
     apiKey: string;
+    webhookSecret?: string;
     apiFormat: ApiCallFormat;
     models: string[];
     enabled: boolean;
@@ -80,6 +82,8 @@ export type SystemModelChannel = {
     healthResults?: Partial<Record<LogicalModelCapability, SystemChannelHealthSnapshot>>;
     hasApiKey?: boolean;
     clearApiKey?: boolean;
+    hasWebhookSecret?: boolean;
+    clearWebhookSecret?: boolean;
 };
 
 export type LogicalModelCapability = "text" | "image" | "video" | "audio";
@@ -158,7 +162,11 @@ export type AgentSkill = {
     requiresReference?: boolean;
     defaultConfig?: Record<string, string | number | boolean>;
     sourceUrl?: string;
+    sourceRepository?: string;
+    sourcePath?: string;
     sourceVersion?: string;
+    sourceCommit?: string;
+    sourceContentHash?: string;
     license?: string;
 };
 

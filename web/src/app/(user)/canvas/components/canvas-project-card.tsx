@@ -5,6 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { App, Button, Input } from "antd";
 import { useState } from "react";
 
+import { LazyMediaImage } from "@/components/media/lazy-media-image";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
+import { imagePreviewUrl } from "@/lib/media-image-url";
 import { useCanvasStore, type CanvasProjectSummary } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { exportCanvasProjects } from "../utils/canvas-export";
@@ -49,6 +52,13 @@ export function CanvasProjectCard({ project }: { project: CanvasProjectSummary }
             className="group flex min-h-0 cursor-pointer flex-col justify-between rounded-lg border border-border bg-card p-2.5 text-card-foreground transition hover:border-foreground/20 hover:bg-accent/35 sm:min-h-44 sm:p-5"
             onClick={() => !editing && open()}
         >
+            {project.preview ? (
+                project.preview.kind === "image" ? (
+                    <LazyMediaImage src={imagePreviewUrl(project.preview.url, 640)} alt={`${project.title} 预览`} containerClassName="mb-3 aspect-video w-full rounded-md sm:mb-4" imageClassName="size-full object-cover group-hover:scale-[1.015]" />
+                ) : (
+                    <LazyMediaVideo src={project.preview.url} label={`${project.title} 视频预览`} containerClassName="mb-3 aspect-video w-full rounded-md sm:mb-4" videoClassName="size-full object-cover group-hover:scale-[1.015]" />
+                )
+            ) : null}
             <div className="flex items-start gap-3">
                 <input
                     type="checkbox"

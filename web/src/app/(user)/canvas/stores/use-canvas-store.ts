@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { createClientSessionEpoch, type ClientSessionStamp } from "@/lib/client-session-epoch";
-import type { CanvasProject, CanvasProjectSummary, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary, CanvasProjectSummaryPage, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
 import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { createCanvasProject, deleteCanvasProjects as deleteCanvasProjectsRequest, getCanvasProject, listCanvasProjectSummaries, saveCanvasProject } from "@/services/api/canvas-projects";
 import { useUserStore } from "@/stores/use-user-store";
@@ -15,8 +15,13 @@ type CanvasStore = {
     hydratedUserId: string;
     syncError?: string;
     summaries: CanvasProjectSummary[];
+    summaryTotal: number;
+    summaryPage: number;
+    summaryPageSize: number;
+    summaryLoadingMore: boolean;
     projects: CanvasProject[];
     hydrate: (force?: boolean) => Promise<void>;
+    loadMore: () => Promise<void>;
     loadProject: (id: string, force?: boolean) => Promise<CanvasProject>;
     createProject: (title?: string) => Promise<string>;
     importProject: (project: Partial<CanvasProject>, sourceHandoffId?: string) => Promise<string>;
@@ -33,37 +38,75 @@ const projectRequests = new Map<string, Promise<CanvasProject>>();
 const sessionEpoch = createClientSessionEpoch(() => useUserStore.getState().user?.id || "");
 let hydrateRequestId = 0;
 let hydrateRequest: (ClientSessionStamp & { requestId: number; promise: Promise<void> }) | null = null;
+const SUMMARY_PAGE_SIZE = 12;
 
 export const useCanvasStore = create<CanvasStore>((set, get) => ({
     hydrated: false,
     hydratedUserId: "",
     summaries: [],
+    summaryTotal: 0,
+    summaryPage: 0,
+    summaryPageSize: SUMMARY_PAGE_SIZE,
+    summaryLoadingMore: false,
     projects: [],
     hydrate: async (force = false) => {
         const userId = useUserStore.getState().user?.id || "";
         if (!userId) {
             invalidateSession();
-            set({ hydrated: true, hydratedUserId: "", summaries: [], projects: [], syncError: undefined });
+            set({ hydrated: true, hydratedUserId: "", summaries: [], summaryTotal: 0, summaryPage: 0, summaryPageSize: SUMMARY_PAGE_SIZE, summaryLoadingMore: false, projects: [], syncError: undefined });
             return;
         }
         if (!force && get().hydrated && get().hydratedUserId === userId) return;
         const session = sessionEpoch.capture();
         if (!force && hydrateRequest?.userId === session.userId && hydrateRequest.epoch === session.epoch) return hydrateRequest.promise;
         const requestId = ++hydrateRequestId;
-        set((state) => ({ hydrated: false, hydratedUserId: userId, summaries: state.hydratedUserId === userId ? state.summaries : [], projects: state.hydratedUserId === userId ? state.projects : [], syncError: undefined }));
-        const promise = listCanvasProjectSummaries()
-            .then((summaries) => {
+        set((state) => ({
+            hydrated: false,
+            hydratedUserId: userId,
+            summaries: state.hydratedUserId === userId ? state.summaries : [],
+            summaryTotal: state.hydratedUserId === userId ? state.summaryTotal : 0,
+            summaryPage: state.hydratedUserId === userId ? state.summaryPage : 0,
+            summaryLoadingMore: false,
+            projects: state.hydratedUserId === userId ? state.projects : [],
+            syncError: undefined,
+        }));
+        const promise = listCanvasProjectSummaries({ page: 1, pageSize: SUMMARY_PAGE_SIZE })
+            .then((result) => {
                 if (!isActiveHydrate(session, requestId)) return;
-                set({ summaries, hydrated: true, hydratedUserId: userId });
+                const pageResult = normalizeSummaryPage(result);
+                set({ summaries: pageResult.items, summaryTotal: pageResult.total, summaryPage: pageResult.page, summaryPageSize: pageResult.pageSize, hydrated: true, hydratedUserId: userId });
             })
             .catch((error) => {
-                if (isActiveHydrate(session, requestId)) set({ summaries: [], hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "画布项目加载失败" });
+                if (isActiveHydrate(session, requestId)) set({ summaries: [], summaryTotal: 0, summaryPage: 0, hydrated: false, hydratedUserId: userId, syncError: error instanceof Error ? error.message : "画布项目加载失败" });
             })
             .finally(() => {
                 if (hydrateRequest?.requestId === requestId) hydrateRequest = null;
             });
         hydrateRequest = { ...session, requestId, promise };
         return promise;
+    },
+    loadMore: async () => {
+        const session = requireSession();
+        const state = get();
+        if (!state.hydrated || state.summaryLoadingMore || state.summaries.length >= state.summaryTotal) return;
+        const page = state.summaryPage + 1;
+        set({ summaryLoadingMore: true, syncError: undefined });
+        try {
+            const result = normalizeSummaryPage(await listCanvasProjectSummaries({ page, pageSize: state.summaryPageSize }));
+            assertCurrent(session);
+            set((current) => {
+                const existing = new Set(current.summaries.map((item) => item.id));
+                return {
+                    summaries: [...current.summaries, ...result.items.filter((item) => !existing.has(item.id))],
+                    summaryTotal: result.total,
+                    summaryPage: result.page,
+                    summaryPageSize: result.pageSize,
+                    summaryLoadingMore: false,
+                };
+            });
+        } catch (error) {
+            if (sessionEpoch.isCurrent(session)) set({ summaryLoadingMore: false, syncError: error instanceof Error ? error.message : "更多画布加载失败" });
+        }
     },
     loadProject: async (id, force = false) => {
         const session = requireSession();
@@ -89,14 +132,24 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         const session = requireSession();
         const project = await createCanvasProject({ title });
         assertCurrent(session);
-        set((state) => ({ projects: [project, ...state.projects.filter((item) => item.id !== project.id)], summaries: upsertSummary(state.summaries, project), syncError: undefined }));
+        set((state) => ({
+            projects: [project, ...state.projects.filter((item) => item.id !== project.id)],
+            summaries: upsertSummary(state.summaries, project),
+            summaryTotal: state.summaries.some((item) => item.id === project.id) ? state.summaryTotal : state.summaryTotal + 1,
+            syncError: undefined,
+        }));
         return project.id;
     },
     importProject: async (project, sourceHandoffId) => {
         const session = requireSession();
         const created = await createCanvasProject({ title: project.title || "导入画布", sourceHandoffId, project });
         assertCurrent(session);
-        set((state) => ({ projects: [created, ...state.projects.filter((item) => item.id !== created.id)], summaries: upsertSummary(state.summaries, created), syncError: undefined }));
+        set((state) => ({
+            projects: [created, ...state.projects.filter((item) => item.id !== created.id)],
+            summaries: upsertSummary(state.summaries, created),
+            summaryTotal: state.summaryTotal + (state.summaries.some((item) => item.id === created.id) ? 0 : 1),
+            syncError: undefined,
+        }));
         return created.id;
     },
     renameProject: (id, title) => {
@@ -121,12 +174,17 @@ export const useCanvasStore = create<CanvasStore>((set, get) => ({
         await deleteCanvasProjectsRequest(uniqueIds);
         if (!sessionEpoch.isCurrent(session)) return;
         uniqueIds.forEach((id) => latestProjectTimes.delete(sessionEpoch.key(session, id)));
-        set((state) => ({ projects: state.projects.filter((project) => !uniqueIds.includes(project.id)), summaries: state.summaries.filter((project) => !uniqueIds.includes(project.id)), syncError: undefined }));
+        set((state) => ({
+            projects: state.projects.filter((project) => !uniqueIds.includes(project.id)),
+            summaries: state.summaries.filter((project) => !uniqueIds.includes(project.id)),
+            summaryTotal: Math.max(0, state.summaryTotal - state.summaries.filter((project) => uniqueIds.includes(project.id)).length),
+            syncError: undefined,
+        }));
     },
     updateProject: (id, patch) => mutateProject(id, (project) => ({ ...project, ...patch })),
     reset: () => {
         invalidateSession();
-        set({ hydrated: false, hydratedUserId: "", summaries: [], projects: [], syncError: undefined });
+        set({ hydrated: false, hydratedUserId: "", summaries: [], summaryTotal: 0, summaryPage: 0, summaryPageSize: SUMMARY_PAGE_SIZE, summaryLoadingMore: false, projects: [], syncError: undefined });
     },
 }));
 
@@ -217,4 +275,9 @@ function invalidateSession() {
 function upsertSummary(summaries: CanvasProjectSummary[], project: CanvasProject) {
     const summary = summarizeCanvasProjectRecord(project);
     return [summary, ...summaries.filter((item) => item.id !== project.id)].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+}
+
+function normalizeSummaryPage(result: CanvasProjectSummaryPage | CanvasProjectSummary[]): CanvasProjectSummaryPage {
+    if (Array.isArray(result)) return { items: result, total: result.length, page: 1, pageSize: Math.max(result.length, SUMMARY_PAGE_SIZE) };
+    return result;
 }

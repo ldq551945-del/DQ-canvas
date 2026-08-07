@@ -113,7 +113,7 @@ export async function reconcileBillingStatement(input: ReconcileBillingStatement
             const result = await repos.billing.listOrders({ keyword: identifier, page: 1, pageSize: 10 });
             const exact = result.items.find((order) => localOrderMatchesStatement(order, row));
             if (exact) return exact;
-            const payment = await repos.billing.getPaymentByProviderIdentifier(identifier);
+            const payment = await repos.billing.getPaymentByProviderIdentifier(provider, identifier);
             if (payment) return repos.billing.getOrderById(payment.orderId);
         }
         return undefined;

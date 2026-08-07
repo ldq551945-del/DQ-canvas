@@ -17,9 +17,22 @@ export type CanvasProject = {
     viewport: ViewportTransform;
 };
 
+export type CanvasProjectMediaPreview = {
+    kind: "image" | "video";
+    url: string;
+};
+
 export type CanvasProjectSummary = Pick<CanvasProject, "id" | "sourceHandoffId" | "creativeConversationId" | "title" | "createdAt" | "updatedAt"> & {
     nodeCount: number;
     connectionCount: number;
+    preview?: CanvasProjectMediaPreview;
+};
+
+export type CanvasProjectSummaryPage = {
+    items: CanvasProjectSummary[];
+    total: number;
+    page: number;
+    pageSize: number;
 };
 
 export type CreateCanvasProjectInput = {

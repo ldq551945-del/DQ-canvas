@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "antd";
 import { Settings2 } from "lucide-react";
@@ -25,12 +25,21 @@ export function CanvasSettingsPopoverShell({ label, children, buttonClassName, d
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
+    const panelId = useId().replace(/:/g, "");
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-    const updateOpen = (nextOpen: boolean) => {
-        setOpen(nextOpen);
-        onOpenChange?.(nextOpen);
-    };
+    const closePopover = useCallback(() => {
+        setOpen(false);
+        onOpenChange?.(false);
+        window.requestAnimationFrame(() => buttonRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
+    }, [onOpenChange]);
+    const updateOpen = useCallback(
+        (nextOpen: boolean) => {
+            setOpen(nextOpen);
+            onOpenChange?.(nextOpen);
+        },
+        [onOpenChange],
+    );
 
     useEffect(() => {
         if (!open) return;
@@ -40,32 +49,48 @@ export function CanvasSettingsPopoverShell({ label, children, buttonClassName, d
             if (!(target instanceof Node)) return;
             if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
             if (target instanceof Element && target.closest(".ant-select-dropdown")) return;
-            if (document.activeElement instanceof HTMLElement && panelRef.current?.contains(document.activeElement)) document.activeElement.blur();
-            setOpen(false);
-            onOpenChange?.(false);
+            closePopover();
+        };
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            closePopover();
         };
 
         syncPosition();
         window.addEventListener("resize", syncPosition);
         window.addEventListener("scroll", syncPosition, true);
         window.addEventListener("pointerdown", closeOnOutsidePointer, true);
+        window.addEventListener("keydown", closeOnEscape, true);
         return () => {
             window.removeEventListener("resize", syncPosition);
             window.removeEventListener("scroll", syncPosition, true);
             window.removeEventListener("pointerdown", closeOnOutsidePointer, true);
+            window.removeEventListener("keydown", closeOnEscape, true);
         };
-    }, [onOpenChange, open]);
+    }, [closePopover, open]);
 
     return (
         <>
             <span ref={buttonRef} className="inline-flex min-w-0">
-                <Button size="small" type="text" className={buttonClassName || defaultButtonClassName} style={{ background: theme.node.fill, color: theme.node.text }} icon={icon || <Settings2 className="size-3.5" />} onClick={() => updateOpen(!open)}>
+                <Button
+                    size="small"
+                    type="text"
+                    className={buttonClassName || defaultButtonClassName}
+                    style={{ background: theme.node.fill, color: theme.node.text }}
+                    icon={icon || <Settings2 className="size-3.5" />}
+                    onClick={() => updateOpen(!open)}
+                    aria-expanded={open}
+                    aria-haspopup="dialog"
+                    aria-controls={open ? panelId : undefined}
+                >
                     <span className="truncate">{label}</span>
                 </Button>
             </span>
             {open && buttonRect
                 ? createPortal(
-                      <SettingsPanel buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme}>
+                      <SettingsPanel id={panelId} ariaLabel={typeof label === "string" ? label : "画布设置"} buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme}>
                           {children(theme)}
                       </SettingsPanel>,
                       document.body,
@@ -75,7 +100,28 @@ export function CanvasSettingsPopoverShell({ label, children, buttonClassName, d
     );
 }
 
-function SettingsPanel({ buttonRect, panelRef, placement, theme, children }: { buttonRect: DOMRect; panelRef: React.RefObject<HTMLDivElement | null>; placement: CanvasSettingsPopoverPlacement; theme: CanvasTheme; children: ReactNode }) {
+function SettingsPanel({
+    id,
+    ariaLabel,
+    buttonRect,
+    panelRef,
+    placement,
+    theme,
+    children,
+}: {
+    id: string;
+    ariaLabel: string;
+    buttonRect: DOMRect;
+    panelRef: React.RefObject<HTMLDivElement | null>;
+    placement: CanvasSettingsPopoverPlacement;
+    theme: CanvasTheme;
+    children: ReactNode;
+}) {
+    useEffect(() => {
+        const focusFrame = window.requestAnimationFrame(() => panelRef.current?.focus());
+        return () => window.cancelAnimationFrame(focusFrame);
+    }, [panelRef]);
+
     const gap = 8;
     const margin = 12;
     const width = Math.min(340, window.innerWidth - margin * 2);
@@ -103,7 +149,18 @@ function SettingsPanel({ buttonRect, panelRef, placement, theme, children }: { b
     } as const;
 
     return (
-        <div ref={panelRef} className="canvas-image-settings-popover" style={style} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+        <div
+            id={id}
+            ref={panelRef}
+            role="dialog"
+            aria-label={ariaLabel}
+            tabIndex={-1}
+            className="canvas-image-settings-popover outline-none focus-visible:ring-2 focus-visible:ring-sky-500/60"
+            style={style}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+        >
             {children}
         </div>
     );

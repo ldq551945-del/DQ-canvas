@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import { BillingInputError } from "@/lib/server/billing-errors";
+import { BillingInputError, isBillingInputError } from "@/lib/server/billing-errors";
 import { completeBillingOrderPayment } from "@/lib/server/billing-service";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, type JsonValue } from "@/lib/server/database";
 import { getPaymentRuntimeConfig } from "@/lib/server/payment-config-store";
+import { verifyPaymentTransaction } from "@/lib/server/payment-transaction-verification";
 import { deterministicEventId, normalizeProvider, parseFallbackEvent, resolveWebhookAdapter, sanitizeJson, type ParsedPaymentWebhook } from "./payment-webhook-adapters";
 
 type ProcessPaymentWebhookResult = {
@@ -14,6 +15,7 @@ type ProcessPaymentWebhookResult = {
     duplicate?: boolean;
     processing?: boolean;
     ignored?: boolean;
+    pendingVerification?: boolean;
     orderId?: string;
     orderNo?: string;
     orderStatus?: string;
@@ -49,7 +51,12 @@ export async function processPaymentWebhook(input: { provider: string; rawBody: 
     }
 
     const orderId = await resolveWebhookOrderId(parsed);
-    const event = await recordWebhookEvent(provider, { ...parsed, orderId });
+    const recorded = await recordWebhookEvent(provider, { ...parsed, orderId });
+    const event = recorded.event;
+    if (recorded.conflict) {
+        await createPostgresRepositories().billing.markProviderEventConflict(event.id);
+        throw new BillingInputError("支付回调事件编号已对应不同载荷", 409);
+    }
     if (event.processedAt) {
         return { received: true, provider, eventId: parsed.eventId, eventType: parsed.eventType, duplicate: true, orderId, orderNo: parsed.orderNo };
     }
@@ -65,16 +72,36 @@ export async function processPaymentWebhook(input: { provider: string; rawBody: 
     }
 
     try {
+        const order = await createPostgresRepositories().billing.getOrderById(orderId);
+        if (!order) {
+            await markWebhookEventProcessed(event.id, "payment order not found");
+            return { received: true, provider, eventId: parsed.eventId, eventType: parsed.eventType, ignored: true, orderId, orderNo: parsed.orderNo };
+        }
+        const verification = await verifyPaymentTransaction(provider, parsed, order);
+        if (!verification.verified) {
+            await releaseWebhookEvent(event.id, `pending_verification: ${verification.reason}`);
+            return {
+                received: true,
+                provider,
+                eventId: parsed.eventId,
+                eventType: parsed.eventType,
+                pendingVerification: true,
+                orderId,
+                orderNo: order.orderNo,
+            };
+        }
+        const payment = verification.payment;
         const result = await completeBillingOrderPayment({
             orderId,
             provider,
             channel: parsed.eventType,
-            providerTradeId: parsed.providerTradeId,
-            providerPaymentId: parsed.providerPaymentId,
-            amountCents: parsed.amountCents,
-            currency: parsed.currency,
-            rawPayload: parsed.payload,
-            paidAt: parsed.paidAt,
+            providerTradeId: payment.providerTradeId,
+            providerPaymentId: payment.providerPaymentId,
+            amountCents: payment.amountCents,
+            currency: payment.currency,
+            rawPayload: payment.rawPayload,
+            paidAt: payment.paidAt,
+            verificationSource: "provider",
         });
         await markWebhookEventProcessed(event.id);
         return {
@@ -88,6 +115,10 @@ export async function processPaymentWebhook(input: { provider: string; rawBody: 
             pointsGranted: result.pointsGranted,
         };
     } catch (error) {
+        if (isBillingInputError(error) && error.status === 409) {
+            await markWebhookEventProcessed(event.id, error.message);
+            throw error;
+        }
         await releaseWebhookEvent(event.id, error instanceof Error ? error.message : "payment complete failed");
         throw error;
     }

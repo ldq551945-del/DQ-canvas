@@ -30,6 +30,14 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
         onClose();
     }, [onClose, pathname]);
 
+    useEffect(() => {
+        if (!open) return;
+        const focusFrame = window.requestAnimationFrame(() => {
+            document.querySelector<HTMLElement>(".mobile-nav-drawer[role='dialog'] .ant-drawer-close")?.focus();
+        });
+        return () => window.cancelAnimationFrame(focusFrame);
+    }, [open]);
+
     return (
         <Drawer
             title={
@@ -42,7 +50,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
             size={288}
             open={open}
             onClose={onClose}
-            className="lg:hidden"
+            className="mobile-nav-drawer lg:hidden"
             styles={{ header: { borderBottomColor: "var(--border)", minHeight: 60, padding: "12px 16px" }, body: { padding: "12px 14px 18px" } }}
         >
             {navigationGroups.map((group, groupIndex) => (

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, CheckCircle2, Circle, Database, RefreshCw, ServerCrash, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Circle, Database, KeyRound, RefreshCw, ServerCrash, ShieldCheck, Sparkles } from "lucide-react";
 
 import { AuthForm } from "@/components/auth/auth-form";
 import { SiteLogo } from "@/components/layout/site-logo";
@@ -26,11 +26,13 @@ const steps = [
 export function InstallWizard({ install }: { install: InstallStatus }) {
     const [activeStep, setActiveStep] = useState<InstallStepId>("intro");
     const [currentInstall, setCurrentInstall] = useState(install);
+    const [installToken, setInstallToken] = useState("");
     const [maintenanceToken, setMaintenanceToken] = useState("");
+    const [workerToken, setWorkerToken] = useState("");
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const databaseReady = currentInstall.database.healthy && currentInstall.database.schemaReady;
     const schemaPending = currentInstall.database.healthy && !currentInstall.database.schemaReady;
-    const runtimeReady = databaseReady && currentInstall.security.encryptionReady;
+    const runtimeReady = databaseReady && currentInstall.security.encryptionReady && (currentInstall.ready || currentInstall.security.installTokenReady);
     const status = useMemo(() => installStatusView(currentInstall), [currentInstall]);
 
     useEffect(() => {
@@ -102,15 +104,19 @@ export function InstallWizard({ install }: { install: InstallStatus }) {
                     {activeStep === "database" ? (
                         <DatabaseStep
                             install={currentInstall}
+                            installToken={installToken}
                             maintenanceToken={maintenanceToken}
+                            workerToken={workerToken}
                             runtimeReady={runtimeReady}
                             onInstallChange={setCurrentInstall}
+                            onInstallTokenChange={setInstallToken}
                             onMaintenanceTokenChange={setMaintenanceToken}
+                            onWorkerTokenChange={setWorkerToken}
                             onPrev={() => setActiveStep("intro")}
                             onNext={() => setActiveStep("admin")}
                         />
                     ) : null}
-                    {activeStep === "admin" ? <AdminStep install={currentInstall} maintenanceToken={maintenanceToken} runtimeReady={runtimeReady} onMaintenanceTokenChange={setMaintenanceToken} onPrev={() => setActiveStep("database")} /> : null}
+                    {activeStep === "admin" ? <AdminStep install={currentInstall} installToken={installToken} runtimeReady={runtimeReady} onInstallTokenChange={setInstallToken} onPrev={() => setActiveStep("database")} /> : null}
                 </div>
             </section>
         </div>
@@ -124,7 +130,7 @@ function IntroStep({ onNext }: { onNext: () => void }) {
 
             <div className="mt-7 overflow-hidden rounded-lg border border-slate-200/80 bg-white/75 shadow-sm">
                 <ProcessRow index="01" title="准备 PostgreSQL" text="本机使用 localhost；Docker 内置数据库使用 postgres；宝塔宿主机数据库使用 127.0.0.1；云数据库使用服务商连接地址。" />
-                <ProcessRow index="02" title="写入部署配置" text="安装页不会保存数据库密码。复制的环境变量包含加密密钥与维护令牌，Compose 模板同时包含 App 和生成 Worker。" />
+                <ProcessRow index="02" title="写入部署配置" text="安装页不会保存数据库密码。复制的环境变量包含加密密钥、维护令牌和独立 Worker 令牌，Compose 模板只把 Worker 令牌交给生成 Worker。" />
                 <ProcessRow index="03" title="让配置生效并初始化" text="根据所选部署方式执行页面给出的重启命令，等待服务恢复后刷新检查；连接成功后手动初始化表结构，再创建管理员。" last />
             </div>
 
@@ -141,31 +147,43 @@ function IntroStep({ onNext }: { onNext: () => void }) {
 
 function DatabaseStep({
     install,
+    installToken,
     maintenanceToken,
+    workerToken,
     runtimeReady,
     onInstallChange,
+    onInstallTokenChange,
     onMaintenanceTokenChange,
+    onWorkerTokenChange,
     onPrev,
     onNext,
 }: {
     install: InstallStatus;
+    installToken: string;
     maintenanceToken: string;
+    workerToken: string;
     runtimeReady: boolean;
     onInstallChange: (install: InstallStatus) => void;
+    onInstallTokenChange: (token: string) => void;
     onMaintenanceTokenChange: (token: string) => void;
+    onWorkerTokenChange: (token: string) => void;
     onPrev: () => void;
     onNext: () => void;
 }) {
     const [initializing, setInitializing] = useState(false);
     const [initializeError, setInitializeError] = useState("");
-    const canInitialize = install.database.configured && install.database.healthy && !install.database.schemaReady && install.security.encryptionReady;
+    const canInitialize = install.database.configured && install.database.healthy && !install.database.schemaReady && install.security.encryptionReady && install.security.installTokenReady && installToken.trim().length >= 32;
     const schemaPending = install.database.healthy && !install.database.schemaReady;
 
     const initializeDatabase = async () => {
         setInitializing(true);
         setInitializeError("");
         try {
-            const response = await fetch("/api/install/initialize", { method: "POST", headers: maintenanceToken.trim() ? { Authorization: `Bearer ${maintenanceToken.trim()}` } : undefined });
+            const response = await fetch("/api/install/initialize", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ installToken: installToken.trim() }),
+            });
             const payload = (await response.json().catch(() => ({}))) as { data?: { install?: InstallStatus }; msg?: string };
             if (!response.ok || !payload.data?.install) throw new Error(payload.msg || "数据库初始化失败");
             onInstallChange(payload.data.install);
@@ -181,7 +199,14 @@ function DatabaseStep({
             <div className="min-w-0 p-5 sm:p-8">
                 <StepHeader step="步骤 2 / 3" title="配置并初始化数据库" description="填写数据库信息后复制配置，写入服务器环境变量并重启 Web 服务。状态检查只验证连接；确认无误后由你显式初始化表结构。" />
                 <div className="mt-6">
-                    <DatabaseConfigBuilder maintenanceToken={maintenanceToken} onMaintenanceTokenChange={onMaintenanceTokenChange} />
+                    <DatabaseConfigBuilder
+                        installToken={installToken}
+                        maintenanceToken={maintenanceToken}
+                        workerToken={workerToken}
+                        onInstallTokenChange={onInstallTokenChange}
+                        onMaintenanceTokenChange={onMaintenanceTokenChange}
+                        onWorkerTokenChange={onWorkerTokenChange}
+                    />
                 </div>
             </div>
 
@@ -203,12 +228,20 @@ function DatabaseStep({
                     <p className="mt-2 text-xs leading-5">{install.security.message}</p>
                 </div>
 
+                <div className={`mt-3 rounded-lg border p-4 text-sm ${install.security.installTokenReady ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
+                    <div className="flex items-center gap-2 font-semibold">
+                        <KeyRound className="size-4" />
+                        一次性安装认证
+                    </div>
+                    <p className="mt-2 text-xs leading-5">{install.security.installTokenMessage}</p>
+                </div>
+
                 <div className="mt-5 border-l-2 border-slate-300 pl-4">
                     <div className="text-sm font-semibold text-slate-900">配置生效后的操作</div>
                     <ol className="mt-2 space-y-2 text-xs leading-5 text-slate-500">
                         <li>1. 按左侧当前部署方式的命令重新启动应用。</li>
                         <li>2. 等待 10-30 秒，再点击下方“刷新检查”。</li>
-                        <li>3. 确认上方 Maintenance Token 与环境变量中的 DQ_MAINTENANCE_TOKEN 一致后，点击“初始化表结构”。</li>
+                        <li>3. 确认上方 Install Token 与环境变量中的 DQ_INSTALL_TOKEN 一致后，点击“初始化表结构”。</li>
                         <li>4. 初始化成功后再进入下一步创建管理员。</li>
                     </ol>
                 </div>
@@ -239,7 +272,7 @@ function DatabaseStep({
     );
 }
 
-function AdminStep({ install, maintenanceToken, runtimeReady, onMaintenanceTokenChange, onPrev }: { install: InstallStatus; maintenanceToken: string; runtimeReady: boolean; onMaintenanceTokenChange: (token: string) => void; onPrev: () => void }) {
+function AdminStep({ install, installToken, runtimeReady, onInstallTokenChange, onPrev }: { install: InstallStatus; installToken: string; runtimeReady: boolean; onInstallTokenChange: (token: string) => void; onPrev: () => void }) {
     if (!runtimeReady) {
         return (
             <section className="p-5 sm:p-8">
@@ -255,7 +288,7 @@ function AdminStep({ install, maintenanceToken, runtimeReady, onMaintenanceToken
     if (install.ready) {
         return (
             <section className="p-5 sm:p-8">
-                <StepHeader step="步骤 3 / 3" title="管理员账号已创建" description="站点已经完成初始化，可以进入后台继续配置模型渠道、套餐权益和支付渠道。" />
+                <StepHeader step="步骤 3 / 3" title="管理员账号已创建" description="站点已经完成初始化。现在可从 App 环境变量删除 DQ_INSTALL_TOKEN 并重启，日常维护和 Worker 不受影响。" />
                 <Link href="/login?next=/admin" className={`mt-6 ${primaryButtonClass}`}>
                     登录后台
                     <ArrowRight className="size-4" />
@@ -267,7 +300,7 @@ function AdminStep({ install, maintenanceToken, runtimeReady, onMaintenanceToken
     return (
         <section className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_300px]">
             <div className="min-w-0 bg-white/40">
-                <AuthForm mode="register" nextPath="/admin" registrationEnabled emailRegistrationEnabled={false} firstUser bootstrapToken={maintenanceToken} variant="embedded" className="!border-0 !bg-transparent !shadow-none" />
+                <AuthForm mode="register" nextPath="/admin" registrationEnabled emailRegistrationEnabled={false} firstUser installToken={installToken} variant="embedded" className="!border-0 !bg-transparent !shadow-none" />
             </div>
             <aside className="border-t border-slate-200/70 bg-slate-50/70 p-5 xl:border-l xl:border-t-0">
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 shadow-sm">
@@ -278,16 +311,16 @@ function AdminStep({ install, maintenanceToken, runtimeReady, onMaintenanceToken
                     <p className="mt-2 text-xs leading-5">创建成功后会直接进入后台。后续普通用户注册会按后台注册策略控制。</p>
                 </div>
                 <label className="mt-5 block space-y-1.5">
-                    <span className="text-xs font-medium text-slate-600">Maintenance Token</span>
+                    <span className="text-xs font-medium text-slate-600">Install Token</span>
                     <input
                         type="password"
-                        value={maintenanceToken}
-                        onChange={(event) => onMaintenanceTokenChange(event.target.value)}
-                        placeholder="粘贴环境变量中的 DQ_MAINTENANCE_TOKEN"
+                        value={installToken}
+                        onChange={(event) => onInstallTokenChange(event.target.value)}
+                        placeholder="粘贴环境变量中的 DQ_INSTALL_TOKEN"
                         autoComplete="off"
                         className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 font-mono text-xs text-slate-900 outline-none transition focus:border-slate-950 focus:ring-4 focus:ring-slate-950/10"
                     />
-                    <span className="block text-xs leading-5 text-slate-500">首个管理员仅接受与服务器环境变量匹配的维护令牌；页面不会读取或回显服务器令牌。</span>
+                    <span className="block text-xs leading-5 text-slate-500">首个管理员仅接受与服务器环境变量匹配的一次性安装令牌；页面不会读取或回显服务器令牌。</span>
                 </label>
                 <button type="button" onClick={onPrev} className={`mt-5 ${ghostButtonClass}`}>
                     <ArrowLeft className="size-4" />

@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import type { PublicWorkPublication } from "@/services/api/work-publications";
 
 type PublicWorkAsset = PublicWorkPublication["assets"][number];
@@ -42,7 +43,7 @@ export function PublicWorkMediaBrowser({ assets, title, compact = false }: { ass
                         {asset.mediaType === "image" ? (
                             <LazyMediaImage src={imagePreviewUrl(asset.url, 256)} alt="" containerClassName="size-full min-h-0" imageClassName="size-full object-cover" />
                         ) : asset.mediaType === "video" ? (
-                            <video src={asset.url} muted playsInline preload="metadata" className="size-full object-cover" aria-hidden="true" />
+                            <LazyMediaVideo src={asset.url} label={`${title} 视频 ${index + 1}`} containerClassName="size-full" videoClassName="size-full object-cover" />
                         ) : null}
                         <span className="absolute bottom-1 right-1 grid size-4 place-items-center rounded bg-black/65 text-white" aria-hidden="true">
                             {asset.mediaType === "image" ? <ImageIcon className="size-2.5" /> : <Film className="size-2.5" />}

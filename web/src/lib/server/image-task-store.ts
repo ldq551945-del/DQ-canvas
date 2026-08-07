@@ -54,6 +54,7 @@ export type ImageTask = GenerationTaskContext & {
     upstream?: { id: string; mediaBaseUrl: string; pollBaseUrl: string; explicitPollUrl?: string };
     billing?: { pointsCost: number; pointsRecordId?: string; refunded: boolean };
     error?: string;
+    retryable?: boolean;
     pointsRemaining?: number;
     candidateConfigs?: ImageTaskConfig[];
     attempts?: GenerationAttempt[];
@@ -85,8 +86,13 @@ export function countActiveImageTasksForUser(userId: string) {
     return countActiveStoredGenerationTasks(userId, "image", TASK_STALE_MS);
 }
 
-export function transitionImageTask(task: ImageTask, allowedStatuses: ImageTaskStatus[], patch: Partial<Pick<ImageTask, "result" | "error" | "pointsRemaining">> & { status: ImageTaskStatus }) {
-    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS);
+export function transitionImageTask(
+    task: ImageTask,
+    allowedStatuses: ImageTaskStatus[],
+    patch: Partial<Pick<ImageTask, "result" | "error" | "pointsRemaining" | "retryable" | "config" | "billing">> & { status: ImageTaskStatus },
+    executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
+) {
+    return transitionStoredGenerationTask<ImageTask>("image", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);
 }
 
 export function touchImageTask(id: string) {
@@ -106,6 +112,7 @@ export async function failImageTaskSetup(id: string, userId: string, error = "�
             ...task,
             status: "error",
             error: error.trim().slice(0, 500) || "图片任务初始化失败，请重试",
+            retryable: true,
             references: [],
             mask: undefined,
             candidateConfigs: [],

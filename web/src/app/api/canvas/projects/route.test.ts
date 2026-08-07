@@ -16,13 +16,13 @@ describe("canvas projects route", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.getCurrentUser.mockResolvedValue({ id: "user-one" });
-        mocks.listProjects.mockResolvedValue([{ id: "canvas-one", title: "画布一", nodeCount: 3, connectionCount: 1 }]);
+        mocks.listProjects.mockResolvedValue({ items: [{ id: "canvas-one", title: "画布一", nodeCount: 3, connectionCount: 1 }], total: 21, page: 2, pageSize: 12 });
     });
 
     it("returns lightweight project summaries", async () => {
-        const response = await GET();
+        const response = await GET(new Request("http://localhost/api/canvas/projects?page=2&pageSize=12"));
 
-        expect(mocks.listProjects).toHaveBeenCalledWith("user-one");
-        expect(await response.json()).toEqual({ code: 0, data: { projects: [{ id: "canvas-one", title: "画布一", nodeCount: 3, connectionCount: 1 }] }, msg: "OK" });
+        expect(mocks.listProjects).toHaveBeenCalledWith("user-one", { page: 2, pageSize: 12 });
+        expect(await response.json()).toEqual({ code: 0, data: { projects: [{ id: "canvas-one", title: "画布一", nodeCount: 3, connectionCount: 1 }], total: 21, page: 2, pageSize: 12 }, msg: "OK" });
     });
 });

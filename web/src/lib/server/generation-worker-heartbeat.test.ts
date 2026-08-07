@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ configured: vi.fn() }));
 
 vi.mock("@/lib/server/database", () => ({ getDatabaseProvider: vi.fn(() => "file") }));
-vi.mock("@/lib/server/maintenance-auth", () => ({ isMaintenanceTokenConfigured: mocks.configured }));
+vi.mock("@/lib/server/maintenance-auth", () => ({ isWorkerTokenConfigured: mocks.configured }));
 
 import { getGenerationWorkerHealth, recordGenerationWorkerHeartbeat } from "./generation-worker-heartbeat";
 
@@ -20,9 +20,9 @@ describe("generation Worker heartbeat", () => {
         await expect(getGenerationWorkerHealth(1_100_001)).resolves.toMatchObject({ healthy: false, reason: "heartbeat_stale" });
     });
 
-    it("reports a missing maintenance token before checking heartbeats", async () => {
+    it("reports a missing Worker token before checking heartbeats", async () => {
         mocks.configured.mockReturnValue(false);
-        await expect(getGenerationWorkerHealth()).resolves.toMatchObject({ healthy: false, reason: "maintenance_token_missing" });
+        await expect(getGenerationWorkerHealth()).resolves.toMatchObject({ healthy: false, reason: "worker_token_missing" });
     });
 
     it("prunes file Provider heartbeats outside the maximum health window", async () => {

@@ -1,4 +1,4 @@
-import type { GenerationLogRequestSnapshot } from "@/lib/generation-log-snapshot";
+﻿import type { GenerationLogRequestSnapshot } from "@/lib/generation-log-snapshot";
 
 type GenerationLogKind = "image" | "video";
 type GenerationLogSource = "image-workbench" | "video-workbench" | "canvas" | "unknown";
@@ -12,29 +12,24 @@ type GenerationLogAssetInput = {
     mimeType?: string;
     width?: number;
     height?: number;
+    durationMs?: number;
     bytes?: number;
 };
 
-type GenerationLogRecordInput = {
+type GenerationLogDraftInput = {
     conversationId?: string;
     id?: string;
-    taskId?: string;
     kind: GenerationLogKind;
     source: GenerationLogSource;
-    status: GenerationLogStatus;
+    status: "pending";
     title?: string;
     prompt?: string;
     model?: string;
     summary?: string;
     durationMs?: number;
     count?: number;
-    successCount?: number;
-    failCount?: number;
-    assets?: GenerationLogAssetInput[];
     requestSnapshot?: GenerationLogRequestSnapshot;
-    error?: string;
     createdAt?: string | number;
-    completedAt?: string | number;
 };
 
 type GenerationLogRecordResponse = {
@@ -66,17 +61,18 @@ export type StoredGenerationLogRecord = {
     completedAt?: string;
 };
 
-export async function listGenerationLogs(params: { kind?: GenerationLogKind; source?: GenerationLogSource; pageSize?: number } = {}) {
+export async function listGenerationLogs(params: { kind?: GenerationLogKind; source?: GenerationLogSource; page?: number; pageSize?: number } = {}) {
     const search = new URLSearchParams();
     if (params.kind) search.set("kind", params.kind);
     if (params.source) search.set("source", params.source);
+    if (params.page) search.set("page", String(params.page));
     if (params.pageSize) search.set("pageSize", String(params.pageSize));
     const response = await fetch(`/api/generation-logs${search.size ? `?${search.toString()}` : ""}`, { cache: "no-store" });
     if (!response.ok) throw new Error(await readError(response));
     return (await response.json()) as { items: StoredGenerationLogRecord[]; total: number; page: number; pageSize: number };
 }
 
-export async function recordGenerationLog(input: GenerationLogRecordInput) {
+export async function recordGenerationLog(input: GenerationLogDraftInput) {
     const response = await fetch("/api/generation-logs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -86,6 +82,14 @@ export async function recordGenerationLog(input: GenerationLogRecordInput) {
     const payload = (await response.json()) as { log?: GenerationLogRecordResponse };
     if (!payload.log) throw new Error("记录生成日志失败");
     return payload.log;
+}
+
+export async function renameGenerationLog(id: string, title: string) {
+    return patchGenerationLog({ action: "rename", id, title });
+}
+
+export async function deleteGenerationLogResults(id: string, slotIds: string[]) {
+    return patchGenerationLog({ action: "delete-results", id, slotIds });
 }
 
 export async function deleteGenerationLogs(ids: string[]) {
@@ -104,4 +108,16 @@ function readError(response: Response) {
         .json()
         .then((payload: { error?: string }) => payload.error || "记录生成日志失败")
         .catch(() => "记录生成日志失败");
+}
+
+async function patchGenerationLog(input: { action: "rename"; id: string; title: string } | { action: "delete-results"; id: string; slotIds: string[] }) {
+    const response = await fetch("/api/generation-logs", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    });
+    if (!response.ok) throw new Error(await readError(response));
+    const payload = (await response.json()) as { log?: GenerationLogRecordResponse };
+    if (!payload.log) throw new Error("更新生成记录失败");
+    return payload.log;
 }

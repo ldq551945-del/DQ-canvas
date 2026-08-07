@@ -11,7 +11,7 @@ import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
 import { materializeLogicalModelPointCosts } from "@/lib/model-point-cost";
 
 type ApiCallFormat = "openai" | "gemini";
-type SystemChannelProtocol = "auto" | "openai" | "sub2api" | "newapi" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
+type SystemChannelProtocol = "auto" | "openai" | "grok2api" | "sub2api" | "newapi" | "vozeb-recommended" | "qingyan" | "globalaiopc" | "seedance" | "stable-diffusion" | "volcengine-video" | "seedance-special" | "custom" | "compatible";
 
 type SystemChannelAdvancedConfig = {
     protocol: SystemChannelProtocol;
@@ -208,7 +208,7 @@ type ConfigStore = {
     setConfig: (config: AiConfig) => void;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
-    openConfigDialog: (shouldPromptContinue?: boolean) => void;
+    openConfigDialog: (shouldPromptContinue?: boolean, capability?: ModelCapability) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
     clearPromptContinue: () => void;
 };
@@ -309,8 +309,8 @@ export const useConfigStore = create<ConfigStore>()((set) => ({
     setConfig: (config) => set({ config: enforceSystemClientConfig(config) }),
     updateConfig: (key, value) => set((state) => ({ config: enforceSystemClientConfig({ ...state.config, [key]: value }) })),
     isAiConfigReady: (config, model) => isAiConfigReady(config, model),
-    openConfigDialog: (shouldPromptContinue = false) => {
-        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("dq-system-config-missing", { detail: { shouldPromptContinue } }));
+    openConfigDialog: (shouldPromptContinue = false, capability) => {
+        if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("dq-system-config-missing", { detail: { shouldPromptContinue, capability } }));
         set({ isConfigOpen: false, shouldPromptContinue: false });
     },
     setConfigDialogOpen: (isOpen) => set({ isConfigOpen: isOpen, shouldPromptContinue: false }),

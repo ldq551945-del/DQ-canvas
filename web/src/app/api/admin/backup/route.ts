@@ -32,6 +32,7 @@ export async function GET() {
     const backup = {
         app: "DQ-绘图",
         version: 1,
+        backupType: "account-config",
         exportedAt,
         files: {
             auth: sanitizeAuthBackup(data.auth),
@@ -77,6 +78,8 @@ export async function POST(request: Request) {
     }
 
     const files = extractBackupFiles(parsed);
+    const restoreMode = extractRestoreMode(parsed);
+    if (restoreMode === "disaster") return NextResponse.json({ error: "当前业务 JSON 备份不包含数据库、媒体和对象存储完整清单，不能用于整库灾难恢复" }, { status: 400 });
     try {
         validateBackupFiles(files);
     } catch (error) {
@@ -103,16 +106,20 @@ export async function POST(request: Request) {
     await ensureDataDirectory(safetyBackupPath);
     await createSafetyBackup(currentData, safetyBackupPath);
     const valueByKey = new Map(values.map((entry) => [entry.key, entry.value]));
-    await restoreAdminBackupData({
-        auth: (valueByKey.get("auth") ?? currentData.auth) as AdminBackupData["auth"],
-        prompts: (valueByKey.get("prompts") ?? currentData.prompts) as AdminBackupData["prompts"],
-        generationLogs: (valueByKey.get("generationLogs") ?? currentData.generationLogs) as AdminBackupData["generationLogs"],
-        accountDeletionRequests: (valueByKey.get("accountDeletionRequests") ?? currentData.accountDeletionRequests) as AdminBackupData["accountDeletionRequests"],
-    });
+    await restoreAdminBackupData(
+        {
+            auth: (valueByKey.get("auth") ?? currentData.auth) as AdminBackupData["auth"],
+            prompts: (valueByKey.get("prompts") ?? currentData.prompts) as AdminBackupData["prompts"],
+            generationLogs: (valueByKey.get("generationLogs") ?? currentData.generationLogs) as AdminBackupData["generationLogs"],
+            accountDeletionRequests: (valueByKey.get("accountDeletionRequests") ?? currentData.accountDeletionRequests) as AdminBackupData["accountDeletionRequests"],
+        },
+        { mode: "account-config" },
+    );
     const removedSafetyBackups = await pruneRestoreImportBackups();
 
     return NextResponse.json({
         ok: true,
+        mode: "account-config",
         imported: values.map((entry) => entry.key),
         safetyBackupDir,
         removedSafetyBackups,
@@ -137,6 +144,11 @@ function extractBackupFiles(value: unknown): BackupFiles {
     };
 }
 
+function extractRestoreMode(value: unknown) {
+    if (!isRecord(value)) return "account-config" as const;
+    return value.backupType === "disaster" ? ("disaster" as const) : ("account-config" as const);
+}
+
 function validateBackupFiles(files: BackupFiles) {
     if (files.auth !== undefined && files.auth !== null) validateAuthBackup(files.auth);
     if (files.prompts !== undefined && files.prompts !== null) validateArrayDatabase(files.prompts, "prompts", "公共提示词备份格式不正确");
@@ -146,8 +158,6 @@ function validateBackupFiles(files: BackupFiles) {
 
 function validateAuthBackup(value: unknown) {
     if (!isRecord(value) || !Array.isArray(value.users) || !isRecord(value.settings)) throw new Error("用户数据库备份格式不正确");
-    const hasActiveAdmin = value.users.some((user) => isRecord(user) && user.role === "admin" && user.status === "active");
-    if (!hasActiveAdmin) throw new Error("导入的用户数据库里没有可用管理员账号，为避免锁死后台已取消导入");
 }
 
 function validateArrayDatabase(value: unknown, key: string, message: string) {

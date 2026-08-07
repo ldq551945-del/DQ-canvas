@@ -433,6 +433,7 @@ export function mapPostgresSettings(settingsRow: Record<string, unknown> | undef
                 name: dbText(row.name),
                 baseUrl: dbText(row.base_url),
                 apiKey: dbText(row.api_key_ciphertext),
+                webhookSecret: dbText(row.webhook_secret_ciphertext),
                 apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
                 models: dbJson(row.models, []),
                 enabled: dbBool(row.enabled, true),
@@ -640,10 +641,22 @@ export async function upsertPostgresSystemChannels(db: QueryExecutor, channels: 
     for (const [index, channel] of channels.entries()) {
         await db.query(
             `
-            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                base_url = EXCLUDED.base_url,
+                api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+                webhook_secret_ciphertext = EXCLUDED.webhook_secret_ciphertext,
+                api_format = EXCLUDED.api_format,
+                models = EXCLUDED.models,
+                enabled = EXCLUDED.enabled,
+                advanced_config = EXCLUDED.advanced_config,
+                health_results = EXCLUDED.health_results,
+                sort_order = EXCLUDED.sort_order,
+                updated_at = now()
             `,
-            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), dbJsonParam(channel.healthResults || {}), index],
+            [channel.id, channel.name, channel.baseUrl, channel.apiKey, channel.webhookSecret || "", channel.apiFormat, dbJsonParam(channel.models), channel.enabled, dbJsonParam(channel.advancedConfig), dbJsonParam(channel.healthResults || {}), index],
         );
     }
 }
@@ -703,36 +716,54 @@ async function syncPostgresUserAccountIdSequence(db: QueryExecutor) {
 
 export async function insertPostgresSessions(db: QueryExecutor, sessions: StoredSession[]) {
     for (const session of sessions) {
-        await db.query("INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)", [session.id, session.userId, session.tokenHash, session.createdAt, session.expiresAt]);
+        await db.query(
+            `INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id, token_hash = EXCLUDED.token_hash, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at`,
+            [session.id, session.userId, session.tokenHash, session.createdAt, session.expiresAt],
+        );
     }
 }
 
 export async function insertPostgresEmailCodes(db: QueryExecutor, emailCodes: StoredEmailCode[]) {
     for (const code of emailCodes) {
-        await db.query("INSERT INTO email_codes (id, purpose, email, user_id, code_hash, created_at, expires_at, consumed_at, attempts) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)", [
-            code.id,
-            code.purpose,
-            code.email,
-            code.userId || null,
-            code.codeHash,
-            code.createdAt,
-            code.expiresAt,
-            code.consumedAt || null,
-            code.attempts || 0,
-        ]);
+        await db.query(
+            `INSERT INTO email_codes (id, purpose, email, user_id, code_hash, created_at, expires_at, consumed_at, attempts)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             ON CONFLICT (id) DO UPDATE SET
+                purpose = EXCLUDED.purpose, email = EXCLUDED.email, user_id = EXCLUDED.user_id,
+                code_hash = EXCLUDED.code_hash, created_at = EXCLUDED.created_at, expires_at = EXCLUDED.expires_at,
+                consumed_at = EXCLUDED.consumed_at, attempts = EXCLUDED.attempts`,
+            [code.id, code.purpose, code.email, code.userId || null, code.codeHash, code.createdAt, code.expiresAt, code.consumedAt || null, code.attempts || 0],
+        );
     }
 }
 
 export async function insertPostgresQuotaUsage(db: QueryExecutor, quotaUsage: StoredQuotaUsage[]) {
     for (const usage of quotaUsage) {
-        await db.query("INSERT INTO quota_usage (user_id, date, usage_kind, points_spent, units, updated_at) VALUES ($1, $2, $3, $4, $5, $6)", [usage.userId, usage.date, usage.usageKind, usage.pointsSpent, usage.units, usage.updatedAt]);
+        await db.query(
+            `INSERT INTO quota_usage (user_id, date, usage_kind, points_spent, units, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (user_id, date, usage_kind) DO UPDATE SET
+                points_spent = EXCLUDED.points_spent, units = EXCLUDED.units, updated_at = EXCLUDED.updated_at`,
+            [usage.userId, usage.date, usage.usageKind, usage.pointsSpent, usage.units, usage.updatedAt],
+        );
     }
 }
 
 export async function insertPostgresPointRecords(db: QueryExecutor, records: StoredPointRecord[]) {
     for (const record of records) {
         await db.query(
-            "INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, source_record_id, source_date, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            `INSERT INTO point_records (id, user_id, type, amount, balance_after, permanent_amount, daily_amount, permanent_balance_after, daily_balance_after, description, model, idempotency_key, source_record_id, source_date, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+             ON CONFLICT (id) DO UPDATE SET
+                user_id = EXCLUDED.user_id, type = EXCLUDED.type, amount = EXCLUDED.amount,
+                balance_after = EXCLUDED.balance_after, permanent_amount = EXCLUDED.permanent_amount,
+                daily_amount = EXCLUDED.daily_amount, permanent_balance_after = EXCLUDED.permanent_balance_after,
+                daily_balance_after = EXCLUDED.daily_balance_after, description = EXCLUDED.description,
+                model = EXCLUDED.model, idempotency_key = EXCLUDED.idempotency_key,
+                source_record_id = EXCLUDED.source_record_id, source_date = EXCLUDED.source_date,
+                created_at = EXCLUDED.created_at`,
             [
                 record.id,
                 record.userId,
@@ -756,16 +787,15 @@ export async function insertPostgresPointRecords(db: QueryExecutor, records: Sto
 
 export async function insertPostgresDailyPlanPointWallets(db: QueryExecutor, wallets: StoredDailyPlanPointWallet[]) {
     for (const wallet of wallets) {
-        await db.query("INSERT INTO daily_plan_point_wallets (user_id, date, plan_id, assignment_id, granted_points, remaining_points, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", [
-            wallet.userId,
-            wallet.date,
-            wallet.planId,
-            wallet.assignmentId || null,
-            wallet.grantedPoints,
-            wallet.remainingPoints,
-            wallet.createdAt,
-            wallet.updatedAt,
-        ]);
+        await db.query(
+            `INSERT INTO daily_plan_point_wallets (user_id, date, plan_id, assignment_id, granted_points, remaining_points, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             ON CONFLICT (user_id, date) DO UPDATE SET
+                plan_id = EXCLUDED.plan_id, assignment_id = EXCLUDED.assignment_id,
+                granted_points = EXCLUDED.granted_points, remaining_points = EXCLUDED.remaining_points,
+                created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at`,
+            [wallet.userId, wallet.date, wallet.planId, wallet.assignmentId || null, wallet.grantedPoints, wallet.remainingPoints, wallet.createdAt, wallet.updatedAt],
+        );
     }
 }
 
@@ -775,6 +805,18 @@ export async function insertPostgresCdkCodes(db: QueryExecutor, codes: StoredCdk
             `
             INSERT INTO cdk_codes (id, code_hash, code_ciphertext, code_preview, points, max_redemptions, redeemed_count, status, note, expires_at, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET
+                code_hash = EXCLUDED.code_hash,
+                code_ciphertext = EXCLUDED.code_ciphertext,
+                code_preview = EXCLUDED.code_preview,
+                points = EXCLUDED.points,
+                max_redemptions = EXCLUDED.max_redemptions,
+                redeemed_count = EXCLUDED.redeemed_count,
+                status = EXCLUDED.status,
+                note = EXCLUDED.note,
+                expires_at = EXCLUDED.expires_at,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at
             `,
             [code.id, code.codeHash, encryptSecretValue(code.code || ""), code.codePreview, code.points, code.maxRedemptions, code.redemptions.length, code.status, code.note, code.expiresAt || null, code.createdAt, code.updatedAt],
         );
@@ -782,7 +824,7 @@ export async function insertPostgresCdkCodes(db: QueryExecutor, codes: StoredCdk
 
     for (const code of codes) {
         for (const redemption of code.redemptions) {
-            await db.query("INSERT INTO cdk_redemptions (cdk_code_id, user_id, redeemed_at) VALUES ($1, $2, $3)", [code.id, redemption.userId, redemption.redeemedAt]);
+            await db.query("INSERT INTO cdk_redemptions (cdk_code_id, user_id, redeemed_at) VALUES ($1, $2, $3) ON CONFLICT (cdk_code_id, user_id) DO UPDATE SET redeemed_at = EXCLUDED.redeemed_at", [code.id, redemption.userId, redemption.redeemedAt]);
         }
     }
 }
@@ -793,6 +835,16 @@ export async function insertPostgresAnnouncements(db: QueryExecutor, announcemen
             `
             INSERT INTO announcements (id, title, content, enabled, popup_home, popup_after_login, starts_at, ends_at, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                content = EXCLUDED.content,
+                enabled = EXCLUDED.enabled,
+                popup_home = EXCLUDED.popup_home,
+                popup_after_login = EXCLUDED.popup_after_login,
+                starts_at = EXCLUDED.starts_at,
+                ends_at = EXCLUDED.ends_at,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at
             `,
             [
                 announcement.id,

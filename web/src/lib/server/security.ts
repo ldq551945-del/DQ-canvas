@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { Agent, buildConnector, ProxyAgent } from "undici";
 
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
-import { getOutboundProxyUrl } from "@/lib/server/proxy-dispatcher";
+import { getTrustedProxyHops } from "@/lib/trusted-proxy";
+
+export { getTrustedProxyHops } from "@/lib/trusted-proxy";
+export { isClashFakeIpAddress, isPublicIpAddress, isSafeOutboundUrl, resolveSafeOutboundTarget, resolveSafeOutboundTarget as resolveSafeOutboundUrl } from "@/lib/server/outbound-url-security";
+export { fetchSafeOutboundUrl, UnsafeOutboundUrlError } from "@/lib/server/safe-outbound-fetch";
 
 type RateLimitConfig = {
     maxRequests: number;
@@ -35,10 +37,6 @@ const signedMediaRateLimit: RateLimitConfig = { maxRequests: 60, windowMs: 60 * 
 const publicMediaResourceRateLimit: RateLimitConfig = { maxRequests: 2400, windowMs: 60 * 1000 };
 const publicMediaIpRateLimit: RateLimitConfig = { maxRequests: 240, windowMs: 60 * 1000 };
 
-const blockedHostnames = ["metadata.google.internal", "metadata.goog", "metadata.azure.com", "instance-data"];
-const MAX_OUTBOUND_DISPATCHERS = 128;
-const outboundDispatchers = new Map<string, Agent | ProxyAgent>();
-
 const globalSecurityStore = globalThis as typeof globalThis & {
     __dqRateLimits?: Map<string, { count: number; resetAt: number }>;
 };
@@ -46,7 +44,7 @@ const globalSecurityStore = globalThis as typeof globalThis & {
 const rateLimits = (globalSecurityStore.__dqRateLimits ??= new Map<string, { count: number; resetAt: number }>());
 
 export function getClientIp(request: Request) {
-    const trustedProxyHops = readTrustedProxyHops();
+    const trustedProxyHops = getTrustedProxyHops();
     if (trustedProxyHops <= 0) return "unknown";
 
     const forwarded = request.headers
@@ -54,8 +52,12 @@ export function getClientIp(request: Request) {
         ?.split(",")
         .map((value) => value.trim())
         .filter(Boolean);
-    const forwardedIp = forwarded?.[Math.max(0, forwarded.length - trustedProxyHops)];
-    return forwardedIp || request.headers.get("x-real-ip")?.trim() || request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+    if (forwarded?.length) {
+        if (forwarded.length < trustedProxyHops) return "unknown";
+        return normalizeForwardedIp(forwarded[forwarded.length - trustedProxyHops]) || "unknown";
+    }
+    if (trustedProxyHops !== 1) return "unknown";
+    return normalizeForwardedIp(request.headers.get("x-real-ip")) || normalizeForwardedIp(request.headers.get("cf-connecting-ip")) || "unknown";
 }
 
 export async function checkRateLimit(key: string, config: RateLimitConfig): Promise<RateLimitResult> {
@@ -153,133 +155,6 @@ function checkMemoryRateLimit(key: string, config: RateLimitConfig) {
     return { allowed: true, remaining: config.maxRequests - current.count, resetAt: current.resetAt };
 }
 
-export async function isSafeOutboundUrl(value: string, options?: { allowCredentials?: boolean; allowPrivateUpstreams?: boolean }) {
-    return Boolean(await resolveSafeOutboundUrl(value, options));
-}
-
-/**
- * Resolves a URL once and returns an address-pinned dispatcher. Callers must use
- * fetchSafeOutboundUrl rather than resolving first and fetching the hostname.
- */
-export async function fetchSafeOutboundUrl(value: string | URL, init?: RequestInit, options?: { allowCredentials?: boolean; allowPrivateUpstreams?: boolean }) {
-    const target = await resolveSafeOutboundUrl(value.toString(), options);
-    if (!target) throw new Error("Unsafe outbound URL");
-    const proxyUrl = getOutboundProxyUrl();
-    const url = proxyUrl ? pinnedOutboundUrl(target.url, target.address) : target.url;
-    const headers = new Headers(init?.headers);
-    if (proxyUrl) headers.set("host", target.url.host);
-    return fetch(url, { ...init, headers, dispatcher: outboundDispatcher(target.hostname, target.address, proxyUrl) } as RequestInit);
-}
-
-export async function resolveSafeOutboundUrl(value: string, options?: { allowCredentials?: boolean; allowPrivateUpstreams?: boolean }) {
-    try {
-        const url = new URL(value);
-        if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-        if (!options?.allowCredentials && (url.username || url.password)) return null;
-        const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-        const addresses = await resolveOutboundAddresses(hostname);
-        if (!addresses.length) return null;
-        const privateAllowed = options?.allowPrivateUpstreams !== false && privateUpstreamHostAllowed(hostname);
-        const directIp = Boolean(isIP(hostname));
-        const addressesAllowed = privateAllowed || addresses.every((address) => isPublicIpAddress(address) || (!directIp && process.env.DQ_ALLOW_FAKE_IP_DNS === "1" && isClashFakeIpAddress(address)));
-        return addressesAllowed ? { url, hostname, address: addresses[0] } : null;
-    } catch {
-        return null;
-    }
-}
-
-function privateUpstreamHostAllowed(hostname: string) {
-    if (process.env.DQ_ALLOW_PRIVATE_UPSTREAMS !== "1") return false;
-    const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    return (process.env.DQ_PRIVATE_UPSTREAM_HOSTS || "")
-        .split(",")
-        .map((value) =>
-            value
-                .trim()
-                .replace(/^\[|\]$/g, "")
-                .toLowerCase(),
-        )
-        .filter(Boolean)
-        .includes(host);
-}
-
-async function resolveOutboundAddresses(hostname: string) {
-    const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
-    if (!host || host === "localhost" || host.endsWith(".localhost")) return [];
-    if (blockedHostnames.some((blocked) => host === blocked || host.endsWith(`.${blocked}`) || host.includes(blocked))) return [];
-
-    const directIpVersion = isIP(host);
-    if (directIpVersion) return [host];
-
-    try {
-        const addresses = await lookup(host, { all: true, verbatim: true });
-        return [...new Set(addresses.map((address) => address.address))];
-    } catch {
-        return [];
-    }
-}
-
-function pinnedOutboundUrl(url: URL, address: string) {
-    const pinned = new URL(url);
-    pinned.hostname = address;
-    return pinned;
-}
-
-function outboundDispatcher(hostname: string, address: string, proxyUrl: string) {
-    const key = `${proxyUrl}\u0000${hostname}\u0000${address}`;
-    const existing = outboundDispatchers.get(key);
-    if (existing) return existing;
-
-    if (outboundDispatchers.size >= MAX_OUTBOUND_DISPATCHERS) {
-        const oldest = outboundDispatchers.entries().next().value as [string, Agent | ProxyAgent] | undefined;
-        if (oldest) {
-            outboundDispatchers.delete(oldest[0]);
-            void oldest[1].destroy();
-        }
-    }
-    const connector = buildConnector({});
-    const dispatcher = proxyUrl
-        ? new ProxyAgent({ uri: proxyUrl, requestTls: isIP(hostname) ? undefined : { servername: hostname } })
-        : new Agent({
-              connect: (connection, callback) => connector({ ...connection, hostname: address, servername: isIP(hostname) ? undefined : hostname }, callback),
-          });
-    outboundDispatchers.set(key, dispatcher);
-    return dispatcher;
-}
-
-export function isClashFakeIpAddress(address: string) {
-    if (isIP(address) !== 4) return false;
-    const [first, second] = address.split(".").map((part) => Number(part));
-    return first === 198 && (second === 18 || second === 19);
-}
-
-export function isPublicIpAddress(address: string) {
-    const version = isIP(address);
-    if (version === 4) {
-        const parts = address.split(".").map((part) => Number(part));
-        if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-        const [a, b] = parts;
-        if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
-        if (a === 100 && b >= 64 && b <= 127) return false;
-        if (a === 169 && b === 254) return false;
-        if (a === 172 && b >= 16 && b <= 31) return false;
-        if (a === 192 && (b === 0 || b === 168)) return false;
-        if (a === 198 && (b === 18 || b === 19)) return false;
-        return true;
-    }
-
-    if (version === 6) {
-        const normalized = address.toLowerCase();
-        if (normalized === "::" || normalized === "::1") return false;
-        if (normalized.startsWith("fc") || normalized.startsWith("fd") || /^fe[89ab]/.test(normalized)) return false;
-        if (normalized.startsWith("ff") || normalized.startsWith("2001:db8:")) return false;
-        if (normalized.startsWith("::ffff:")) return isPublicIpAddress(normalized.slice("::ffff:".length));
-        return true;
-    }
-
-    return false;
-}
-
 function cleanupRateLimits(now: number) {
     if (rateLimits.size < 5000) return;
     for (const [key, value] of rateLimits.entries()) {
@@ -287,7 +162,7 @@ function cleanupRateLimits(now: number) {
     }
 }
 
-function readTrustedProxyHops() {
-    const value = Number(process.env.DQ_TRUSTED_PROXY_HOPS || 0);
-    return Number.isInteger(value) && value > 0 ? Math.min(value, 10) : 0;
+function normalizeForwardedIp(value: string | null | undefined) {
+    const candidate = value?.trim().replace(/^"|"$/g, "") || "";
+    return isIP(candidate) ? candidate.toLowerCase() : "";
 }

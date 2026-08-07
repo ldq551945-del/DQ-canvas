@@ -3,6 +3,7 @@
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 import type { PublicPointRecord } from "@/lib/auth/store-types";
 import { serializeApiParams } from "./request";
+import { expireClientSession, throwIfClientSessionExpired } from "./session-expiration";
 
 export type PointRecord = Pick<PublicPointRecord, "id" | "type" | "amount" | "balanceAfter" | "description" | "createdAt">;
 
@@ -20,6 +21,7 @@ let pointsRefreshQueued = false;
 export async function listPointRecords(input: { page?: number; pageSize?: number; direction?: "credit" | "debit" } = {}): Promise<PointRecordListResult> {
     const params = serializeApiParams(input);
     const response = await fetch(`/api/points${params.size ? `?${params.toString()}` : ""}`, { cache: "no-store" });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => null)) as (Partial<PointRecordListResult> & { error?: string }) | null;
     if (!response.ok || !payload) throw new Error(payload?.error || "积分记录加载失败");
     return {
@@ -66,8 +68,13 @@ async function refreshQueuedUserPoints() {
         pointsRefreshQueued = false;
         try {
             const response = await fetch("/api/auth/session", { cache: "no-store" });
+            if (response.status === 401) {
+                expireClientSession();
+                return;
+            }
             const payload = (await response.json()) as { user?: LocalUser | null };
             if (payload.user) useUserStore.getState().setUser(payload.user);
+            else if (useUserStore.getState().user) expireClientSession();
         } catch {
             // Balance refresh is best-effort; the generation result should not fail because of it.
         }

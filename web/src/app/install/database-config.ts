@@ -16,7 +16,9 @@ type DatabaseConfig = {
     password: string;
     ssl: boolean;
     encryptionKey: string;
+    installToken: string;
     maintenanceToken: string;
+    workerToken: string;
 };
 
 export function generateDeploymentSecret() {
@@ -37,7 +39,9 @@ ${databaseEnv}
 DQ_DATABASE_POOL_MAX=10
 DQ_DATABASE_SSL=${config.ssl ? "1" : "0"}
 DQ_ENCRYPTION_KEY=${config.encryptionKey}
-DQ_MAINTENANCE_TOKEN=${config.maintenanceToken}${config.mode === "baota" ? "\nDQ_TRUSTED_PROXY_HOPS=1" : ""}`;
+DQ_INSTALL_TOKEN=${config.installToken}
+DQ_MAINTENANCE_TOKEN=${config.maintenanceToken}
+DQ_WORKER_TOKEN=${config.workerToken}${config.mode === "baota" ? "\nDQ_TRUSTED_PROXY_HOPS=1" : ""}`;
 
     return {
         envText,
@@ -84,14 +88,16 @@ function bundledCompose(config: DatabaseConfig, database: string, username: stri
       DATABASE_URL: ${quoteYaml(databaseUrl)}
       DQ_DATABASE_SSL: "0"
       DQ_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      DQ_INSTALL_TOKEN: ${quoteYaml(config.installToken)}
       DQ_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      DQ_WORKER_TOKEN: ${quoteYaml(config.workerToken)}
     depends_on:
       postgres:
         condition: service_healthy
 ${appHealthcheck()}
     restart: unless-stopped
 
-${workerService(config.maintenanceToken, "http://app:3000")}
+${workerService(config.workerToken, "http://app:3000")}
 
 volumes:
   dq-data:
@@ -111,11 +117,13 @@ function externalCompose(config: DatabaseConfig, databaseUrl: string) {
       DATABASE_URL: ${quoteYaml(databaseUrl)}
       DQ_DATABASE_SSL: "${config.ssl ? "1" : "0"}"
       DQ_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      DQ_INSTALL_TOKEN: ${quoteYaml(config.installToken)}
       DQ_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      DQ_WORKER_TOKEN: ${quoteYaml(config.workerToken)}
 ${appHealthcheck()}
     restart: unless-stopped
 
-${workerService(config.maintenanceToken, "http://app:3000")}
+${workerService(config.workerToken, "http://app:3000")}
 
 volumes:
   dq-data:`;
@@ -133,12 +141,14 @@ function baotaCompose(config: DatabaseConfig, databaseUrl: string) {
       DATABASE_URL: ${quoteYaml(databaseUrl)}
       DQ_DATABASE_SSL: "0"
       DQ_ENCRYPTION_KEY: ${quoteYaml(config.encryptionKey)}
+      DQ_INSTALL_TOKEN: ${quoteYaml(config.installToken)}
       DQ_MAINTENANCE_TOKEN: ${quoteYaml(config.maintenanceToken)}
+      DQ_WORKER_TOKEN: ${quoteYaml(config.workerToken)}
       DQ_TRUSTED_PROXY_HOPS: "1"
 ${appHealthcheck()}
     restart: unless-stopped
 
-${workerService(config.maintenanceToken, "http://127.0.0.1:3000", true)}
+${workerService(config.workerToken, "http://127.0.0.1:3000", true)}
 
 volumes:
   dq-data:`;
@@ -153,13 +163,13 @@ function appHealthcheck() {
       start_period: 30s`;
 }
 
-function workerService(maintenanceToken: string, origin: string, hostNetwork = false) {
+function workerService(workerToken: string, origin: string, hostNetwork = false) {
     return `  generation-worker:
     image: ghcr.io/dao-qin/dq:latest
     command: ["node", "/app/web/scripts/generation-worker.mjs"]${hostNetwork ? "\n    network_mode: host" : ""}
     environment:
       DQ_WORKER_API_ORIGIN: ${origin}
-      DQ_MAINTENANCE_TOKEN: ${quoteYaml(maintenanceToken)}
+      DQ_WORKER_TOKEN: ${quoteYaml(workerToken)}
     depends_on:
       app:
         condition: service_healthy

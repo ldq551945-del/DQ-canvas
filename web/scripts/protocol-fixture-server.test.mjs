@@ -51,6 +51,34 @@ describe("protocol fixture server", () => {
         expect(media.headers.get("content-type")).toBe("video/mp4");
     });
 
+    it("keeps slow multipart video tasks pending and records cancellation", async () => {
+        const body = new FormData();
+        body.set("model", "e2e-video-slow");
+        body.set("prompt", "slow video");
+
+        const created = await fetch(`${origin}/v1/videos`, { method: "POST", body }).then((response) => response.json());
+        await expect(fetch(`${origin}/v1/videos/${created.task_id}`).then((response) => response.json())).resolves.toMatchObject({ status: "processing" });
+        await expect(fetch(`${origin}/__state`).then((response) => response.json())).resolves.toMatchObject({
+            requests: expect.arrayContaining([expect.objectContaining({ path: "/v1/videos", model: "e2e-video-slow" })]),
+            tasks: [{ id: created.task_id, status: "pending" }],
+        });
+
+        await fetch(`${origin}/v1/videos/${created.task_id}`, { method: "DELETE" });
+
+        await expect(fetch(`${origin}/v1/videos/${created.task_id}`).then((response) => response.json())).resolves.toMatchObject({ status: "cancelled" });
+    });
+
+    it("fails requests from an explicit failure model", async () => {
+        const response = await fetch(`${origin}/v1/images/generations`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ model: "e2e-image-fail", prompt: "failure" }),
+        });
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({ error: { message: "fixture image failure" } });
+    });
+
     it("serves synchronous audio bytes", async () => {
         const response = await fetch(`${origin}/v1/audio/speech`, { method: "POST" });
         const bytes = Buffer.from(await response.arrayBuffer());
@@ -82,5 +110,36 @@ describe("protocol fixture server", () => {
 
         expect(response.status).toBe(400);
         await expect(response.json()).resolves.toMatchObject({ error: { message: "fixture image failure" } });
+    });
+
+    it("resets requests and exposes a sanitized state snapshot", async () => {
+        await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { authorization: "Bearer fixture-secret", "content-type": "application/json" },
+            body: JSON.stringify({ model: "fixture-text", messages: [] }),
+        });
+
+        await expect(fetch(`${origin}/__state`).then((response) => response.json())).resolves.toMatchObject({
+            requests: [{ method: "POST", path: "/v1/chat/completions", authorization: "Bearer fixture-secret", contentType: "application/json", model: "fixture-text" }],
+        });
+
+        await expect(fetch(`${origin}/__reset`, { method: "POST" }).then((response) => response.json())).resolves.toEqual({ ok: true });
+        await expect(fetch(`${origin}/__state`).then((response) => response.json())).resolves.toEqual({ requests: [], tasks: [] });
+    });
+
+    it("rejects the primary fallback fixture while allowing the backup", async () => {
+        const primary = await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { authorization: "Bearer e2e-primary-secret", "content-type": "application/json" },
+            body: JSON.stringify({ model: "e2e-text-fallback", messages: [] }),
+        });
+        const backup = await fetch(`${origin}/v1/chat/completions`, {
+            method: "POST",
+            headers: { authorization: "Bearer e2e-backup-secret", "content-type": "application/json" },
+            body: JSON.stringify({ model: "e2e-text-fallback", messages: [] }),
+        });
+
+        expect(primary.status).toBe(422);
+        expect(backup.status).toBe(200);
     });
 });

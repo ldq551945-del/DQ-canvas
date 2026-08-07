@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquare, ClipboardPaste, Download, FolderPlus, Music2, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
+import { CheckSquare, CircleAlert, CircleStop, ClipboardPaste, Download, FolderPlus, Music2, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { App, Button, Drawer, Modal, Tag, Typography } from "antd";
@@ -31,7 +31,8 @@ import { workbenchReferencesFromAttachments } from "@/components/agent/workbench
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
-import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
+import { WorkbenchHistoryLoadError } from "@/components/agent/workbench-history-load-error";
+import { focusWorkbenchPromptEditor, moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { ResultSelectCheckbox, WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
 import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
@@ -51,7 +52,6 @@ import {
     isSupportedAudioFile,
     normalizeLogConfig,
     normalizeVideoSeconds,
-    readStoredLogs,
     removeStoredVideoLogs,
     replaceResult,
     resultsFromLog,
@@ -71,38 +71,14 @@ import { useVideoWorkbenchController } from "./use-video-workbench-controller";
 export default function VideoPage() {
     const controller = useVideoWorkbenchController();
     const {
-        searchParams,
         message,
         fileInputRef,
-        activeLogIdsRef,
-        startingVideoTasksRef,
-        queuedVideoLogsRef,
-        queuedVideoLogIdsRef,
-        videoConcurrencyLimitRef,
-        activeLogIdRef,
-        logsRef,
-        deletedResultLogIdsRef,
         effectiveConfig,
         updateConfig,
-        isAiConfigReady,
         openConfigDialog,
-        addAsset,
-        userId,
         prompt,
         setPrompt,
         agentMessages,
-        setAgentMessages,
-        agentSessions,
-        setAgentSessions,
-        agentSessionsHydrated,
-        activeAgentSessionId,
-        setActiveAgentSessionId,
-        setActiveAgentRecordId,
-        activeCreativeConversationId,
-        setActiveCreativeConversationId,
-        ensureCreativeConversation,
-        lastAgentPrompt,
-        setLastAgentPrompt,
         availableSkills,
         selectedSkill,
         setSelectedSkill,
@@ -119,7 +95,6 @@ export default function VideoPage() {
         hasOlderAgentMessages,
         olderAgentMessagesLoading,
         loadOlderAgentMessages,
-        importedPromptRef,
         references,
         setReferences,
         videoReferences,
@@ -127,28 +102,26 @@ export default function VideoPage() {
         audioReferences,
         setAudioReferences,
         results,
-        setResults,
         logs,
-        setLogs,
+        historyLoading,
+        historyLoadingMore,
+        historyTotal,
+        historyHasMore,
+        historyLoadError,
         activeVideoCount,
-        setActiveVideoCount,
+        cancellingLogIds,
         logsOpen,
         setLogsOpen,
         promptDialogOpen,
         setPromptDialogOpen,
         assetPickerOpen,
         setAssetPickerOpen,
-        referenceDragTarget,
-        setReferenceDragTarget,
         selectedLogIds,
         setSelectedLogIds,
         selectedResultIds,
-        setSelectedResultIds,
         previewLog,
-        setPreviewLog,
         deleteConfirmOpen,
         setDeleteConfirmOpen,
-        userIdRef,
         videoModelOptions,
         model,
         pointsCost,
@@ -157,38 +130,25 @@ export default function VideoPage() {
         previewPendingCount,
         addReferences,
         referenceDropZoneClass,
-        referenceFileAccepted,
         handleReferenceDragOver,
         handleReferenceDragLeave,
         handleReferenceDrop,
         addReferencesFromClipboard,
-        currentVideoTaskCount,
-        syncActiveVideoCount,
-        beginStartingVideoTask,
-        finishStartingVideoTask,
-        enqueueVideoLog,
-        removeQueuedVideoLog,
-        startQueuedVideoLogs,
-        scheduleVideoLog,
         generate,
         agentRunning,
         runAgentGenerate,
         retryAgentMessage,
         cancelAgentRun,
-        buildRequestSnapshot,
+        cancelGenerationLog,
         retryResult,
         downloadVideo,
         saveResultToAssets,
         insertPickedAsset,
         createSession,
         deleteSelectedLogs,
-        saveLog,
         refreshLogs,
-        getLatestLog,
-        resumePendingLogs,
-        pollGenerationLog,
+        loadMoreLogs,
         previewGenerationLog,
-        currentResultIds,
         selectedVisibleResultIds,
         allResultsSelected,
         toggleAllResults,
@@ -224,12 +184,19 @@ export default function VideoPage() {
                                             previewGenerationLog(log);
                                         }}
                                         onRenameLog={(log, title) => void renameGenerationLog(log, title)}
+                                        onCancelLog={(log) => void cancelGenerationLog(log)}
+                                        cancellingLogIds={cancellingLogIds}
+                                        historyTotal={historyTotal}
+                                        historyHasMore={historyHasMore}
+                                        historyLoadingMore={historyLoadingMore}
+                                        onLoadMore={() => void loadMoreLogs()}
                                         compact
                                     />
                                 );
                             }}
                         />
                         <WorkbenchBackgroundTaskNotice count={activeVideoCount} />
+                        <WorkbenchHistoryLoadError error={historyLoadError} loading={historyLoading} onRetry={() => void refreshLogs()} />
                         {agentMessages.length ? (
                             <WorkbenchAgentConversation
                                 messages={agentMessages}
@@ -461,6 +428,11 @@ export default function VideoPage() {
                                     删除{selectedVisibleResultIds.length ? ` ${selectedVisibleResultIds.length}` : ""}
                                 </Button>
                                 {previewPendingCount ? <WorkbenchGenerationActivity kind="video" count={previewPendingCount} /> : null}
+                                {previewLog?.status === "生成中" && previewLog.task && !results.some((result) => result.taskState?.publicStatus === "cancelled") ? (
+                                    <Button danger size="small" icon={<CircleStop className="size-3.5" />} loading={cancellingLogIds.includes(previewLog.id)} onClick={() => void cancelGenerationLog(previewLog)}>
+                                        取消任务
+                                    </Button>
+                                ) : null}
                                 {activeVideoCount ? (
                                     <Tag className="m-0 px-2 py-1">
                                         运行 {activeVideoCount}/{videoConcurrencyLimit}
@@ -486,17 +458,28 @@ export default function VideoPage() {
                                             key={result.id}
                                             error={result.error || "生成失败"}
                                             retryable={result.canRetry === true}
+                                            state={result.taskState}
                                             selected={selectedResultIds.includes(result.id)}
                                             onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
                                             onRetry={retryResult}
                                         />
                                     ) : (
-                                        <PendingVideoCard key={result.id} />
+                                        <PendingVideoCard key={result.id} state={result.taskState} />
                                     ),
                                 )}
                             </div>
                         ) : (
-                            <CompactEmptyState title="还没有生成视频" description="完成一次生成后，结果会按时间保留在这里。" icon={<VideoIcon className="size-4" />} className="min-h-20 sm:min-h-40 lg:min-h-[360px]" />
+                            <CompactEmptyState
+                                title="还没有生成视频"
+                                description={model ? "描述镜头、运动和时长并开始生成，结果会按时间保留在这里。" : "当前没有可用视频模型，配置完成后即可开始生成。"}
+                                icon={<VideoIcon className="size-4" />}
+                                action={
+                                    <Button size="small" type="primary" icon={model ? <Sparkles className="size-3.5" /> : <CircleAlert className="size-3.5" />} onClick={() => (model ? focusWorkbenchPromptEditor() : openConfigDialog(true, "video"))}>
+                                        {model ? "开始创作" : "查看模型配置"}
+                                    </Button>
+                                }
+                                className="min-h-20 sm:min-h-40 lg:min-h-[360px]"
+                            />
                         )}
                     </div>
                 </section>
@@ -513,6 +496,12 @@ export default function VideoPage() {
                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
                         onPreviewLog={previewGenerationLog}
                         onRenameLog={(log, title) => void renameGenerationLog(log, title)}
+                        onCancelLog={(log) => void cancelGenerationLog(log)}
+                        cancellingLogIds={cancellingLogIds}
+                        historyTotal={historyTotal}
+                        historyHasMore={historyHasMore}
+                        historyLoadingMore={historyLoadingMore}
+                        onLoadMore={() => void loadMoreLogs()}
                     />
                 </div>
             </Drawer>

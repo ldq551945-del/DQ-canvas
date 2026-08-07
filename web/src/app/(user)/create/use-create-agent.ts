@@ -11,7 +11,7 @@ import {
     createCreativeConversation,
     getCreativeConversation,
     getCreativeAgentRun,
-    listCreativeAssets,
+    listCreativeAssetPage,
     listCreativeConversationPage,
     listCreativeMessages,
     retryCreativeAgentTask,
@@ -79,18 +79,18 @@ export function useCreateAgent() {
         }
     }, []);
 
-    const refreshAssets = useCallback(async (id: string, generation = conversationGenerationRef.current) => {
-        const nextAssets = await listCreativeAssets(id);
+    const refreshAssets = useCallback(async (id: string, runIds: string[], generation = conversationGenerationRef.current) => {
+        const nextAssets = await listCreativeAssetsForReferences(id, { runIds });
         if (generation !== conversationGenerationRef.current || activeConversationRef.current !== id) return;
-        setAssets(nextAssets);
+        setAssets((current) => uniqueAssets([...current, ...nextAssets]));
     }, []);
 
     const refreshConversation = useCallback(async (id: string, generation = conversationGenerationRef.current) => {
         const requestId = ++refreshRequestRef.current;
-        const [nextMessages, nextAssets] = await Promise.all([listCreativeMessages(id), listCreativeAssets(id)]);
+        const nextMessages = await listCreativeMessages(id);
         if (requestId !== refreshRequestRef.current || generation !== conversationGenerationRef.current || activeConversationRef.current !== id) return;
         const runIds = Array.from(new Set(nextMessages.map((item) => item.runId).filter((value): value is string => Boolean(value))));
-        const runs = await Promise.all(runIds.map((runId) => getCreativeAgentRun(runId).catch(() => null)));
+        const [nextAssets, runs] = await Promise.all([listCreativeAssetsForMessages(id, nextMessages), Promise.all(runIds.map((runId) => getCreativeAgentRun(runId).catch(() => null)))]);
         if (requestId !== refreshRequestRef.current || generation !== conversationGenerationRef.current || activeConversationRef.current !== id) return;
         setMessages(uniqueMessages(nextMessages));
         setHasOlderMessages(Boolean(nextMessages[0] && nextMessages[0].sequence > 1));
@@ -137,7 +137,10 @@ export function useCreateAgent() {
         try {
             const older = await listCreativeMessages(id, firstSequence);
             if (activeConversationRef.current !== id) return;
+            const olderAssets = await listCreativeAssetsForMessages(id, older);
+            if (activeConversationRef.current !== id) return;
             setMessages((current) => uniqueMessages([...older, ...current]));
+            setAssets((current) => uniqueAssets([...current, ...olderAssets]));
             setHasOlderMessages(Boolean(older[0] && older[0].sequence > 1));
         } finally {
             setOlderMessagesLoading(false);
@@ -254,7 +257,7 @@ export function useCreateAgent() {
                     if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) setActiveRunStatus(status);
                 },
                 onTaskCompleted: () => {
-                    if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) void refreshAssets(run.conversationId, generation).catch(() => undefined);
+                    if (generation === conversationGenerationRef.current && activeConversationRef.current === run.conversationId) void refreshAssets(run.conversationId, [run.id], generation).catch(() => undefined);
                 },
                 onTerminal: (status, text) => {
                     if (generation !== conversationGenerationRef.current || activeConversationRef.current !== run.conversationId) return;
@@ -512,4 +515,39 @@ export function useCreateAgent() {
 
 function uniqueMessages(messages: CreativeMessage[]) {
     return Array.from(new Map(messages.map((item) => [item.id, item])).values()).sort((a, b) => a.sequence - b.sequence);
+}
+
+function uniqueAssets(assets: CreativeAsset[]) {
+    return Array.from(new Map(assets.map((item) => [item.id, item])).values()).sort((left, right) => left.createdAt - right.createdAt || left.ordinal - right.ordinal);
+}
+
+async function listCreativeAssetsForMessages(conversationId: string, messages: CreativeMessage[]) {
+    const ids = Array.from(
+        new Set(
+            messages.flatMap((message) => {
+                const metadataIds = Array.isArray(message.metadata.assetIds) ? message.metadata.assetIds : [];
+                const handoff = isCreativeProjectHandoff(message.metadata.projectHandoff) ? message.metadata.projectHandoff.assetIds : [];
+                return [...metadataIds, ...handoff].filter((id): id is string => typeof id === "string" && Boolean(id.trim())).map((id) => id.trim());
+            }),
+        ),
+    );
+    return listCreativeAssetsForReferences(conversationId, {
+        ids,
+        messageIds: messages.map((message) => message.id),
+        runIds: Array.from(new Set(messages.map((message) => message.runId).filter((id): id is string => Boolean(id)))),
+    });
+}
+
+async function listCreativeAssetsForReferences(conversationId: string, references: { ids?: string[]; messageIds?: string[]; runIds?: string[] }) {
+    if (!references.ids?.length && !references.messageIds?.length && !references.runIds?.length) return [];
+    const assets: CreativeAsset[] = [];
+    let offset = 0;
+    for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+        const page = await listCreativeAssetPage(conversationId, { ...references, limit: 200, offset });
+        assets.push(...page.assets);
+        if (!page.hasMore) return uniqueAssets(assets);
+        offset = page.nextOffset ?? offset + page.assets.length;
+        if (!page.assets.length) break;
+    }
+    throw new Error("当前消息关联资产过多，请缩小历史范围后重试");
 }

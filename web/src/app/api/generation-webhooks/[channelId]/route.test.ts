@@ -1,13 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-    configured: vi.fn(),
     verify: vi.fn(),
     record: vi.fn(),
     getAuthSettings: vi.fn(),
 }));
+const fixtureWebhookSecret = "webhook-fixture-".repeat(3);
 
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getAuthSettings }));
+vi.mock("@/lib/server/generation-webhook-provider", () => ({
+    GenerationWebhookVerificationError: class GenerationWebhookVerificationError extends Error {
+        constructor(
+            message: string,
+            readonly status: number,
+        ) {
+            super(message);
+        }
+    },
+    verifyGenerationWebhookSignature: mocks.verify,
+}));
 vi.mock("@/lib/server/generation-task-webhook", () => ({
     GenerationWebhookError: class GenerationWebhookError extends Error {
         constructor(
@@ -17,8 +28,6 @@ vi.mock("@/lib/server/generation-task-webhook", () => ({
             super(message);
         }
     },
-    isGenerationWebhookConfigured: mocks.configured,
-    verifyGenerationWebhookSignature: mocks.verify,
     recordGenerationWebhook: mocks.record,
 }));
 
@@ -27,21 +36,23 @@ import { POST } from "./route";
 describe("POST /api/generation-webhooks/:channelId", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.configured.mockReturnValue(true);
-        mocks.verify.mockReturnValue(true);
-        mocks.getAuthSettings.mockResolvedValue({ systemChannels: [{ id: "channel-one", enabled: true, advancedConfig: { resultField: "data.url", statusField: "data.status" } }] });
+        mocks.verify.mockReturnValue({ signatureTimestamp: "2026-08-01T00:00:00.000Z" });
+        mocks.getAuthSettings.mockResolvedValue({ systemChannels: [{ id: "channel-one", enabled: true, webhookSecret: fixtureWebhookSecret, advancedConfig: { resultField: "data.url", statusField: "data.status" } }] });
         mocks.record.mockResolvedValue({ duplicate: false, matched: true, taskId: "video-one", resultReady: true });
     });
 
     it("rejects unsigned callbacks", async () => {
-        mocks.verify.mockReturnValue(false);
+        const { GenerationWebhookVerificationError } = await import("@/lib/server/generation-webhook-provider");
+        mocks.verify.mockImplementationOnce(() => {
+            throw new GenerationWebhookVerificationError("生成回调验签失败", 401);
+        });
         const response = await POST(request({}), context());
         expect(response.status).toBe(401);
         expect(mocks.record).not.toHaveBeenCalled();
     });
 
     it("parses configured result fields and forwards the raw body for idempotent processing", async () => {
-        const body = { event: { id: "event-one" }, task_id: "upstream-one", data: { status: "completed", url: "https://cdn.example/video.mp4" }, metadata: { clientRequestId: "request-one" } };
+        const body = { event: { id: "event-one" }, task_id: "upstream-one", data: { status: "completed", url: "https://cdn.example/video.mp4" } };
         const response = await POST(request(body), context());
 
         expect(response.status).toBe(200);
@@ -49,10 +60,18 @@ describe("POST /api/generation-webhooks/:channelId", () => {
             channelId: "channel-one",
             eventId: "event-one",
             upstreamTaskId: "upstream-one",
-            clientRequestId: "request-one",
             upstreamStatus: "completed",
             resultUrl: "https://cdn.example/video.mp4",
             rawBody: JSON.stringify(body),
+            signatureTimestamp: "2026-08-01T00:00:00.000Z",
+        });
+        expect(mocks.verify).toHaveBeenCalledWith({
+            channelId: "channel-one",
+            eventId: "event-one",
+            timestamp: "2026-08-01T00:00:00.000Z",
+            rawBody: JSON.stringify(body),
+            signature: "signature",
+            secret: fixtureWebhookSecret,
         });
     });
 });
@@ -60,7 +79,7 @@ describe("POST /api/generation-webhooks/:channelId", () => {
 function request(body: unknown) {
     return new Request("http://localhost/api/generation-webhooks/channel-one", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-dq-signature": "signature" },
+        headers: { "content-type": "application/json", "x-dq-event-id": "event-one", "x-dq-signature": "signature", "x-dq-timestamp": "2026-08-01T00:00:00.000Z" },
         body: JSON.stringify(body),
     });
 }

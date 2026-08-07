@@ -262,7 +262,7 @@ export const AnimatedThemeToggler = ({ children, className, duration = 400, vari
 
         if (themeTransitionCoordinator.interrupt(applyTheme)) return;
 
-        if (typeof document.startViewTransition !== "function") {
+        if (duration <= 0 || window.matchMedia("(prefers-reduced-motion: reduce)").matches || typeof document.startViewTransition !== "function") {
             applyTheme();
             return;
         }

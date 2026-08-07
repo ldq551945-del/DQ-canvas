@@ -11,20 +11,39 @@ type ChannelCredentialInput = {
 export function serializeAdminSettings(settings: AuthSettings): AuthSettings {
     return {
         ...settings,
-        systemChannels: settings.systemChannels.map(({ clearApiKey: _clearApiKey, ...channel }) => ({
-            ...channel,
-            apiKey: "",
-            hasApiKey: isUsableAdminChannelApiKey(channel.apiKey),
-        })),
+        systemChannels: settings.systemChannels.map((channel) => {
+            const serialized = channelWithoutSecretControls(channel);
+            return {
+                ...serialized,
+                apiKey: "",
+                webhookSecret: "",
+                hasApiKey: isUsableAdminChannelApiKey(channel.apiKey),
+                hasWebhookSecret: isUsableAdminChannelWebhookSecret(channel.webhookSecret),
+            };
+        }),
     };
 }
 
 export function mergeSystemChannelSecrets(channels: SystemModelChannel[], savedChannels: SystemModelChannel[]) {
     const savedById = new Map(savedChannels.map((channel) => [channel.id, channel]));
-    return channels.map(({ hasApiKey: _hasApiKey, clearApiKey, ...channel }) => ({
-        ...channel,
-        apiKey: clearApiKey ? "" : usableApiKey(channel.apiKey) || usableApiKey(savedById.get(channel.id)?.apiKey),
-    }));
+    return channels.map((channel) => {
+        const saved = savedById.get(channel.id);
+        const submittedWebhookSecret = plainSecret(channel.webhookSecret);
+        const merged = channelWithoutSecretControls(channel);
+        return {
+            ...merged,
+            apiKey: channel.clearApiKey ? "" : usableApiKey(channel.apiKey) || usableApiKey(saved?.apiKey),
+            webhookSecret: channel.clearWebhookSecret ? "" : submittedWebhookSecret || usableWebhookSecret(saved?.webhookSecret),
+        };
+    });
+}
+
+export function systemChannelWebhookSecretValidationError(channel: SystemModelChannel) {
+    const secret = plainSecret(channel.webhookSecret);
+    if (!secret) return "";
+    if (secret.length < 32) return `渠道“${channel.name || channel.id}”的生成回调密钥至少需要 32 个字符`;
+    if (secret.length > 4_000) return `渠道“${channel.name || channel.id}”的生成回调密钥不能超过 4000 个字符`;
+    return "";
 }
 
 export function resolveAdminChannelCredentials(settings: AuthSettings, input: ChannelCredentialInput) {
@@ -43,6 +62,11 @@ export function resolveAdminChannelCredentials(settings: AuthSettings, input: Ch
 export function isUsableAdminChannelApiKey(value: unknown) {
     const apiKey = text(value);
     return Boolean(apiKey) && !isEncryptedSecretValue(apiKey);
+}
+
+export function isUsableAdminChannelWebhookSecret(value: unknown) {
+    const secret = text(value);
+    return secret.length >= 32 && !isEncryptedSecretValue(secret);
 }
 
 export function sanitizeProviderMessage(value: unknown, secrets: string[] = []) {
@@ -66,4 +90,22 @@ function text(value: unknown) {
 function usableApiKey(value: unknown) {
     const apiKey = text(value);
     return isUsableAdminChannelApiKey(apiKey) ? apiKey : "";
+}
+
+function usableWebhookSecret(value: unknown) {
+    return isUsableAdminChannelWebhookSecret(value) ? text(value) : "";
+}
+
+function plainSecret(value: unknown) {
+    const secret = text(value);
+    return secret && !isEncryptedSecretValue(secret) ? secret : "";
+}
+
+function channelWithoutSecretControls(channel: SystemModelChannel) {
+    const result = { ...channel };
+    delete result.hasApiKey;
+    delete result.clearApiKey;
+    delete result.hasWebhookSecret;
+    delete result.clearWebhookSecret;
+    return result;
 }

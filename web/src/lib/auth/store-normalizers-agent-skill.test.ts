@@ -16,4 +16,34 @@ describe("normalizeAgentSkill", () => {
 
         expect(skill.plannerSummary).toHaveLength(240);
     });
+
+    it("preserves normalized GitHub provenance across settings persistence", () => {
+        const commit = "0123456789abcdef0123456789abcdef01234567";
+        const skill = normalizeAgentSkill({
+            id: "github-skill",
+            name: "公开 Skill",
+            description: "公开说明",
+            instructions: "完整执行规则",
+            enabled: false,
+            keywords: [],
+            sourceUrl: ` https://github.com/acme/skills/blob/${commit}/SKILL.md `,
+            sourceRepository: " acme/skills ",
+            sourcePath: " poster/SKILL.md ",
+            sourceVersion: ` ${commit} `,
+            sourceCommit: ` ${commit} `,
+            sourceContentHash: ` ${"a".repeat(64)} `,
+            license: " MIT ",
+        });
+
+        expect(skill).toMatchObject({
+            enabled: false,
+            sourceUrl: `https://github.com/acme/skills/blob/${commit}/SKILL.md`,
+            sourceRepository: "acme/skills",
+            sourcePath: "poster/SKILL.md",
+            sourceVersion: commit,
+            sourceCommit: commit,
+            sourceContentHash: "a".repeat(64),
+            license: "MIT",
+        });
+    });
 });

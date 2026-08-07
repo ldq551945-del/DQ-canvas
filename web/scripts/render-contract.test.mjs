@@ -12,11 +12,11 @@ const repoRoot = path.resolve(webRoot, "..");
 const source = readFileSync(path.join(repoRoot, "render.yaml"), "utf8");
 
 describe("Render Blueprint contract", () => {
-    it("keeps the Web, Worker, database, shared secret, health check and disk topology aligned", () => {
+    it("keeps the Web, Worker, database, isolated secrets, health check and disk topology aligned", () => {
         expect(validateRenderBlueprint({ repoRoot })).toEqual({
             services: ["dq", "dq-generation-worker"],
             database: "dq-postgres",
-            environmentGroup: "dq-runtime",
+            environmentGroup: "dq-worker-auth",
         });
     });
 
@@ -34,7 +34,14 @@ describe("Render Blueprint contract", () => {
         const blueprint = parse(source);
         blueprint.services[0].envVars = "invalid";
 
-        expect(() => validateSource(stringify(blueprint))).toThrow("Web 与 Worker 必须引用同一运行时环境组");
+        expect(() => validateSource(stringify(blueprint))).toThrow("Web 与 Worker 必须只共享 Worker 认证环境组");
+    });
+
+    it("rejects extra application secrets in the Worker environment group", () => {
+        const blueprint = parse(source);
+        blueprint.envVarGroups[0].envVars.push({ key: "DQ_INSTALL_TOKEN", generateValue: true });
+
+        expect(() => validateSource(stringify(blueprint))).toThrow("Worker 认证环境组禁止包含其他应用密钥");
     });
 
     it("rejects an image that omits the Sharp native runtime", () => {
@@ -43,6 +50,12 @@ describe("Render Blueprint contract", () => {
         const unsafe = dockerfile.replace("COPY --from=web-build /app/sharp-runtime/node_modules/.pnpm /app/web/node_modules/.pnpm", "");
 
         expect(() => validateRenderBlueprint({ repoRoot, dockerfile: unsafe })).toThrow("生产镜像缺少 Sharp 原生依赖");
+    });
+
+    it("rejects a root runtime image or a mismatched PostgreSQL backup client", () => {
+        const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8").replace("USER node", "").replace("postgresql-client-16", "postgresql-client");
+
+        expect(() => validateRenderBlueprint({ repoRoot, dockerfile })).toThrow("生产镜像必须使用非 root 用户");
     });
 
     it("rejects an image that can collect no Sharp native package", () => {

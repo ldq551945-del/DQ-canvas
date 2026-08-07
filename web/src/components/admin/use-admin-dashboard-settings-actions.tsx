@@ -33,9 +33,10 @@ import { LabeledControl, SectionTitle, SettingInlineToggle, SettingToggle } from
 import { SiteLogoPreview, SiteSettingStatus, SiteShowcasePreview, siteSocialItems } from "@/components/admin/admin-site-preview";
 import { channelHealthKinds, createDefaultChannelAdvancedConfig, healthKindLabel, SystemChannelEditor } from "@/components/admin/admin-system-channel-editor";
 import type { ChannelHealthKind, ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
+import { adminModelsChannelPatch } from "@/components/admin/admin-model-fetch";
 import { normalizeModelId } from "@/lib/model-capability";
 import { channelHealthSnapshot } from "@/lib/channel-health-result";
-import { channelConnectionReady, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
+import { channelConnectionReady } from "@/lib/channel-protocol-registry";
 import { formatAdminMoney, toNumberOrOne, toNumberOrZero, uniqueList } from "@/components/admin/admin-values";
 import {
     ArrowRight,
@@ -72,24 +73,9 @@ import dayjs from "dayjs";
 import { nanoid } from "nanoid";
 
 import { formatCreditAmount } from "@/constant/credits";
-import { normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
-import { buildGlobalAiOpcSelection, isGlobalAiOpcBaseUrl } from "@/lib/globalaiopc-catalog";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    PublicUserSummary,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
+import { normalizeDefaultModelsConfig, synchronizeModelRoutingWithChannels } from "@/lib/model-routing-config";
+import { isGlobalAiOpcBaseUrl } from "@/lib/globalaiopc-catalog";
+import type { AgentSkill, AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, PublicUserSummary, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
 import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
@@ -140,7 +126,6 @@ import {
     buildAdvancedConfigFromHealth,
     firstOkResult,
     requestAdminModels,
-    type AdminModelsResult,
     selectChannelHealthModel,
     modelNameFromOption,
     isCdkExpired,
@@ -161,9 +146,8 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
     const {} = data;
 
     const updateChannel = (id: string, patch: Partial<SystemModelChannel>) => {
-        setSettings((current) => ({
-            ...current,
-            systemChannels: current.systemChannels.map((channel) => {
+        setSettings((current) => {
+            const systemChannels = current.systemChannels.map((channel) => {
                 if (channel.id !== id) return channel;
                 const invalidatesHealth = patch.healthResults === undefined && ["baseUrl", "apiKey", "apiFormat", "models", "advancedConfig"].some((key) => key in patch);
                 return {
@@ -173,8 +157,10 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
                     apiFormat: patch.apiFormat || channel.apiFormat,
                     models: patch.models ? uniqueList(patch.models) : channel.models,
                 };
-            }),
-        }));
+            });
+            if (!("models" in patch)) return { ...current, systemChannels };
+            return { ...current, systemChannels, ...synchronizeModelRoutingWithChannels(current.logicalModels, current.defaultModels, systemChannels) };
+        });
     };
 
     const updateChannelHealth = (id: string, result: ChannelHealthResult) => {
@@ -434,13 +420,13 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
             const entries = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
             const modelMap = new Map(entries);
             if (modelMap.size) {
-                setSettings((current) => ({
-                    ...current,
-                    systemChannels: current.systemChannels.map((channel) => {
+                setSettings((current) => {
+                    const systemChannels = current.systemChannels.map((channel) => {
                         const result = modelMap.get(channel.id);
                         return result ? { ...channel, ...adminModelsChannelPatch(channel, result) } : channel;
-                    }),
-                }));
+                    });
+                    return { ...current, systemChannels, ...synchronizeModelRoutingWithChannels(current.logicalModels, current.defaultModels, systemChannels) };
+                });
             }
             const failedChannels = results.flatMap((result, index) => (result.status === "rejected" ? [`${runnable[index].name || "未命名渠道"}：${result.reason instanceof Error ? result.reason.message : "拉取模型失败"}`] : []));
             if (!failedChannels.length) message.success("模型列表已拉取");
@@ -602,55 +588,3 @@ export function useAdminDashboardSettingsActions({ state, data }: { state: Admin
 }
 
 export type AdminDashboardSettingsActions = ReturnType<typeof useAdminDashboardSettingsActions>;
-
-function adminModelsChannelPatch(channel: SystemModelChannel, result: AdminModelsResult): Partial<SystemModelChannel> {
-    const advanced = channel.advancedConfig || createDefaultChannelAdvancedConfig();
-    const models = uniqueList([...channel.models, ...result.models]);
-    const modelCapabilities = { ...(advanced.modelCapabilities || {}), ...(result.modelCapabilities || {}) };
-    const modelConfigs = mergeAdminModelConfigs(advanced.modelConfigs, result.modelConfigs, advanced.protocol);
-    if (!result.globalAiOpcPresets?.length) {
-        return {
-            models,
-            advancedConfig: {
-                ...advanced,
-                ...(result.recommendedConfig || {}),
-                modelCapabilities,
-                modelConfigs,
-            },
-        };
-    }
-    const selection = buildGlobalAiOpcSelection(result.globalAiOpcPresets);
-    const onlyPreset = selection.presetIds.length === 1;
-    return {
-        models: uniqueList([...models, ...selection.models]),
-        apiFormat: selection.apiFormat,
-        advancedConfig: {
-            ...advanced,
-            protocol: "globalaiopc",
-            globalAiOpcPresets: selection.presetIds,
-            globalAiOpcPreset: onlyPreset ? selection.presetIds[0] : undefined,
-            textModel: selection.textModel,
-            imageModel: selection.imageModel,
-            videoModel: selection.videoModel,
-            createPath: selection.createPath,
-            queryPath: selection.queryPath,
-            requestTemplate: "",
-            durationRange: selection.durationRange,
-            referenceRule: "参考素材使用可被上游访问的公网 URL；由服务器在提交前生成受控访问地址。",
-            supportsReferenceImage: selection.supportsReferenceImage,
-            supportsReferenceVideo: selection.supportsReferenceVideo,
-            supportsReferenceAudio: selection.supportsReferenceAudio,
-            modelCapabilities,
-            modelConfigs,
-        },
-    };
-}
-
-function mergeAdminModelConfigs(current: SystemChannelAdvancedConfig["modelConfigs"], discovered: SystemChannelAdvancedConfig["modelConfigs"], channelProtocol: SystemChannelAdvancedConfig["protocol"]) {
-    const merged = { ...(current || {}), ...(discovered || {}) };
-    Object.entries(current || {}).forEach(([model, config]) => {
-        const protocol = config.protocol || channelProtocol;
-        if (config.source === "manual" && (protocol !== channelProtocol || !channelProtocolDefinition(protocol).strict || !merged[model])) merged[model] = config;
-    });
-    return Object.fromEntries(Object.entries(merged).map(([model, config]) => [model, normalizeStrictProtocolModelConfig(config, channelProtocol)]));
-}

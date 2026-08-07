@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { SystemModelChannel } from "@/lib/auth/store";
-import { applyChannelProtocol, applyModelProtocol, channelCredentialsReady, channelProtocolOptions, channelProtocolValidationErrors, normalizeStrictProtocolModelConfig, protocolAuthHeaders, resolveChannelModelConfig } from "./channel-protocol-registry";
+import {
+    applyChannelProtocol,
+    applyModelProtocol,
+    channelCredentialsReady,
+    channelProtocolDefinition,
+    channelProtocolOptions,
+    channelProtocolValidationErrors,
+    normalizeStrictProtocolModelConfig,
+    protocolAuthHeaders,
+    resolveChannelModelConfig,
+} from "./channel-protocol-registry";
 
 const channel = {
     id: "one",
@@ -16,7 +26,40 @@ const channel = {
 describe("channel protocol registry", () => {
     it("exposes SD2 video and Stable Diffusion image as separate protocols", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);
-        expect(protocols).toEqual(expect.arrayContaining(["openai", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "seedance-special", "custom"]));
+        expect(protocols).toEqual(expect.arrayContaining(["openai", "grok2api", "seedance", "stable-diffusion", "volcengine-video", "sub2api", "newapi", "vozeb-recommended", "qingyan", "seedance-special", "custom"]));
+        expect(channelProtocolDefinition("vozeb-recommended").modelCatalogPaths).toEqual(["/v1/models"]);
+    });
+
+    it("applies the strict Grok2API JSON video contract", () => {
+        expect(applyModelProtocol({ capability: "video" }, "grok2api")).toMatchObject({
+            protocol: "grok2api",
+            createPath: "/v1/videos/generations",
+            imageToVideoPath: "/v1/videos/generations",
+            queryPath: "/v1/videos/:task_id",
+            resultField: "video.url",
+            statusField: "status",
+        });
+    });
+
+    it("applies the VOZEB recommended JSON video contract", () => {
+        const configured = applyChannelProtocol({ ...channel, models: ["Seedance 2.0-fast-720p"] }, "vozeb-recommended");
+
+        expect(configured).toMatchObject({ baseUrl: "https://new.aiym.ink/v1", apiFormat: "openai" });
+        expect(configured.advancedConfig).toMatchObject({
+            protocol: "vozeb-recommended",
+            createPath: "/v1/videos/generations",
+            imageToVideoPath: "/v1/videos/generations",
+            queryPath: "/v1/videos/generations/:task_id",
+            resultField: "metadata.url",
+            statusField: "status",
+        });
+        expect(configured.advancedConfig?.modelCapabilities?.["seedance 2.0-fast-720p"]).toBe("video");
+        expect(channelProtocolValidationErrors(configured)).toEqual([]);
+    });
+
+    it("classifies opaque models from strict single-capability protocols", () => {
+        expect(applyChannelProtocol({ ...channel, models: ["opaque"] }, "seedance").advancedConfig?.modelCapabilities?.opaque).toBe("video");
+        expect(applyChannelProtocol({ ...channel, models: ["opaque"] }, "stable-diffusion").advancedConfig?.modelCapabilities?.opaque).toBe("image");
     });
 
     it("applies independent image edit and image-to-video paths", () => {

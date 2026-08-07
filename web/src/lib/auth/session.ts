@@ -2,7 +2,8 @@ import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 
 import { deleteSession, getPublicUsersByIds, getUserBySession, sessionMaxAgeSeconds, type AuthSettings, type PublicUser } from "./store";
-import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
+import { getTrustedForwardedProtocol } from "@/lib/trusted-proxy";
 
 const SESSION_COOKIE_NAME = "dq_session";
 
@@ -16,7 +17,7 @@ async function getSessionCookieValue() {
 export async function getCurrentUser(request?: Request) {
     const sessionUser = await getUserBySession(await getSessionCookieValue());
     if (sessionUser || !request) return sessionUser;
-    const workerUserId = authorizedMaintenanceUserId(request);
+    const workerUserId = authorizedWorkerUserId(request);
     if (!workerUserId) return null;
     const workerUser = (await getPublicUsersByIds([workerUserId]))[0];
     return workerUser?.status === "active" ? workerUser : null;
@@ -52,12 +53,8 @@ function shouldUseSecureSessionCookie(request?: Request) {
     if (["1", "true", "yes", "on"].includes(override || "")) return true;
     if (["0", "false", "no", "off"].includes(override || "")) return false;
 
-    const forwardedProto = request?.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+    const forwardedProto = request ? getTrustedForwardedProtocol(request.headers) : "";
     if (forwardedProto) return forwardedProto === "https";
-
-    const forwarded = request?.headers.get("forwarded") || "";
-    const forwardedProtoMatch = forwarded.match(/(?:^|;|,)\s*proto=([^;,]+)/i);
-    if (forwardedProtoMatch?.[1]) return forwardedProtoMatch[1].replace(/^"|"$/g, "").toLowerCase() === "https";
 
     if (request?.url) {
         try {
@@ -96,20 +93,58 @@ export function serializeCurrentUser(user: CurrentUser) {
 
 export function serializePublicSettings(settings: AuthSettings) {
     return {
-        site: settings.site,
+        site: {
+            title: settings.site.title,
+            logoUrl: settings.site.logoUrl,
+            iconUrl: settings.site.iconUrl,
+            seoTitle: settings.site.seoTitle,
+            seoDescription: settings.site.seoDescription,
+            seoKeywords: settings.site.seoKeywords,
+            footerCopyright: settings.site.footerCopyright,
+            termsUrl: settings.site.termsUrl,
+            privacyUrl: settings.site.privacyUrl,
+            homeShowcaseMode: settings.site.homeShowcaseMode,
+            homeShowcaseItems: settings.site.homeShowcaseItems.map((item) => ({
+                id: item.id,
+                title: item.title,
+                coverUrl: item.coverUrl,
+                prompt: item.prompt,
+                tags: [...item.tags],
+                category: item.category,
+            })),
+            friendLinks: settings.site.friendLinks.map((item) => ({ id: item.id, label: item.label, url: item.url, enabled: item.enabled })),
+            socials: Object.fromEntries(Object.entries(settings.site.socials).map(([key, item]) => [key, { enabled: item.enabled, label: item.label, url: item.url }])),
+        },
         registrationEnabled: settings.registrationEnabled,
         emailRegistrationEnabled: settings.emailRegistrationEnabled,
-        modelPointCosts: settings.modelPointCosts,
-        generationPointMultipliers: settings.generationPointMultipliers,
-        entitlements: {
-            enabled: settings.entitlements.enabled,
-            defaultPlanId: settings.entitlements.defaultPlanId,
-            plans: settings.entitlements.plans.filter((plan) => plan.enabled).map((plan) => ({ id: plan.id, name: plan.name, features: plan.features })),
+        modelPointCosts: { ...settings.modelPointCosts },
+        generationPointMultipliers: {
+            imageQuality: { ...settings.generationPointMultipliers.imageQuality },
+            videoQuality: { ...settings.generationPointMultipliers.videoQuality },
+            videoSeconds: { ...settings.generationPointMultipliers.videoSeconds },
         },
-        generationConcurrency: settings.generationConcurrency,
-        generationDefaults: settings.generationDefaults,
-        defaultModels: settings.defaultModels,
-        logicalModels: settings.logicalModels,
+        generationConcurrency: { ...settings.generationConcurrency },
+        generationDefaults: {
+            canvasImageCount: settings.generationDefaults.canvasImageCount,
+            imageSize: settings.generationDefaults.imageSize,
+            imageQuality: settings.generationDefaults.imageQuality,
+            imageCount: settings.generationDefaults.imageCount,
+            videoQuality: settings.generationDefaults.videoQuality,
+            videoSeconds: settings.generationDefaults.videoSeconds,
+            audioVoice: settings.generationDefaults.audioVoice,
+            audioFormat: settings.generationDefaults.audioFormat,
+            workbenchSmartPlanning: { ...settings.generationDefaults.workbenchSmartPlanning },
+        },
+        defaultModels: { ...settings.defaultModels },
+        logicalModels: settings.logicalModels
+            .filter((model) => model.enabled)
+            .map((model) => ({
+                id: model.id,
+                name: model.name,
+                capability: model.capability,
+                enabled: true,
+                bindings: model.bindings.filter((binding) => binding.enabled).map((binding) => ({ id: binding.id, channelId: binding.channelId, upstreamModel: binding.upstreamModel, enabled: true, priority: binding.priority })),
+            })),
         systemChannels: settings.systemChannels
             .filter((channel) => channel.enabled)
             .map((channel) => ({
@@ -121,7 +156,6 @@ export function serializePublicSettings(settings: AuthSettings) {
                 models: channel.models,
                 enabled: channel.enabled,
                 hasApiKey: Boolean(channel.apiKey),
-                advancedConfig: channel.advancedConfig,
             })),
     };
 }

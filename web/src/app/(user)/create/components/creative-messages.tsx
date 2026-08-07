@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, Tooltip } from "antd";
-import { Check, Clapperboard, Copy, Download, ExternalLink, FileAudio2, Film, Link2, LoaderCircle, PanelsTopLeft, RotateCcw } from "lucide-react";
+import { Check, Clapperboard, Copy, Download, ExternalLink, FileAudio2, Film, Link2, LoaderCircle, PanelsTopLeft, RotateCcw, Settings2 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -41,6 +41,7 @@ export function CreativeMessages({
     hasOlder,
     olderLoading,
     onLoadOlder,
+    canConfigureModels,
 }: {
     messages: CreativeMessage[];
     assets: CreativeAsset[];
@@ -59,6 +60,7 @@ export function CreativeMessages({
     hasOlder?: boolean;
     olderLoading?: boolean;
     onLoadOlder?: () => void;
+    canConfigureModels: boolean;
 }) {
     const endRef = useRef<HTMLDivElement>(null);
     const site = usePublicSessionStore((state) => state.payload?.settings?.site) || { title: "DQ-绘图", logoUrl: "/logo.svg" };
@@ -123,7 +125,9 @@ export function CreativeMessages({
                                 />
                             ) : null}
                             {item.role === "assistant" && run && failedTasks.length ? <FailedTaskActions run={run} onRetryTask={onRetryTask} /> : null}
-                            {item.role === "assistant" && item.status === "failed" && run?.status === "failed" && !run.tasks.length ? <FailedPlanningAction onRetry={() => onRetryRun(run.id)} /> : null}
+                            {item.role === "assistant" && item.status === "failed" && run?.status === "failed" && !run.tasks.length ? (
+                                <FailedPlanningAction error={displayContent} canConfigureModels={canConfigureModels} onRetry={() => onRetryRun(run.id)} />
+                            ) : null}
                             {item.role === "assistant" && item.status === "failed" && !item.runId ? <FailedSubmissionAction onRetry={() => onRetrySubmission(item.id)} /> : null}
                             {item.status !== "running" ? (
                                 <AgentMessageActions
@@ -173,9 +177,15 @@ function FailedSubmissionAction({ onRetry }: { onRetry: () => void }) {
     );
 }
 
-function FailedPlanningAction({ onRetry }: { onRetry: () => void }) {
+function FailedPlanningAction({ error, canConfigureModels, onRetry }: { error: string; canConfigureModels: boolean; onRetry: () => void }) {
+    const missingModelConfiguration = isMissingModelConfigurationError(error);
     return (
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+            {missingModelConfiguration && canConfigureModels ? (
+                <Button type="primary" size="small" className="!h-8 !rounded-md !px-2 !text-xs !font-medium" icon={<Settings2 className="size-3.5" />} href="/admin?section=channels" aria-label="打开模型配置">
+                    配置模型
+                </Button>
+            ) : null}
             <Button
                 type="text"
                 size="small"
@@ -186,9 +196,14 @@ function FailedPlanningAction({ onRetry }: { onRetry: () => void }) {
             >
                 重新分析
             </Button>
-            <span className="text-xs text-stone-500 dark:text-stone-400">仅在你确认后重新请求</span>
+            <span className="text-xs text-stone-500 dark:text-stone-400">{missingModelConfiguration ? (canConfigureModels ? "配置完成后返回并重新分析" : "请联系管理员配置可用模型后再试") : "仅在你确认后重新请求"}</span>
         </div>
     );
+}
+
+function isMissingModelConfigurationError(message: string) {
+    const normalized = message.replace(/\s+/g, "");
+    return normalized.includes("模型") && (normalized.includes("未配置") || normalized.includes("没有可用") || normalized.includes("缺少配置"));
 }
 
 function CreativeReferenceStrip({ assets }: { assets: CreativeAsset[] }) {

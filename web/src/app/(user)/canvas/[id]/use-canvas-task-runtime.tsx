@@ -4,13 +4,12 @@ import dynamic from "next/dynamic";
 import { useCallback } from "react";
 
 import { createFreshGenerationTaskContext } from "@/lib/generation-request-context";
-import { recordGenerationLog } from "@/services/api/generation-logs";
 import { storeGeneratedAudio, waitForAudioGenerationTask } from "@/services/api/audio";
 import { cancelCanvasGenerationTask } from "@/services/api/generation-tasks";
 import { createImageGenerationTask, waitForImageGenerationTask, type ImageGenerationTask } from "@/services/api/image";
 import { waitForTextGenerationTask, type TextGenerationTask } from "@/services/api/text";
 import { storeGeneratedVideo, waitForVideoGenerationTask } from "@/services/api/video";
-import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
+import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { NODE_DEFAULT_SIZE } from "../constants";
 import { CanvasNodeType, type CanvasNodeMetadata } from "../types";
@@ -312,40 +311,6 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
             assertGenerationRequestActive(nodeId, controller);
             const video = await storeGeneratedVideo(completedTask);
             assertGenerationRequestActive(nodeId, controller);
-            const finalPrompt = prompt || "";
-            const loggedAssetPromise = recordGenerationLog({
-                id: `canvas-video:${task.id || nodeId}`,
-                taskId: task.id,
-                kind: "video",
-                source: "canvas",
-                status: "success",
-                title: finalPrompt.slice(0, 36) || "画布视频",
-                prompt: finalPrompt,
-                model: modelOptionName(generationConfig.model || generationConfig.videoModel),
-                summary: "画布视频生成完成",
-                durationMs: video.durationMs,
-                count: 1,
-                successCount: 1,
-                failCount: 0,
-                assets:
-                    video.serverUrl || (video.url && !video.url.startsWith("blob:") ? video.url : "") || video.remoteUrl || ""
-                        ? [
-                              {
-                                  type: "video",
-                                  url: video.serverUrl || video.url || video.remoteUrl || "",
-                                  remoteUrl: video.remoteUrl,
-                                  serverUrl: video.serverUrl,
-                                  mimeType: video.mimeType,
-                                  width: video.width,
-                                  height: video.height,
-                                  bytes: video.bytes,
-                              },
-                          ]
-                        : [],
-                completedAt: Date.now(),
-            })
-                .then((log) => log.assets[0])
-                .catch(() => undefined);
             setNodes((prev) =>
                 prev.map((node) => {
                     if (node.id !== nodeId) return node;
@@ -384,23 +349,6 @@ export function useCanvasTaskRuntime({ state }: { state: CanvasPageState }) {
                     };
                 }),
             );
-            void loggedAssetPromise.then((asset) => {
-                if (!asset?.serverUrl && !asset?.remoteUrl) return;
-                setNodes((prev) =>
-                    prev.map((node) =>
-                        node.id === nodeId && node.metadata?.content === video.url
-                            ? {
-                                  ...node,
-                                  metadata: {
-                                      ...node.metadata,
-                                      remoteUrl: asset.remoteUrl || node.metadata?.remoteUrl,
-                                      serverUrl: asset.serverUrl || node.metadata?.serverUrl,
-                                  },
-                              }
-                            : node,
-                    ),
-                );
-            });
         },
         [assertGenerationRequestActive, isGenerationRequestActive],
     );

@@ -9,8 +9,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/server/maintenance-auth", () => ({
-    isMaintenanceTokenConfigured: mocks.configured,
-    isAuthorizedMaintenanceRequest: mocks.authorized,
+    isWorkerTokenConfigured: mocks.configured,
+    isAuthorizedWorkerRequest: mocks.authorized,
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
 vi.mock("@/lib/server/generation-worker-heartbeat", () => ({ recordGenerationWorkerHeartbeat: mocks.heartbeat }));
@@ -29,14 +29,14 @@ describe("POST /api/maintenance/generation-tasks/run", () => {
         mocks.install.mockResolvedValue({ database: { schemaReady: true } });
     });
 
-    it("refuses to run without a configured maintenance token", async () => {
+    it("refuses to run without a configured Worker token", async () => {
         mocks.configured.mockReturnValue(false);
         const response = await POST(request());
         expect(response.status).toBe(503);
         expect(mocks.recover).not.toHaveBeenCalled();
     });
 
-    it("requires maintenance authentication", async () => {
+    it("requires Worker authentication", async () => {
         mocks.authorized.mockReturnValue(false);
         const response = await POST(request());
         expect(response.status).toBe(401);

@@ -40,6 +40,27 @@ describe("image task provider reference hydration", () => {
         expect(mocks.dataUrl).toHaveBeenCalledWith(task.mask, "mask.png", "http://internal", "worker-context");
     });
 
+    it("builds one documented Grok2API JSON edit payload", async () => {
+        const task = imageTask();
+        task.config.model = "grok-imagine-image-edit";
+        task.config.size = "16:9";
+
+        const bodies = await buildJsonImageEditBodies(task, "high", "1456x816", "url", "http://internal", "https://public.example", false, false, false, "worker-context");
+
+        expect(bodies).toEqual([
+            expect.objectContaining({
+                model: "grok-imagine-image-edit",
+                aspect_ratio: "16:9",
+                resolution: "2k",
+                response_format: "url",
+                image: { url: "data:image/png;base64,first" },
+                images: [{ url: "data:image/png;base64,second" }],
+            }),
+        ]);
+        expect(bodies[0]).not.toHaveProperty("size");
+        expect(bodies[0]).not.toHaveProperty("quality");
+    });
+
     it("hydrates recovered references for OpenAI Responses input images", async () => {
         const task = imageTask();
 

@@ -4,6 +4,7 @@ import { after, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { isGrok2ApiImageModel } from "@/lib/grok2api";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
@@ -26,9 +27,13 @@ import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { resolveModelPollingAttempts, resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
-import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { workerContextHeaders } from "@/lib/server/maintenance-auth";
 import { fetchSafeExternalMedia } from "@/lib/server/media-download";
+import { detectSafeMediaBuffer } from "@/lib/server/media-content-validation";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
+import { publicGenerationTaskState } from "@/lib/server/generation-task-public-state";
+import type { StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 
 import {
     type CreateImageTaskBody,
@@ -58,12 +63,15 @@ import {
     type ImageEditReferenceMode,
 } from "./image-task-types";
 
-export function publicTask(task: ImageTask) {
+export function publicTask(task: ImageTask, metadata?: Partial<Pick<StoredGenerationTaskRecord, "executionPhase" | "submittedAt" | "lastPollAt" | "lastUpstreamStatus" | "resultPayload" | "createdAt" | "updatedAt">>) {
+    const state = publicGenerationTaskState(task, metadata);
     return {
         id: task.id,
         kind: task.kind,
         status: task.status,
         model: generationModelId(task.config),
+        ...state,
+        needsReview: state.publicStatus === "needs_review",
     };
 }
 
@@ -148,6 +156,7 @@ export function isStandardOpenAiImageGenerationPath(path: string) {
 
 export async function shouldUseJsonImageEdit(config: ImageTaskConfig) {
     if (globalAiOpcImagePreset(config)) return true;
+    if (isGrok2ApiImageModel(config.model)) return true;
     const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
     const referenceMode = configuredImageEditReferenceMode(config);
     if (shouldUseSub2ApiImageEdit(config, apiBase)) return true;
@@ -241,7 +250,7 @@ export function isInternalSystemProxyBase(value: string) {
 export function taskHeaders(config: ImageTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
     const headers = new Headers();
     const internal = config.baseUrl.startsWith("/");
-    const workerHeaders = maintenanceWorkerContextHeaders(cookie);
+    const workerHeaders = workerContextHeaders(cookie);
     if (internal && workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (internal && cookie) headers.set("cookie", cookie);
     if (internal) Object.entries(systemAiBillingHeaders(generationModelId(config), pointsIdempotencyKey, config.model)).forEach(([key, value]) => headers.set(key, value));
@@ -259,8 +268,7 @@ export function taskFetch(config: ImageTaskConfig, url: string, init: RequestIni
         ...init,
         signal: init.signal || AbortSignal.timeout(imageTaskRequestTimeoutMs(config)),
     };
-    if (!isInternalApiBaseUrl(config.baseUrl)) return fetch(url, nextInit);
-    if (typeof FormData !== "undefined" && nextInit.body instanceof FormData) return fetch(url, nextInit);
+    if (!isInternalApiBaseUrl(config.baseUrl)) return fetchSafeOutboundUrl(url, nextInit);
     return fetchInternalApi(url, nextInit);
 }
 
@@ -495,6 +503,16 @@ export function resolveTaskMediaUrl(config: ImageTaskConfig, value: string, base
     return `${proxyBase}/_media?url=${encodeURIComponent(remoteUrl)}`;
 }
 
+/** Convert a persisted upstream media address into a task-authorized system proxy URL. */
+export async function normalizeImageResultUrlForPersistence(config: ImageTaskConfig, value: string, origin: string) {
+    const trimmed = value.trim();
+    if (!trimmed || /^(data|blob):/i.test(trimmed) || resolveProxiedMediaSource(trimmed, origin).proxyUrl) return trimmed;
+    if (!config.baseUrl.startsWith("/api/ai/system/")) return trimmed;
+    const apiBase = await resolveConfiguredApiBaseUrl(config.baseUrl).catch(() => config.baseUrl);
+    const source = resolveGeneratedMediaUrl(trimmed, apiBase || origin);
+    return resolveTaskMediaUrl(config, source, origin);
+}
+
 export function shouldRetryInternalImageUrlAsBase64(result: ImageTaskResult) {
     return isInternalGeneratedImageUrl(result.remoteUrl || "") || isInternalGeneratedImageUrl(result.dataUrl || "");
 }
@@ -510,7 +528,7 @@ export function isInternalGeneratedImageUrl(value: string) {
     }
 }
 
-export async function inlineRemoteImageResult(value: string, origin: string, cookie: string, remoteFallback?: string) {
+export async function inlineRemoteImageResult(value: string, origin: string, cookie: string, remoteFallback?: string, internalHeaders?: HeadersInit) {
     const url = (value || "").trim();
     if (!url || url.startsWith("data:")) return { dataUrl: url, remoteUrl: remoteFallback };
     const mediaSource = resolveProxiedMediaSource(url, origin);
@@ -522,20 +540,25 @@ export async function inlineRemoteImageResult(value: string, origin: string, coo
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), INLINE_IMAGE_TIMEOUT_MS);
     try {
-        const workerHeaders = maintenanceWorkerContextHeaders(cookie);
-        const response = await fetch(fetchUrl, {
-            headers: url.startsWith("/") ? workerHeaders || (cookie ? { cookie } : undefined) : undefined,
+        const workerHeaders = workerContextHeaders(cookie);
+        const headers = new Headers(workerHeaders || (cookie ? { cookie } : undefined));
+        new Headers(internalHeaders).forEach((headerValue, key) => headers.set(key, headerValue));
+        const response = await (url.startsWith("/") ? fetchInternalApi : fetchSafeOutboundUrl)(fetchUrl, {
+            headers: url.startsWith("/") ? headers : undefined,
             cache: "no-store",
             signal: controller.signal,
         });
         if (!response.ok || !response.body) return { dataUrl: url, remoteUrl: fallbackUrl };
         const contentLength = Number(response.headers.get("content-length") || 0);
-        if (contentLength > MAX_INLINE_IMAGE_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
+        if (contentLength > MAX_INLINE_IMAGE_BYTES) {
+            await response.body.cancel("Inline image is too large").catch(() => undefined);
+            return { dataUrl: url, remoteUrl: fallbackUrl };
+        }
         const bytes = Buffer.from(await response.arrayBuffer());
         if (bytes.length > MAX_INLINE_IMAGE_BYTES) return { dataUrl: url, remoteUrl: fallbackUrl };
-        const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || "image/png";
-        if (!mimeType.startsWith("image/")) return { dataUrl: url, remoteUrl: fallbackUrl };
-        return { dataUrl: `data:${mimeType};base64,${bytes.toString("base64")}`, remoteUrl: fallbackUrl };
+        const detected = await detectSafeMediaBuffer(bytes);
+        if (detected.type !== "image") return { dataUrl: url, remoteUrl: fallbackUrl };
+        return { dataUrl: `data:${detected.mimeType};base64,${bytes.toString("base64")}`, remoteUrl: fallbackUrl };
     } catch {
         return { dataUrl: url, remoteUrl: fallbackUrl };
     } finally {
@@ -662,15 +685,21 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
     let lastError: unknown;
     for (const value of imageReferenceHydrationCandidates(reference, origin)) {
         try {
-            if (/^data:image\//i.test(value)) return dataUrlToFile(value, name, reference.type);
+            if (/^data:image\//i.test(value)) {
+                const file = dataUrlToFile(value, name, reference.type);
+                const bytes = Buffer.from(await file.arrayBuffer());
+                const detected = await detectSafeMediaBuffer(bytes);
+                if (detected.type !== "image") throw new Error("参考图不是有效图片");
+                return new File([bytes], name, { type: detected.mimeType });
+            }
             if (/^blob:/i.test(value)) throw new Error("参考图已失效，请重新上传");
             const internal = isInternalMediaReference(value, origin);
             if (value.startsWith("/") && !internal) throw new Error("参考图地址无效，请重新上传参考图");
             const fetchUrl = value.startsWith("/") ? `${origin}${value}` : value;
             if (!isRemoteMediaUrl(fetchUrl)) throw new Error("参考图地址无效，请重新上传参考图");
-            const workerHeaders = maintenanceWorkerContextHeaders(cookie);
+            const workerHeaders = workerContextHeaders(cookie);
             const response = internal
-                ? await fetch(fetchUrl, {
+                ? await fetchInternalApi(fetchUrl, {
                       headers: workerHeaders || (cookie ? { cookie } : undefined),
                       cache: "no-store",
                       signal: AbortSignal.timeout(INLINE_IMAGE_TIMEOUT_MS),
@@ -678,12 +707,15 @@ export async function imageReferenceToFile(reference: ImageTaskReference, name: 
                 : await fetchSafeExternalMedia(fetchUrl, INLINE_IMAGE_TIMEOUT_MS, { allowPrivateUpstreams: false });
             if (!response.ok || !response.body) throw new Error("参考图读取失败");
             const contentLength = Number(response.headers.get("content-length") || 0);
-            if (contentLength > MAX_INLINE_IMAGE_BYTES) throw new Error("参考图过大，请压缩后重试");
+            if (contentLength > MAX_INLINE_IMAGE_BYTES) {
+                await response.body.cancel("Reference image is too large").catch(() => undefined);
+                throw new Error("参考图过大，请压缩后重试");
+            }
             const bytes = await readImageReferenceBytes(response, MAX_INLINE_IMAGE_BYTES);
             if (!bytes.length) throw new Error("参考图读取失败");
-            const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || reference.type || "image/png";
-            if (!mimeType.startsWith("image/")) throw new Error("参考图不是有效图片");
-            return new File([bytes], name, { type: mimeType });
+            const detected = await detectSafeMediaBuffer(bytes);
+            if (detected.type !== "image") throw new Error("参考图不是有效图片");
+            return new File([bytes], name, { type: detected.mimeType });
         } catch (error) {
             lastError = error;
         }

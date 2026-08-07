@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const INSTALL_TOKEN = "install-token-".padEnd(48, "x");
 
 const mocks = vi.hoisted(() => ({
     provider: "postgres" as "file" | "postgres",
@@ -39,7 +41,10 @@ describe("install status cache", () => {
         mocks.postgresQuery.mockReset();
         mocks.getPublicUserSummary.mockReset();
         mocks.encryption = { ready: true, message: "加密密钥已就绪。" };
+        vi.stubEnv("DQ_INSTALL_TOKEN", INSTALL_TOKEN);
     });
+
+    afterEach(() => vi.unstubAllEnvs());
 
     it("reuses a completed healthy installation check", async () => {
         mockHealthySchema(["3"]);
@@ -84,10 +89,17 @@ describe("install status cache", () => {
     it("runs schema DDL only through the explicit initializer", async () => {
         mockHealthySchema(["0"]);
 
-        await expect(initializeInstallDatabase()).resolves.toMatchObject({ firstAdminRequired: true, database: { schemaReady: true } });
+        await expect(initializeInstallDatabase(INSTALL_TOKEN)).resolves.toMatchObject({ firstAdminRequired: true, database: { schemaReady: true } });
 
         expect(mocks.initializePostgresSchema).toHaveBeenCalledTimes(1);
         expect(mocks.ensurePostgresSchema).not.toHaveBeenCalled();
+    });
+
+    it("keeps an installed site ready after the one-time token is removed", async () => {
+        delete process.env.DQ_INSTALL_TOKEN;
+        mockHealthySchema(["1"]);
+
+        await expect(getInstallStatus()).resolves.toMatchObject({ ready: true, firstAdminRequired: false, security: { installTokenReady: false } });
     });
 });
 

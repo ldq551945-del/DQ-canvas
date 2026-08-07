@@ -6,6 +6,7 @@
     "quick-start",
     "configuration",
     "production-readiness",
+    "container-supply-chain",
     "features",
     "project-structure",
     "code-quality",
@@ -13,6 +14,7 @@
     "low-memory",
     "render",
     "docker",
+    "grok2api",
     "third-party-prompt-repositories",
     "[项目仓库](https://github.com/DAO-QIN/DQ-canvas)"
   ]

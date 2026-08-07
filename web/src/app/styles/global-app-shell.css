@@ -257,11 +257,18 @@
     }
 
     .user-points-popover .points-cdk-search,
-    .user-points-popover .points-cdk-search:focus-within,
-    .user-points-popover .points-cdk-search .ant-input-wrapper,
-    .user-points-popover .points-cdk-search .ant-input-wrapper:focus-within {
+    .user-points-popover .points-cdk-search .ant-input-wrapper {
         outline: none !important;
         box-shadow: none !important;
+    }
+
+    .user-points-popover .points-cdk-search:focus-within {
+        border-radius: 8px;
+        box-shadow: 0 0 0 2px rgba(14, 116, 144, 0.28) !important;
+    }
+
+    .dark .user-points-popover .points-cdk-search:focus-within {
+        box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.42) !important;
     }
 
     .user-points-popover .points-cdk-search .ant-input,

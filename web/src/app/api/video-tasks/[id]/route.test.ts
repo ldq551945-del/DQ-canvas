@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     currentUser: vi.fn(),
     getVideoTask: vi.fn(),
     recover: vi.fn(),
+    refund: vi.fn(),
     transition: vi.fn(),
 }));
 
@@ -12,7 +13,7 @@ vi.mock("next/server", async (importOriginal) => {
     return { ...actual, after: vi.fn() };
 });
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.currentUser }));
-vi.mock("@/lib/auth/store", () => ({ refundUserPoints: vi.fn() }));
+vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: vi.fn(), resolveInternalOrigin: vi.fn(() => "http://localhost") }));
 vi.mock("@/lib/server/points-response", () => ({ pointsResponseHeaders: vi.fn(() => new Headers()) }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: mocks.recover }));
@@ -22,7 +23,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
     transitionVideoTask: mocks.transition,
 }));
 
-import { GET } from "./route";
+import { GET, PATCH } from "./route";
 
 const context = { params: Promise.resolve({ id: "local-video" }) };
 
@@ -70,6 +71,42 @@ describe("GET /api/video-tasks/[id]", () => {
 
         expect(response.status).toBe(200);
         expect((await response.json()).task).toMatchObject({ status: "running" });
+    });
+
+    it("rejects browser attempts to submit a terminal status or result URL", async () => {
+        mocks.getVideoTask.mockResolvedValue(videoTask());
+
+        const response = await PATCH(
+            new Request("http://localhost/api/video-tasks/local-video", {
+                method: "PATCH",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ status: "success", result: { url: "https://attacker.example/result.mp4" } }),
+            }),
+            context,
+        );
+
+        expect(response.status).toBe(403);
+        expect(await response.json()).toEqual({ error: "视频任务终态和结果只能由服务端更新" });
+        expect(mocks.transition).not.toHaveBeenCalled();
+    });
+
+    it("keeps cancellation as a server-controlled action", async () => {
+        const task = videoTask({ upstream: { id: "upstream-video", provider: "generation", model: "video-model", pointsCost: 2, pointsRecordId: "points-one" } });
+        mocks.getVideoTask.mockResolvedValue(task);
+        mocks.transition.mockResolvedValue({ ...task, status: "cancelled" });
+
+        const response = await PATCH(
+            new Request("http://localhost/api/video-tasks/local-video", {
+                method: "PATCH",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ action: "cancel" }),
+            }),
+            context,
+        );
+
+        expect(response.status).toBe(200);
+        expect(mocks.transition).toHaveBeenCalledWith(task, expect.objectContaining({ status: "cancelled", error: expect.any(String), retryable: false }), expect.objectContaining({ executionPhase: "cancel_requested" }));
+        expect(mocks.refund).not.toHaveBeenCalled();
     });
 });
 

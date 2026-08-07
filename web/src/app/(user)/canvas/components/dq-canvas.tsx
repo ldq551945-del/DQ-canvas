@@ -12,6 +12,7 @@ type DQCanvasProps = {
     viewport: ViewportTransform;
     backgroundMode?: CanvasBackgroundMode;
     performanceMode?: CanvasMediaPerformanceMode;
+    lowPerformanceDevice?: boolean;
     canvasTool?: "move" | "box-select";
     nodes?: CanvasNodeData[];
     onViewportChange: (viewport: ViewportTransform) => void;
@@ -28,6 +29,7 @@ export function DQCanvas({
     viewport,
     backgroundMode = "lines",
     performanceMode = "auto",
+    lowPerformanceDevice = false,
     canvasTool = "move",
     nodes = [],
     onViewportChange,
@@ -39,7 +41,7 @@ export function DQCanvas({
     children,
 }: DQCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const reduceEffects = shouldReduceCanvasEffects(performanceMode, nodes);
+    const reduceEffects = shouldReduceCanvasEffects(performanceMode, nodes, lowPerformanceDevice);
     const viewportRef = useRef(viewport);
     const panState = useRef({
         isPanning: false,

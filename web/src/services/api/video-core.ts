@@ -9,7 +9,7 @@ import { GENERATION_TASK_NEEDS_REVIEW_MESSAGE, GenerationTaskNeedsReviewError, t
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
-import { registerVideoTask, syncVideoTask } from "@/services/api/video-task-tracking";
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -130,8 +130,7 @@ export async function waitForVideoGenerationTask(config: AiConfig, task: VideoGe
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
-    const task = await createUpstreamVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-    return registerVideoTask(resolveModelRequestConfig(config, task.model), task);
+    return createServerVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
 }
 
 export async function createServerVideoGenerationTask(
@@ -151,7 +150,11 @@ export async function createServerVideoGenerationTask(
     ]);
     const response = await fetch("/api/video-generation-tasks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            ...(options?.clientRequestId ? { "X-DQ-Client-Request-Id": options.clientRequestId } : {}),
+            ...(options?.attemptNo ? { "X-DQ-Attempt-No": String(options.attemptNo) } : {}),
+        },
         body: JSON.stringify({
             config: {
                 model: selectedModel,
@@ -169,6 +172,7 @@ export async function createServerVideoGenerationTask(
         }),
         signal: options?.signal,
     });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => ({}))) as { task?: { id?: string; model?: string; durationSeconds?: number }; error?: string; canRetry?: boolean };
     if (!response.ok) throw new GenerationTaskRequestError(payload.error || "后台视频任务创建失败", response.status, payload.canRetry === true);
     if (!payload.task?.id) throw new Error(payload.error || "后台视频任务创建失败");
@@ -188,6 +192,8 @@ export function taskContext(options?: RequestOptions) {
         parentTaskId: options.parentTaskId,
         attemptNo: options.attemptNo,
         clientRequestId: options.clientRequestId,
+        generationLogId: options.generationLogId,
+        generationSlotId: options.generationSlotId,
         sourceNodeId: options.sourceNodeId,
         targetNodeId: options.targetNodeId,
     };
@@ -240,20 +246,38 @@ export async function createUpstreamVideoGenerationTask(
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     if (task.pollPath === "server") return pollServerVideoTask(task, options);
-    const state = await pollUpstreamVideoGenerationTask(config, task, options);
-    void syncVideoTask(task, state);
-    return state;
+    return pollUpstreamVideoGenerationTask(config, task, options);
 }
 
 export async function pollServerVideoTask(task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     const response = await fetch(`/api/video-tasks/${encodeURIComponent(task.serverTaskId || task.id)}`, { cache: "no-store", signal: options?.signal });
+    throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, "system");
     const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { status?: string; result?: VideoGenerationResult; error?: string; canRetry?: boolean }; error?: string };
     if (!response.ok) throw new Error(payload.error || "后台视频任务查询失败");
+    if (payload.task) options?.onTaskState?.(payload.task);
+    const taskState = payload.task;
+    if (payload.task?.status === "cancelled" && (payload.task.executionPhase === "cancel_requested" || payload.task.executionPhase === "cancel_polling")) return { status: "pending", taskState };
     if (payload.task?.needsReview) return { status: "failed", error: GENERATION_TASK_NEEDS_REVIEW_MESSAGE };
     if (payload.task?.status === "success") return { status: "completed", result: payload.task.result || {} };
     if (payload.task?.status === "error" || payload.task?.status === "cancelled") return { status: "failed", error: payload.task.error || "视频生成失败", canRetry: payload.task.canRetry === true };
     return { status: "pending" };
+}
+
+export async function cancelServerVideoGenerationTask(task: VideoGenerationTask) {
+    const taskId = task.serverTaskId || task.id;
+    const response = await fetch(`/api/video-tasks/${encodeURIComponent(taskId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel" }),
+        cache: "no-store",
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    const payload = (await response.json().catch(() => ({}))) as { task?: GenerationTaskExecutionState & { id?: string; status?: string; billing?: { refunded?: boolean } }; error?: string };
+    if (!response.ok) throw new Error(payload.error || "视频任务取消失败");
+    if (payload.task?.status !== "cancelled") throw new Error(payload.error || "视频任务尚未取消");
+    return payload.task;
 }
 
 export async function pollUpstreamVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {

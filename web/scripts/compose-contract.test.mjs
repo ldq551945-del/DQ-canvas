@@ -27,6 +27,27 @@ describe("Docker Compose contracts", () => {
         expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 不应直接持有数据库连接串");
     });
 
+    it("rejects a Worker that reads the complete application environment file", () => {
+        const profile = composeProfiles.find(({ file }) => file === "docker-compose.external-db.yml");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("    environment:\n      DQ_WORKER_API_ORIGIN: http://app:3000", "    env_file:\n      - .env\n    environment:\n      DQ_WORKER_API_ORIGIN: http://app:3000");
+
+        expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 禁止读取完整 .env");
+    });
+
+    it("rejects application secrets outside the Worker environment allowlist", () => {
+        const profile = composeProfiles.find(({ file }) => file === "docker-compose.external-db.yml");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("      DQ_WORKER_API_ORIGIN: http://app:3000", "      DQ_WORKER_API_ORIGIN: http://app:3000\n      DQ_INSTALL_TOKEN: leaked");
+
+        expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 环境变量超出最小权限白名单");
+    });
+
+    it("rejects exposing the external maintenance token to the Worker", () => {
+        const profile = composeProfiles.find(({ file }) => file === "docker-compose.external-db.yml");
+        const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("      DQ_WORKER_API_ORIGIN: http://app:3000", "      DQ_WORKER_API_ORIGIN: http://app:3000\n      DQ_MAINTENANCE_TOKEN: leaked");
+
+        expect(() => validateComposeContract(source, profile)).toThrow("generation-worker 不应持有外部维护令牌");
+    });
+
     it("rejects Baota-only host networking in the public default topology", () => {
         const profile = composeProfiles.find(({ file }) => file === "docker-compose.yml");
         const source = readFileSync(path.join(repoRoot, profile.file), "utf8").replace("    image: ${DQ_IMAGE", "    network_mode: host\n    image: ${DQ_IMAGE");

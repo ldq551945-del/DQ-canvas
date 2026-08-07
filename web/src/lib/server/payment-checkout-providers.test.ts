@@ -1,6 +1,8 @@
 import { createSign, createVerify, generateKeyPairSync } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutboundUrl: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
+
 import type { BillingOrderRecord } from "@/lib/server/database";
 import type { PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 import { checkoutFromMetadata, checkoutMetadata, createProviderCheckout } from "./payment-checkout-providers";

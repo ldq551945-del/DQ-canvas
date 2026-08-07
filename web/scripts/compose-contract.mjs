@@ -12,11 +12,22 @@ export const composeProfiles = [
 ];
 
 export const docsComposeProfiles = [
-    { file: "docs/docker-compose.yml", image: "ghcr.io/dao-qin/dq-docs:latest" },
+    { file: "docs/docker-compose.yml", image: "${DQ_DOCS_IMAGE:-ghcr.io/dao-qin/dq-docs:latest}" },
     { file: "docs/docker-compose.local.yml", build: { context: "..", dockerfile: "docs/Dockerfile" } },
 ];
 
 const maintenanceToken = "${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}";
+const installToken = "${DQ_INSTALL_TOKEN:-}";
+const allowedWorkerEnvironmentKeys = new Set([
+    "NODE_OPTIONS",
+    "DQ_WORKER_API_ORIGIN",
+    "DQ_WORKER_TOKEN",
+    "DQ_GENERATION_WORKER_ID",
+    "DQ_GENERATION_WORKER_INTERVAL_MS",
+    "DQ_GENERATION_WORKER_LANES",
+    "DQ_GENERATION_WORKER_HEARTBEAT_MS",
+    "DQ_BILLING_REFUND_WORKER_INTERVAL_MS",
+]);
 const rembgCpus = "${DQ_REMBG_CPUS:-2.0}";
 const rembgMemoryLimit = "${DQ_REMBG_MEMORY_LIMIT:-5g}";
 const rembgCanvasModels = "u2net,isnet-general-use,u2net_human_seg,isnet-anime,silueta";
@@ -79,10 +90,20 @@ export function validateComposeContract(source, profile) {
     ensure(sameImage(app.image, worker.image), "app 与 generation-worker 必须使用同一镜像");
     ensure(JSON.stringify(worker.command) === JSON.stringify(["node", "/app/web/scripts/generation-worker.mjs"]), "Worker 启动命令不正确");
     ensure(app.env_file?.includes(".env"), "app 必须读取 .env");
-    ensure(worker.env_file?.includes(".env"), "generation-worker 必须读取 .env");
+    ensure(!worker.env_file, "generation-worker 禁止读取完整 .env");
     ensure(appEnvironment.DQ_MAINTENANCE_TOKEN === maintenanceToken, "app 未声明强制维护令牌");
-    ensure(workerEnvironment.DQ_MAINTENANCE_TOKEN === maintenanceToken, "generation-worker 未声明同一强制维护令牌");
+    ensure(appEnvironment.DQ_WORKER_TOKEN === "${DQ_WORKER_TOKEN:?请在 .env 中配置至少 32 位独立 Worker 令牌}", "app 未声明独立 Worker 令牌");
+    ensure(appEnvironment.DQ_INSTALL_TOKEN === installToken, "app 未声明可移除的一次性安装令牌");
+    ensure(workerEnvironment.DQ_WORKER_TOKEN === "${DQ_WORKER_TOKEN:?请在 .env 中配置至少 32 位独立 Worker 令牌}", "generation-worker 未声明独立 Worker 令牌");
+    ensure(!("DQ_MAINTENANCE_TOKEN" in workerEnvironment), "generation-worker 不应持有外部维护令牌");
     ensure(workerEnvironment.DQ_WORKER_API_ORIGIN === profile.workerOrigin, `Worker API 地址必须为 ${profile.workerOrigin}`);
+    ensure(
+        Object.keys(workerEnvironment).every((key) => allowedWorkerEnvironmentKeys.has(key)),
+        "generation-worker 环境变量超出最小权限白名单",
+    );
+    for (const key of ["DQ_GENERATION_WORKER_ID", "DQ_GENERATION_WORKER_INTERVAL_MS", "DQ_GENERATION_WORKER_LANES", "DQ_GENERATION_WORKER_HEARTBEAT_MS", "DQ_BILLING_REFUND_WORKER_INTERVAL_MS"]) {
+        ensure(key in workerEnvironment, `generation-worker 缺少显式运行参数 ${key}`);
+    }
     ensure(appEnvironment.DQ_DATABASE_PROVIDER === "postgres", "app 必须使用 PostgreSQL provider");
     ensure(typeof appEnvironment.DATABASE_URL === "string", "app 缺少 DATABASE_URL");
     ensure(appEnvironment.DQ_REMBG_MODEL === "${DQ_REMBG_MODEL:-silueta}", "app 必须显式使用 rembg 模型配置");
@@ -90,6 +111,7 @@ export function validateComposeContract(source, profile) {
     ensure(appEnvironment.DQ_REMBG_TIMEOUT_SECONDS === "${DQ_REMBG_TIMEOUT_SECONDS:-120}", "app 必须显式使用 rembg 超时配置");
     ensure(!("DATABASE_URL" in workerEnvironment), "generation-worker 不应直接持有数据库连接串");
     ensure(!("DQ_DATABASE_PROVIDER" in workerEnvironment), "generation-worker 不应直接访问数据库 provider");
+    ensure(!("DQ_INSTALL_TOKEN" in workerEnvironment), "generation-worker 不应持有一次性安装令牌");
     ensure(app.volumes?.includes("dq-data:/app/web/.data"), "app 缺少持久数据卷挂载");
     ensure(Object.hasOwn(compose?.volumes || {}, "dq-data"), "缺少 dq-data 顶层数据卷");
     ensure(

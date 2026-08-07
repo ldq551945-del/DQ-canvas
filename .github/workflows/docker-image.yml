@@ -3,13 +3,15 @@ run-name: 主应用多架构镜像 · ${{ github.ref_name }}
 
 on:
   push:
-    branches: ["main"]
     tags: ["v*", "DQ-v*"]
   workflow_dispatch:
 
 permissions:
+  attestations: write
   contents: read
+  id-token: write
   packages: write
+  security-events: write
 
 env:
   IMAGE_NAME: ghcr.io/dao-qin/dq
@@ -22,16 +24,21 @@ jobs:
       labels: ${{ steps.meta.outputs.labels }}
     steps:
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/DQ-v') }}
             type=ref,event=tag
             type=sha,prefix=
 
+  quality:
+    uses: ./.github/workflows/quality.yml
+
   build:
-    needs: meta
+    needs:
+      - quality
+      - meta
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -44,18 +51,18 @@ jobs:
             arch: arm64
             runner: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: ${{ matrix.platform }}
@@ -63,8 +70,29 @@ jobs:
             NEXT_PUBLIC_TLDRAW_LICENSE_KEY=${{ secrets.NEXT_PUBLIC_TLDRAW_LICENSE_KEY }}
           labels: ${{ needs.meta.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
           cache-from: type=gha,scope=app-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=app-${{ matrix.arch }}
+
+      - name: Scan platform image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: json
+          output: ${{ runner.temp }}/trivy-${{ matrix.arch }}.json
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app-vulnerabilities-${{ matrix.arch }}
+          path: ${{ runner.temp }}/trivy-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Export digest
         shell: bash
@@ -73,7 +101,7 @@ jobs:
           digest="${{ steps.build.outputs.digest }}"
           touch "$RUNNER_TEMP/digests/${digest#sha256:}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digests-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
@@ -86,21 +114,24 @@ jobs:
       - build
     runs-on: ubuntu-latest
     steps:
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-*
           merge-multiple: true
 
       - name: Create multi-arch manifest
+        id: manifest
         shell: bash
         env:
           TAGS: ${{ needs.meta.outputs.tags }}
@@ -118,3 +149,18 @@ jobs:
           done < <(find "$RUNNER_TEMP/digests" -type f -printf '%f\n' | sort)
 
           docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
+
+          primary_tag="$(sed -n '/./{p;q;}' <<< "$TAGS")"
+          manifest_digest="$(docker buildx imagetools inspect "$primary_tag" --format '{{.Manifest.Digest}}')"
+          if [[ ! "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid published manifest digest: $manifest_digest" >&2
+            exit 1
+          fi
+          echo "digest=$manifest_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Sign, attest and archive release evidence
+        uses: ./.github/actions/publish-container-evidence
+        with:
+          image-name: ${{ env.IMAGE_NAME }}
+          image-digest: ${{ steps.manifest.outputs.digest }}
+          artifact-name: app-release-evidence-${{ github.sha }}

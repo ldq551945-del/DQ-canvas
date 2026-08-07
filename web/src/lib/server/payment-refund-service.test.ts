@@ -1,6 +1,8 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createSign, generateKeyPairSync } from "node:crypto";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutboundUrl: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 
 import type { BillingOrderRecord, PaymentTransactionRecord } from "@/lib/server/database";
 import { BillingInputError } from "./billing-errors";
@@ -65,6 +67,29 @@ const payment = {
 
 function testPrivateKey() {
     return generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+}
+
+function testKeyPair() {
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    return {
+        privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+        publicKey: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    };
+}
+
+function signedWechatResponse(payload: Record<string, unknown>, privateKey: string, signatureOverride?: string) {
+    const raw = JSON.stringify(payload);
+    const timestamp = "1786000000";
+    const nonce = "wechat-response-nonce";
+    const signature = signatureOverride || createSign("RSA-SHA256").update(`${timestamp}\n${nonce}\n${raw}\n`, "utf8").sign(privateKey, "base64");
+    return new Response(raw, {
+        headers: {
+            "content-type": "application/json",
+            "wechatpay-timestamp": timestamp,
+            "wechatpay-nonce": nonce,
+            "wechatpay-signature": signature,
+        },
+    });
 }
 
 describe("payment refunds", () => {
@@ -179,14 +204,16 @@ describe("payment refunds", () => {
     });
 
     it("creates a WeChat Pay v3 refund with signed JSON payload", async () => {
+        const platformKeys = testKeyPair();
         mocks.runtimeConfig.valuesByEnvName = {
             DQ_WECHAT_PAY_MCH_ID: "1900000001",
             DQ_WECHAT_PAY_CERT_SERIAL_NO: "serial-no",
             DQ_WECHAT_PAY_PRIVATE_KEY: testPrivateKey(),
+            DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY: platformKeys.publicKey,
             DQ_WECHAT_PAY_API_BASE: "https://wechat.test",
             DQ_WECHAT_PAY_REFUND_NOTIFY_URL: "https://example.com/refund-notify",
         };
-        const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ refund_id: "5030001", status: "PROCESSING" }));
+        const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => signedWechatResponse({ refund_id: "5030001", status: "PROCESSING" }, platformKeys.privateKey));
         vi.stubGlobal("fetch", fetchMock);
 
         const result = await refundPaymentTransaction({ ...order, provider: "wechat", currency: "CNY" }, { ...payment, provider: "wechat", providerPaymentId: "4200000000000000001" }, { reason: "运营退款" });
@@ -211,6 +238,23 @@ describe("payment refunds", () => {
             notify_url: "https://example.com/refund-notify",
             amount: { refund: 1299, total: 1299, currency: "CNY" },
         });
+    });
+
+    it("rejects a forged WeChat Pay refund response", async () => {
+        const platformKeys = testKeyPair();
+        mocks.runtimeConfig.valuesByEnvName = {
+            DQ_WECHAT_PAY_MCH_ID: "1900000001",
+            DQ_WECHAT_PAY_CERT_SERIAL_NO: "serial-no",
+            DQ_WECHAT_PAY_PRIVATE_KEY: testPrivateKey(),
+            DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY: platformKeys.publicKey,
+            DQ_WECHAT_PAY_API_BASE: "https://wechat.test",
+        };
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () => signedWechatResponse({ refund_id: "5030001", status: "SUCCESS" }, platformKeys.privateKey, "forged-signature")),
+        );
+
+        await expect(refundPaymentTransaction({ ...order, provider: "wechat", currency: "CNY" }, { ...payment, provider: "wechat", providerPaymentId: "4200000000000000001" })).rejects.toMatchObject({ message: "微信支付退款响应验签失败", status: 502 });
     });
 
     it("sends configurable PayPly refund requests and reads provider result fields", async () => {

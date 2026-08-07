@@ -218,6 +218,25 @@ export function SystemChannelEditor({
                     </LabeledControl>
                 )}
             </div>
+            <div className="mt-3 max-w-xl">
+                <LabeledControl label="生成回调密钥">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <Input.Password
+                            value={channel.webhookSecret || ""}
+                            placeholder={channel.hasWebhookSecret ? "已安全保存，留空不修改" : "可选，至少 32 个字符"}
+                            autoComplete="new-password"
+                            onChange={(event) => onChange({ webhookSecret: event.target.value, clearWebhookSecret: false })}
+                        />
+                        {channel.hasWebhookSecret ? (
+                            <Popconfirm title="清除已保存的生成回调密钥？" okText="清除" cancelText="取消" onConfirm={() => onChange({ webhookSecret: "", hasWebhookSecret: false, clearWebhookSecret: true })}>
+                                <Button size="small" danger className="shrink-0">
+                                    清除
+                                </Button>
+                            </Popconfirm>
+                        ) : null}
+                    </div>
+                </LabeledControl>
+            </div>
             <ChannelCapabilitySummary channel={channel} results={visibleHealthResults} />
             {visibleHealthResults.length ? (
                 <div className="mt-3 space-y-2 border-t border-stone-100 pt-3 dark:border-stone-800">
@@ -382,8 +401,15 @@ export function SystemChannelEditor({
                         <div className="md:col-span-2 text-xs leading-5 text-stone-500 dark:text-stone-400">当前协议的路径、请求字段、结果字段和参考素材能力由协议注册表固定；如需非标准字段，请在模型级路由中选择“自定义协议”。</div>
                     )}
                     <div className="flex flex-wrap gap-2 md:col-span-2">
+                        <Select
+                            className="min-w-32"
+                            aria-label="模型拉取类型"
+                            value={advanced.modelCatalogCapability || "all"}
+                            options={[{ label: "全部模型", value: "all" }, ...modelCapabilityOptions.map((item) => ({ label: `${item.label}模型`, value: item.value }))]}
+                            onChange={(value: LogicalModelCapability | "all") => updateAdvanced({ modelCatalogCapability: value === "all" ? undefined : value })}
+                        />
                         <Button size="small" icon={<RefreshCw className="size-3.5" />} loading={fetching} onClick={onFetchModels}>
-                            拉取模型
+                            拉取{advanced.modelCatalogCapability ? capabilityLabel(advanced.modelCatalogCapability) : "全部"}模型
                         </Button>
                         {healthKinds.map((kind) => (
                             <Button key={kind} size="small" loading={testingKey === `${channel.id}:${kind}`} onClick={() => onTestHealth(kind)}>
@@ -391,7 +417,7 @@ export function SystemChannelEditor({
                             </Button>
                         ))}
                     </div>
-                    <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">拉取会合并上游模型、官方目录和已有手工模型，不会覆盖手工配置；混合接口优先使用模型级路由，上方兜底字段只在模型没有专属配置时生效。</div>
+                    <div className="text-xs leading-5 text-stone-500 md:col-span-2 dark:text-stone-400">拉取会按所选类型合并上游模型、官方目录和同类型手工模型；同一个密钥可建立多条渠道，分别拉取文本、图片或视频。混合接口优先使用模型级路由。</div>
                 </div>
             </details>
         </div>

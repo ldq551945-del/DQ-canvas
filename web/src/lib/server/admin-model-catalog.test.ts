@@ -21,6 +21,7 @@ describe("admin model catalog", () => {
         expect(buildModelsUrl("https://api.example.com/v1/models", "openai")).toBe("https://api.example.com/v1/models");
         expect(buildModelsUrl("https://api.example.com/v1/chat/completions", "openai")).toBe("https://api.example.com/v1/models");
         expect(buildModelCatalogUrls("https://api.example.com/v1", "openai", ["/v1/text-models", "/v1/video-models"])).toEqual(["https://api.example.com/v1/text-models", "https://api.example.com/v1/video-models"]);
+        expect(buildModelCatalogUrls("https://api.example.com/v1", "openai", ["https://other.example.com/v1/models"])).toEqual([]);
     });
 
     it("parses common and nested provider response shapes", () => {
@@ -44,6 +45,59 @@ describe("admin model catalog", () => {
             { id: "stable-video-diffusion", capability: "video", source: "provider" },
             { id: "writer-v1", capability: "text", source: "provider" },
         ]);
+    });
+
+    it("uses provider endpoint metadata before model-name fallback", () => {
+        expect(
+            parseModelCatalog(
+                {
+                    data: [
+                        { id: "opaque-newapi-image", supported_endpoint_types: ["openai", "image-generation"] },
+                        { id: "opaque-newapi-video", supported_endpoint_types: ["openai-video"] },
+                        { id: "image-named-text-model", capability: "text" },
+                    ],
+                },
+                "provider",
+                "newapi",
+            ),
+        ).toEqual([
+            { id: "image-named-text-model", capability: "text", source: "provider" },
+            { id: "opaque-newapi-image", capability: "image", source: "provider" },
+            { id: "opaque-newapi-video", capability: "video", source: "provider" },
+        ]);
+    });
+
+    it("uses a strict single-capability protocol before model-name inference", () => {
+        const payload = { data: [{ id: "opaque-model", object: "model" }] };
+
+        expect(parseModelCatalog(payload, "provider", "seedance")).toEqual([{ id: "opaque-model", capability: "video", source: "provider" }]);
+        expect(parseModelCatalog(payload, "provider", "vozeb-recommended")).toEqual([{ id: "opaque-model", capability: "video", source: "provider" }]);
+        expect(parseModelCatalog(payload, "provider", "stable-diffusion")).toEqual([{ id: "opaque-model", capability: "image", source: "provider" }]);
+        expect(parseModelConfigs(payload, "seedance")["opaque-model"]).toMatchObject({ capability: "video", source: "provider" });
+    });
+
+    it("uses owned_by to specialize only the Grok2API video model", () => {
+        const configs = parseModelConfigs(
+            {
+                data: [
+                    { id: "grok-chat", capability: "text", owned_by: "grok2api" },
+                    { id: "grok-imagine-image", capability: "image", owned_by: "grok2api" },
+                    { id: "grok-imagine-video", capability: "video", owned_by: "grok2api" },
+                ],
+            },
+            "openai",
+        );
+
+        expect(configs["grok-chat"]).toMatchObject({ capability: "text", source: "provider" });
+        expect(configs["grok-chat"].protocol).toBeUndefined();
+        expect(configs["grok-imagine-image"].protocol).toBeUndefined();
+        expect(configs["grok-imagine-video"]).toMatchObject({
+            capability: "video",
+            source: "provider",
+            protocol: "grok2api",
+            createPath: "/v1/videos/generations",
+            queryPath: "/v1/videos/:task_id",
+        });
     });
 
     it("keeps per-model endpoints when a company catalog mixes OpenAI and SD2.0", () => {
@@ -106,6 +160,7 @@ describe("admin model catalog", () => {
         expect(nextModelsPageUrl("https://api.example.com/v1/models?limit=100", { has_more: true, last_id: "model-one" }, "openai", "model-one")).toBe("https://api.example.com/v1/models?limit=100&after=model-one");
         expect(nextModelsPageUrl("https://api.example.com/v1/models", { has_more: false }, "openai", "model-one")).toBe("");
         expect(nextModelsPageUrl("https://api.example.com/v1/models", { links: { next: "/v1/models?page=2" } }, "openai", "model-one")).toBe("https://api.example.com/v1/models?page=2");
+        expect(nextModelsPageUrl("https://api.example.com/v1/models", { links: { next: "https://other.example.com/v1/models?page=2" } }, "openai", "model-one")).toBe("");
     });
 
     it("merges configured, provider, and Agnes official catalogs without dropping models", () => {

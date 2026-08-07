@@ -1,7 +1,7 @@
 import type { LogicalModel, LogicalModelBinding, LogicalModelCapability, LogicalModelCapabilityProfile, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 import { inferModelCapability, normalizeModelId } from "@/lib/model-capability";
-import { channelConnectionReady, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
+import { channelConnectionReady, protocolCatalogCapability, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
 
 const CAPABILITY_DEFAULT_KEYS = {
     text: "textModel",
@@ -67,13 +67,17 @@ export function deriveLogicalModelsConfig(channels: SystemModelChannel[]): Logic
 }
 
 export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[], channels: SystemModelChannel[]) {
-    const merged = logicalModels.map((model) => ({ ...model, bindings: [...model.bindings] }));
+    const merged = normalizeLogicalModelsConfig(logicalModels, channels).map((model) => ({ ...model, bindings: [...model.bindings] }));
     const modelIndex = new Map(merged.map((model, index) => [normalizeModelName(model.id), index]));
+    const bindingIndex = new Map<string, number>();
+    merged.forEach((model, index) => model.bindings.forEach((binding) => bindingIndex.set(normalizeModelName(binding.upstreamModel), index)));
 
     for (const derived of deriveLogicalModelsConfig(channels)) {
-        const index = modelIndex.get(normalizeModelName(derived.id));
+        const modelKey = normalizeModelName(derived.id);
+        const index = modelIndex.get(modelKey) ?? bindingIndex.get(modelKey);
         if (index === undefined) {
-            modelIndex.set(normalizeModelName(derived.id), merged.length);
+            modelIndex.set(modelKey, merged.length);
+            derived.bindings.forEach((binding) => bindingIndex.set(normalizeModelName(binding.upstreamModel), merged.length));
             merged.push(derived);
             continue;
         }
@@ -85,6 +89,14 @@ export function mergeChannelModelsIntoLogicalModels(logicalModels: LogicalModel[
     }
 
     return merged;
+}
+
+export function synchronizeModelRoutingWithChannels(logicalModels: LogicalModel[], defaults: Partial<SystemDefaultModels> | undefined, channels: SystemModelChannel[]) {
+    const synchronizedModels = mergeChannelModelsIntoLogicalModels(logicalModels, channels);
+    return {
+        logicalModels: synchronizedModels,
+        defaultModels: normalizeDefaultModelsConfig(defaults, synchronizedModels, channels),
+    };
 }
 
 export function normalizeDefaultModelsConfig(defaults: Partial<SystemDefaultModels> | undefined, logicalModels: LogicalModel[], channels: SystemModelChannel[]): SystemDefaultModels {
@@ -144,9 +156,20 @@ export function capabilityLabel(capability: LogicalModelCapability) {
 }
 
 export function channelModelCapability(channel: Pick<SystemModelChannel, "advancedConfig">, model: string): LogicalModelCapability {
+    return resolveChannelModelCapability(channel, model).capability;
+}
+
+function resolveChannelModelCapability(channel: Pick<SystemModelChannel, "advancedConfig">, model: string) {
     const key = normalizeModelId(model);
-    if (key === "auto") return "text";
-    return channel.advancedConfig?.modelConfigs?.[key]?.capability || channel.advancedConfig?.modelCapabilities?.[key] || inferModelCapability(model);
+    if (key === "auto") return { capability: "text" as const, authoritative: true };
+    const protocolCapability = protocolCatalogCapability(channel.advancedConfig?.protocol || "auto");
+    if (protocolCapability) return { capability: protocolCapability, authoritative: true };
+    const config = channel.advancedConfig?.modelConfigs?.[key];
+    const inferred = inferModelCapability(model);
+    if (config?.source === "health" && inferred !== "text") return { capability: inferred, authoritative: true };
+    const configured = config?.capability || channel.advancedConfig?.modelCapabilities?.[key];
+    if (!config && configured === "text" && inferred !== "text") return { capability: inferred, authoritative: true };
+    return configured ? { capability: configured, authoritative: true } : { capability: inferred, authoritative: false };
 }
 
 export function channelDetectedCapabilities(channel: Pick<SystemModelChannel, "advancedConfig" | "models">) {

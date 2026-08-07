@@ -7,11 +7,11 @@ import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { getMediaBlob, readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
-import { registerVideoTask, syncVideoTask } from "@/services/api/video-task-tracking";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import type { GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 
 export type VideoResponse = { id: string; status?: string; error?: { message?: string } };
 export type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
@@ -35,15 +35,21 @@ export type RequestOptions = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    generationLogId?: string;
+    generationSlotId?: string;
     sourceNodeId?: string;
     targetNodeId?: string;
     skillIds?: string[];
+    onTaskState?: (state: GenerationTaskExecutionState) => void;
 };
 export type ResolvedVideoMediaUrl = { url: string; remoteUrl?: string };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; resultUrl?: string; serverTaskId?: string; durationSeconds?: number };
-export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; canRetry?: boolean };
+export type VideoGenerationTaskState =
+    | { status: "pending"; taskState?: GenerationTaskExecutionState }
+    | { status: "completed"; result: VideoGenerationResult; taskState?: GenerationTaskExecutionState }
+    | { status: "failed"; error: string; canRetry?: boolean; taskState?: GenerationTaskExecutionState };
 
 export const VIDEO_GENERATION_WAIT_TIMEOUT_MS = 30 * 60_000;
 

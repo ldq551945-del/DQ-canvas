@@ -30,6 +30,9 @@ export default function CanvasPage() {
     const syncError = useCanvasStore((state) => state.syncError);
     const hydrate = useCanvasStore((state) => state.hydrate);
     const projects = useCanvasStore((state) => state.summaries);
+    const projectTotal = useCanvasStore((state) => state.summaryTotal);
+    const loadingMore = useCanvasStore((state) => state.summaryLoadingMore);
+    const loadMore = useCanvasStore((state) => state.loadMore);
     const loadProject = useCanvasStore((state) => state.loadProject);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
@@ -119,7 +122,7 @@ export default function CanvasPage() {
                                 </Button>
                             </>
                         ) : null}
-                        {projects.length ? (
+                        {projects.length && projects.length === projectTotal ? (
                             <Button disabled={!ready} onClick={() => setDeleteIds(projects.map((project) => project.id))}>
                                 删除全部
                             </Button>
@@ -143,11 +146,23 @@ export default function CanvasPage() {
                         ) : null}
                     </section>
                 ) : projects.length ? (
-                    <div className="grid gap-2 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
-                        {projects.map((project) => (
-                            <CanvasProjectCard key={project.id} project={project} />
-                        ))}
-                    </div>
+                    <>
+                        <p className="text-xs text-stone-500">
+                            共 {projectTotal} 个画布 · 已加载 {projects.length} 个
+                        </p>
+                        <div className="grid gap-2 sm:grid-cols-2 sm:gap-5 xl:grid-cols-3">
+                            {projects.map((project) => (
+                                <CanvasProjectCard key={project.id} project={project} />
+                            ))}
+                        </div>
+                        {projects.length < projectTotal ? (
+                            <div className="flex justify-center pb-4 sm:pb-8">
+                                <Button loading={loadingMore} onClick={() => void loadMore()}>
+                                    加载更多
+                                </Button>
+                            </div>
+                        ) : null}
+                    </>
                 ) : (
                     <section className="flex min-h-24 flex-col items-center justify-center border-y border-stone-200 px-3 py-5 text-center sm:min-h-56 sm:py-8 dark:border-stone-800">
                         <h2 className="text-lg font-medium sm:text-xl">还没有画布</h2>

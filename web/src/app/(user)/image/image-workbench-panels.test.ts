@@ -41,6 +41,6 @@ describe("image result card layout", () => {
 
         expect(pendingSource).toContain("w-full max-w-[320px]");
         expect(failedSource).toContain('large && "max-w-[320px]"');
-        expect(pageSource).toContain('results.length === 1 ? "w-[320px] max-w-full" : "min-w-0"');
+        expect(pageSource).toContain('resultEntries.length === 1 ? "w-[320px] max-w-full" : "min-w-0"');
     });
 });

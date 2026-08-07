@@ -9,48 +9,58 @@ description: DQ-绘图 环境变量、模型渠道、服务器媒体与支付配
 
 ## 核心环境变量
 
-| 变量                                       | 必填             | 说明                                                                                  |
-| ------------------------------------------ | ---------------- | ------------------------------------------------------------------------------------- |
-| `NEXT_PUBLIC_SITE_URL`                     | 生产必填         | 外部可访问的站点地址，生产使用 HTTPS，不带尾部 `/`                                    |
-| `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`            | 商业部署可选     | tldraw 生产 License Key；必须在 Next.js 或 Docker 镜像构建阶段提供                     |
-| `DQ_DATABASE_PROVIDER`              | 是               | 生产使用 `postgres`；`file` 仅用于单机文件模式体验                                    |
-| `DATABASE_URL`                             | PostgreSQL 必填  | PostgreSQL 连接串；Docker 内数据库 Host 使用 `postgres`                               |
-| `DQ_DATABASE_POOL_MAX`              | 否               | 连接池上限，默认 10，低内存或托管数据库可设置 5                                       |
-| `DQ_DATABASE_SSL`                   | 否               | 本机/Docker 通常为 0，云 PostgreSQL 按要求使用 1                                      |
-| `DQ_ENCRYPTION_KEY`                 | 生产必填         | 64 位十六进制或精确 32 字节 Base64 密钥，部署后必须保持稳定                           |
-| `DQ_INTERNAL_ORIGIN`                | 推荐             | 服务端回调自身 API，Docker 默认 `http://127.0.0.1:3000`                               |
-| `DQ_DATA_DIR`                       | 否               | 服务器媒体和文件模式数据目录                                                          |
-| `DQ_COOKIE_SECURE`                  | 否               | 留空自动判断；特殊代理可强制 `true/false`                                             |
-| `DQ_TRUSTED_PROXY_HOPS`             | 否               | 速率限制读取代理 IP 时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1`         |
-| `DQ_MAINTENANCE_TOKEN`              | 生产推荐         | 生成 Worker 与外部计划任务调用维护接口的 Bearer Token，至少 32 个字符                 |
-| `DQ_WORKER_API_ORIGIN`              | 独立 Worker 可选 | Worker 调用主应用的站内地址；Compose 使用 `http://app:3000`，Render 注入私网 hostport |
-| `DQ_GENERATION_WORKER_ID`           | 否               | 生成 Worker 稳定标识；留空时由主机名和进程号生成                                      |
-| `DQ_GENERATION_WORKER_INTERVAL_MS`  | 否               | 恢复批次轮询间隔，默认 2000ms                                                         |
-| `DQ_GENERATION_WORKER_LANES`        | 否               | 单个 Worker 并行恢复通道数，默认 2                                                    |
-| `DQ_GENERATION_WORKER_HEARTBEAT_MS` | 否               | Worker 心跳间隔，默认 15000ms                                                         |
-| `DQ_GENERATION_WORKER_STALE_MS`     | 否               | 就绪检查判定 Worker 失联的窗口，默认 90000ms                                          |
-| `DQ_GENERATION_WEBHOOK_SECRET`      | 回调可选         | 通用生成回调 HMAC-SHA256 密钥，启用时至少 32 个字符                                   |
-| `DQ_APP_URL`                        | 文档站可选       | 独立文档站使用的主应用地址，使文档 favicon 跟随后台站点图标                           |
-| `DQ_REMBG_URL`                      | 默认 Compose 可选；低内存必填 | 留空时标准/外部数据库 Compose 使用 `http://rembg:7000`，宝塔使用 `http://127.0.0.1:7000`；低内存部署填写仅内网可达的外部地址 |
-| `DQ_REMBG_INTERNAL_TOKEN`           | 跨主机推荐       | rembg sidecar 的 Bearer Token；与 sidecar 配置一致，只保存在服务端环境变量             |
-| `DQ_REMBG_IMAGE`                    | 否               | Compose 使用的 rembg 镜像，默认 `ghcr.io/dao-qin/dq-rembg:latest`                       |
-| `DQ_REMBG_MODEL`                    | 否               | `/readyz` 启动基线模型，默认 `silueta`；画布 V3 任务可从镜像内固定白名单手动选模       |
-| `DQ_REMBG_CONCURRENCY`              | 否               | rembg 推理并发，默认且硬限制为 1；其他图片、视频、文本任务不受此槽位限制               |
-| `DQ_REMBG_CPUS`                     | 否               | Compose 为 sidecar 设置的 CPU 上限，默认 `2.0`；同时写入普通 Compose 与 `deploy.resources` |
-| `DQ_REMBG_MEMORY_LIMIT`             | 否               | Compose 为 sidecar 设置的内存上限，默认 `5g`；同时写入普通 Compose 与 `deploy.resources` |
-| `DQ_REMBG_OMP_NUM_THREADS`          | 否               | 单次 CPU 计算线程数，默认 2；Compose 同步到 ONNX、OpenMP、OpenBLAS 与 MKL              |
-| `DQ_REMBG_ONNX_INTER_OP_THREADS`    | 否               | ONNX inter-op 线程，固定为 1                                                           |
-| `DQ_REMBG_ALPHA_MATTING_TILE_PIXELS`| 否               | 原尺寸 Alpha Matting 单块像素预算，默认 1,048,576；控制单块求解内存，不限制整图或输出尺寸 |
-| `DQ_REMBG_TIMEOUT_SECONDS`          | 否               | 单次推理超时，默认 120 秒                                                              |
-| `DQ_REMBG_QUEUE_TIMEOUT_SECONDS`    | 否               | 等待推理槽位超时，默认 30 秒                                                           |
-| `DQ_REMBG_CANCEL_TIMEOUT_MS`        | 否               | BFF 等待 sidecar 完成子进程清理的超时，默认 15000ms                                   |
-| `DQ_REMBG_CANCEL_TOMBSTONE_SECONDS` | 否               | sidecar 保留取消标记的时间，默认 600 秒，最大 3600 秒                                  |
-| `FFMPEG_PATH`                              | 否               | 本机 FFmpeg 不在 PATH 时填写；Docker 已内置 FFmpeg                                    |
-| `FFPROBE_PATH`                             | 否               | 可选的 FFprobe 路径；默认使用 `FFMPEG_PATH` 同目录二进制或系统 PATH                   |
-| `DQ_CONTENT_MODERATION_PROVIDER`    | 否               | 作品审核信号 Provider：`manual`、`keywords` 或 `http`，默认人工审核                   |
-| `DQ_CONTENT_MODERATION_KEYWORDS`    | keywords 可选    | 逗号或换行分隔的风险关键词，只生成后台复核信号                                        |
-| `DQ_CONTENT_MODERATION_URL`         | http 必填        | 外部内容审核 HTTP 地址；服务端以 3 秒超时发送公开草稿字段                             |
-| `DQ_CONTENT_MODERATION_API_KEY`     | http 可选        | 外部审核 Bearer Token，仅保存在服务器环境变量                                         |
+| 变量                                 | 必填                          | 说明                                                                                                                         |
+| ------------------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_SITE_URL`               | 生产必填                      | 外部可访问的站点地址，生产使用 HTTPS，不带尾部 `/`                                                                           |
+| `NEXT_PUBLIC_TLDRAW_LICENSE_KEY`     | 商业部署可选                  | tldraw 生产 License Key；必须在 Next.js 或 Docker 镜像构建阶段提供                                                           |
+| `DQ_DATABASE_PROVIDER`               | 是                            | 生产使用 `postgres`；`file` 仅用于单机文件模式体验                                                                           |
+| `DATABASE_URL`                       | PostgreSQL 必填               | PostgreSQL 连接串；Docker 内数据库 Host 使用 `postgres`                                                                      |
+| `DQ_DATABASE_POOL_MAX`               | 否                            | 连接池上限，默认 10，低内存或托管数据库可设置 5                                                                              |
+| `DQ_DATABASE_CONNECTION_TIMEOUT_MS`  | 否                            | PostgreSQL 获取连接超时，默认 5000ms                                                                                         |
+| `DQ_DATABASE_IDLE_TIMEOUT_MS`        | 否                            | PostgreSQL 空闲连接回收时间，默认 30000ms                                                                                    |
+| `DQ_DATABASE_SLOW_QUERY_MS`          | 否                            | 慢查询记录阈值，默认 500ms；只记录脱敏 SQL 形状，不记录参数值                                                                |
+| `DQ_DATABASE_SSL`                    | 否                            | 本机/Docker 通常为 0，云 PostgreSQL 按要求使用 1                                                                             |
+| `DQ_ENCRYPTION_KEY`                  | 生产必填                      | 64 位十六进制或精确 32 字节 Base64 密钥，部署后必须保持稳定                                                                  |
+| `DQ_INTERNAL_ORIGIN`                 | 推荐                          | 服务端回调自身 API，Docker 默认 `http://127.0.0.1:3000`                                                                      |
+| `DQ_DATA_DIR`                        | 否                            | 服务器媒体和文件模式数据目录                                                                                                 |
+| `DQ_OBSERVABILITY_ENABLED`           | 否                            | 是否启用 API 请求耗时与状态采集，默认开启；关闭会使运维快照缺少请求指标                                                      |
+| `DQ_OBSERVABILITY_LOGS`              | 否                            | 是否输出结构化 JSON 日志，默认开启；关闭前应确认外部采集器已接管                                                             |
+| `DQ_HTTP_ACCESS_LOG`                 | 否                            | API 访问日志级别：`errors`、`all` 或 `off`，默认 `errors`                                                                    |
+| `DQ_HTTP_SLOW_REQUEST_MS`            | 否                            | API 慢请求日志阈值，默认 1000ms                                                                                              |
+| `DQ_MEDIA_DISK_WARN_PERCENT`         | 否                            | `DQ_DATA_DIR` 所在文件系统容量告警阈值，默认 85%                                                                             |
+| `DQ_COOKIE_SECURE`                   | 否                            | 留空自动判断；特殊代理可强制 `true/false`                                                                                    |
+| `DQ_TRUSTED_PROXY_HOPS`              | 否                            | 速率限制读取代理 IP 时信任的代理层数；直连保持 `0`，单层 Nginx/Caddy 使用 `1`                                                |
+| `DQ_INSTALL_TOKEN`                   | 首次安装必填                  | 数据库初始化和首个管理员使用的一次性令牌，至少 32 个字符；安装完成后从 App 删除                                              |
+| `DQ_MAINTENANCE_TOKEN`               | 外部计划任务可选              | 订单过期、邀请结算、观测等外部维护接口的 Bearer Token，至少 32 个字符；不要提供给生成 Worker                         |
+| `DQ_WORKER_TOKEN`                    | 生产必填                      | 生成 Worker 任务、心跳和内部模型代理的独立 Bearer Token，至少 32 个字符；必须与维护令牌不同                         |
+| `DQ_WORKER_API_ORIGIN`               | 独立 Worker 可选              | Worker 调用主应用的站内地址；Compose 使用 `http://app:3000`，Render 注入私网 hostport                                        |
+| `DQ_GENERATION_WORKER_ID`            | 否                            | 生成 Worker 稳定标识；留空时由主机名和进程号生成                                                                             |
+| `DQ_GENERATION_WORKER_INTERVAL_MS`   | 否                            | 恢复批次轮询间隔，默认 2000ms                                                                                                |
+| `DQ_GENERATION_WORKER_LANES`         | 否                            | 单个 Worker 并行恢复通道数，默认 2                                                                                           |
+| `DQ_GENERATION_WORKER_HEARTBEAT_MS`  | 否                            | Worker 心跳间隔，默认 15000ms                                                                                                |
+| `DQ_GENERATION_WORKER_STALE_MS`      | 否                            | 就绪检查判定 Worker 失联的窗口，默认 90000ms                                                                                 |
+| `DQ_GENERATION_WEBHOOK_SECRET`       | 回调可选                      | 通用生成回调 HMAC-SHA256 密钥，启用时至少 32 个字符                                                                          |
+| `DQ_APP_URL`                         | 文档站可选                    | 独立文档站使用的主应用地址，使文档 favicon 跟随后台站点图标                                                                  |
+| `DQ_REMBG_URL`                       | 默认 Compose 可选；低内存必填 | 留空时标准/外部数据库 Compose 使用 `http://rembg:7000`，宝塔使用 `http://127.0.0.1:7000`；低内存部署填写仅内网可达的外部地址 |
+| `DQ_REMBG_INTERNAL_TOKEN`            | 跨主机推荐                    | rembg sidecar 的 Bearer Token；与 sidecar 配置一致，只保存在服务端环境变量                                                   |
+| `DQ_REMBG_IMAGE`                     | 否                            | Compose 使用的 rembg 镜像，默认 `ghcr.io/dao-qin/dq-rembg:latest`                                                            |
+| `DQ_REMBG_MODEL`                     | 否                            | `/readyz` 启动基线模型，默认 `silueta`；画布 V3 任务可从镜像内固定白名单手动选模                                             |
+| `DQ_REMBG_CONCURRENCY`               | 否                            | rembg 推理并发，默认且硬限制为 1；其他图片、视频、文本任务不受此槽位限制                                                     |
+| `DQ_REMBG_CPUS`                      | 否                            | Compose 为 sidecar 设置的 CPU 上限，默认 `2.0`；同时写入普通 Compose 与 `deploy.resources`                                   |
+| `DQ_REMBG_MEMORY_LIMIT`              | 否                            | Compose 为 sidecar 设置的内存上限，默认 `5g`；同时写入普通 Compose 与 `deploy.resources`                                     |
+| `DQ_REMBG_OMP_NUM_THREADS`           | 否                            | 单次 CPU 计算线程数，默认 2；Compose 同步到 ONNX、OpenMP、OpenBLAS 与 MKL                                                    |
+| `DQ_REMBG_ONNX_INTER_OP_THREADS`     | 否                            | ONNX inter-op 线程，固定为 1                                                                                                 |
+| `DQ_REMBG_ALPHA_MATTING_TILE_PIXELS` | 否                            | 原尺寸 Alpha Matting 单块像素预算，默认 1,048,576；控制单块求解内存，不限制整图或输出尺寸                                    |
+| `DQ_REMBG_TIMEOUT_SECONDS`           | 否                            | 单次推理超时，默认 120 秒                                                                                                    |
+| `DQ_REMBG_QUEUE_TIMEOUT_SECONDS`     | 否                            | 等待推理槽位超时，默认 30 秒                                                                                                 |
+| `DQ_REMBG_CANCEL_TIMEOUT_MS`         | 否                            | BFF 等待 sidecar 完成子进程清理的超时，默认 15000ms                                                                          |
+| `DQ_REMBG_CANCEL_TOMBSTONE_SECONDS`  | 否                            | sidecar 保留取消标记的时间，默认 600 秒，最大 3600 秒                                                                        |
+| `FFMPEG_PATH`                        | 否                            | 本机 FFmpeg 不在 PATH 时填写；Docker 已内置 FFmpeg                                                                           |
+| `FFPROBE_PATH`                       | 否                            | 可选的 FFprobe 路径；默认使用 `FFMPEG_PATH` 同目录二进制或系统 PATH                                                          |
+| `DQ_CONTENT_MODERATION_PROVIDER`     | 否                            | 作品审核信号 Provider：`manual`、`keywords` 或 `http`，默认人工审核                                                          |
+| `DQ_CONTENT_MODERATION_KEYWORDS`     | keywords 可选                 | 逗号或换行分隔的风险关键词，只生成后台复核信号                                                                               |
+| `DQ_CONTENT_MODERATION_URL`          | http 必填                     | 外部内容审核 HTTP 地址；服务端以 3 秒超时发送公开草稿字段                                                                    |
+| `DQ_CONTENT_MODERATION_API_KEY`      | http 可选                     | 外部审核 Bearer Token，仅保存在服务器环境变量                                                                                |
 
 ## PostgreSQL
 
@@ -71,7 +81,7 @@ POSTGRES_USER=dq
 POSTGRES_PASSWORD=replace-with-a-strong-database-password
 ```
 
-安装页不会保存数据库密码。GET 状态检查只执行连接与表存在性查询；只有点击“初始化表结构”才会创建 `dq_` 前缀表。加密密钥无效时初始化和首个管理员注册都会被阻止。
+安装页不会保存数据库密码或回显令牌。GET 状态检查只执行连接与表存在性查询；只有提交与 App 环境变量一致的 `DQ_INSTALL_TOKEN` 并点击“初始化表结构”才会创建 `dq_` 前缀表。首个管理员同样需要该一次性令牌。安装完成后可删除 `DQ_INSTALL_TOKEN` 并重启；不要删除稳定的加密密钥、外部维护令牌或 Worker 令牌。
 
 使用宝塔宿主机 PostgreSQL 时，应用通过 `docker-compose.baota.yml` 的 host 网络连接 `127.0.0.1:5432`；不要同时启动默认 Compose 中的 PostgreSQL 服务。
 
@@ -79,7 +89,7 @@ POSTGRES_PASSWORD=replace-with-a-strong-database-password
 
 安装过 0.0.2 的用户必须停止旧服务并删除旧数据库或数据库卷，然后重新拉取 0.0.3 代码或镜像并重新安装项目。0.0.3 不支持沿用旧数据库或原地升级；删除旧数据库会清除其中的数据。
 
-启动 0.0.3 后访问 `/install`，执行“初始化表结构”并创建首个管理员，再检查 `/api/health/ready` 返回 200 和 Worker 心跳。重新生成至少 32 个字符的 `DQ_MAINTENANCE_TOKEN`，让 App 与 `generation-worker` 使用同一个值；生产环境重新设置 `DQ_ENCRYPTION_KEY` 并妥善保存。
+启动 0.0.3 后访问 `/install`，执行“初始化表结构”并创建首个管理员，再检查 `/api/health/ready` 返回 200 和 Worker 心跳。分别生成至少 32 个字符的 `DQ_MAINTENANCE_TOKEN` 与 `DQ_WORKER_TOKEN`，不要复用同一个值；生产环境重新设置 `DQ_ENCRYPTION_KEY` 并妥善保存。
 
 0.0.3 只按当前 Schema 初始化固定 `dq_` 前缀表，不包含 0.0.2 数据迁移或旧任务修复逻辑。Render 的 0.0.3 Blueprint 使用付费 Web/Worker 与持久数据库/磁盘，安装前请确认平台费用。
 
@@ -198,7 +208,7 @@ cd web
 npm run worker:generation
 ```
 
-Worker 与主应用必须使用同一个至少 32 字符的 `DQ_MAINTENANCE_TOKEN`。独立部署 Worker 时再设置 `DQ_WORKER_API_ORIGIN`；同一实例的 Worker ID 应保持稳定，便于就绪检查和故障诊断。`/api/health/ready` 会把缺少维护令牌、从未收到心跳或心跳过期报告为生成 Worker 未就绪。
+主应用必须配置至少 32 字符的 `DQ_WORKER_TOKEN`，生成 Worker 只接收这个独立令牌、站内地址和运行参数；`DQ_MAINTENANCE_TOKEN` 只供外部维护接口使用，不能复制给 Worker，两个令牌必须不同。Compose 中 Worker 不读取 App 的 `.env`，也不应获得数据库、加密、安装、模型或支付密钥。独立部署 Worker 时再设置 `DQ_WORKER_API_ORIGIN`；同一实例的 Worker ID 应保持稳定，便于就绪检查和故障诊断。`/api/health/ready` 会把缺少 Worker 令牌、从未收到心跳或心跳过期报告为生成 Worker 未就绪。
 
 上游支持回调时，可设置 `DQ_GENERATION_WEBHOOK_SECRET` 并让上游调用 `/api/generation-webhooks/{channelId}`。回调原始 JSON 使用该密钥做 HMAC-SHA256 签名；事件 ID 与上游任务 ID 必须稳定。回调只推进已有图片、视频或音频任务，不能代替任务创建；未匹配事件会保留用于对账。该幂等处理要求 PostgreSQL。
 

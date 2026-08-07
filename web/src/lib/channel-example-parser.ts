@@ -276,10 +276,11 @@ function inferProtocol(raw: string, endpoint: EndpointMatch | null, requestBody:
     const source = `${raw}\n${endpoint?.requestUrl || ""}`.toLowerCase();
     if (source.includes("/v1/seedance-special/videos") || source.includes("sd_2.0_special_") || source.includes("sd_2.0_fast_special_")) return "seedance-special";
     if (source.includes("/sdapi/v1/txt2img") || source.includes("/sdapi/v1/img2img") || source.includes("alwayson_scripts")) return "custom";
-    if (source.includes("sub2api") || source.includes("code2alita.com")) return "sub2api";
+    if (source.includes("sub2api") || hasHostname(raw, "code2alita.com")) return "sub2api";
     if (/\bnew\s*api\b|new-api|one-api/i.test(source)) return "newapi";
+    if (source.includes("new.aiym.ink")) return "vozeb-recommended";
     if (isQingyanProvider({ baseUrl: endpoint?.requestUrl || "" }) || source.includes("qingyanzhiying")) return "qingyan";
-    if (source.includes("globalaiopc.com") || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
+    if (hasHostname(raw, "globalaiopc.com") || source.includes("/videos/videos") || source.includes("referenceimages")) return "globalaiopc";
     if (source.includes("ark.cn-beijing.volces.com/api/v3")) return "volcengine-video";
     if (source.includes("seedance") || source.includes("/contents/generations/tasks") || source.includes("/api/plan/v3")) return "seedance";
     if (isRecord(requestBody) && hasSub2ApiImageReferenceShape(requestBody)) return "sub2api";
@@ -293,6 +294,18 @@ function hasSub2ApiImageReferenceShape(value: Record<string, unknown>) {
     if (Array.isArray(value.image_urls)) return true;
     const images = value.images;
     return Array.isArray(images) && images.some((item) => isRecord(item) && typeof item.image_url === "string");
+}
+
+function hasHostname(text: string, expectedHostname: string) {
+    const expected = expectedHostname.toLowerCase();
+    return extractUrls(text).some((value) => {
+        try {
+            const hostname = new URL(value).hostname.toLowerCase();
+            return hostname === expected || hostname.endsWith(`.${expected}`);
+        } catch {
+            return false;
+        }
+    });
 }
 
 function buildRequestTemplate(requestBody: unknown, kind: ExampleKind, protocol: SystemChannelProtocol) {
@@ -437,6 +450,7 @@ function formatPath(path: Array<string | number>) {
 function protocolLabel(protocol: SystemChannelProtocol) {
     if (protocol === "sub2api") return "sub2api";
     if (protocol === "newapi") return "New API";
+    if (protocol === "vozeb-recommended") return "VOZEB Recommended";
     if (protocol === "qingyan") return "青衍智影";
     if (protocol === "globalaiopc") return "GlobalAiOpc";
     if (protocol === "seedance") return "Seedance";

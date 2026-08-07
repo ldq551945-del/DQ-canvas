@@ -28,3 +28,7 @@ their respective licenses, including:
 The full license for this repository is provided in LICENSE. Third-party
 packages and assets remain subject to the notices and license declarations
 provided by their respective authors.
+
+The workbench session hydration and refresh-recovery patterns are adapted
+from VOZEB-PRO (AGPL-3.0), source revision:
+https://github.com/csyqlz/VOZEB-PRO/commit/176872b0450cd9b8a0d497873477a5b3fd26cceb

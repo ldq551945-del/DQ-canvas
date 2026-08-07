@@ -2,16 +2,18 @@
 
 import { App, Button, Drawer } from "antd";
 import type { TextAreaRef } from "antd/es/input/TextArea";
-import { Clapperboard, History, Play, Plus, ScanFace, ShoppingBag, Sparkles } from "lucide-react";
+import { Clapperboard, History, Play, Plus, RefreshCw, ScanFace, ShoppingBag, Sparkles } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { SiteLogo } from "@/components/layout/site-logo";
+import { FirstUseGuide } from "@/components/onboarding/first-use-guide";
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
 import { listAgentSkills, type AgentSkillSummary } from "@/services/api/agent-skills";
 import { usePublicSessionStore } from "@/stores/use-public-session-store";
+import { useConfigStore } from "@/stores/use-config-store";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
 import { createAgentPromptFromHash } from "@/lib/create-agent-prompt";
 
@@ -40,12 +42,17 @@ export default function CreatePage() {
     const [prompt, setPrompt] = useState("");
     const [skills, setSkills] = useState<AgentSkillSummary[]>([]);
     const [skillsLoading, setSkillsLoading] = useState(true);
+    const [skillsLoadError, setSkillsLoadError] = useState("");
+    const [skillsLoadVersion, setSkillsLoadVersion] = useState(0);
     const [selectedSkillId, setSelectedSkillId] = useState<string>();
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
     const [selectedAgentModelId, setSelectedAgentModelId] = useState("");
     const [smartPlanning, setSmartPlanning] = useState(true);
     const [historyOpen, setHistoryOpen] = useState(false);
     const publicSettings = usePublicSessionStore((state) => state.payload?.settings);
+    const currentUser = usePublicSessionStore((state) => state.payload?.user);
+    const publicSessionReady = usePublicSessionStore((state) => state.ready);
+    const config = useConfigStore((state) => state.config);
     const site = publicSettings?.site || { title: "DQ-绘图", logoUrl: "/logo.svg" };
     const agent = useCreateAgent();
     const openAgentConversation = agent.openConversation;
@@ -55,15 +62,21 @@ export default function CreatePage() {
     const selectedSkill = skills.find((skill) => skill.id === selectedSkillId);
     const modelOptions = useCreativeAgentModels();
     const selectedModels = modelOptions.filter((model) => selectedModelIds.includes(model.id));
+    const missingModels = [!config.textModel ? "默认文本模型" : "", !modelOptions.length ? "至少一个图片、视频或音频模型" : ""].filter(Boolean);
 
     useEffect(() => {
         let active = true;
+        setSkillsLoading(true);
+        setSkillsLoadError("");
         void listAgentSkills("all")
             .then((items) => {
                 if (active) setSkills(items);
             })
-            .catch(() => {
-                if (active) setSkills([]);
+            .catch((error) => {
+                if (active) {
+                    setSkills([]);
+                    setSkillsLoadError(error instanceof Error ? error.message : "加载创作 Skill 失败");
+                }
             })
             .finally(() => {
                 if (active) setSkillsLoading(false);
@@ -71,7 +84,7 @@ export default function CreatePage() {
         return () => {
             active = false;
         };
-    }, []);
+    }, [skillsLoadVersion]);
 
     useEffect(() => {
         if (initialConversationRestoredRef.current) return;
@@ -187,7 +200,7 @@ export default function CreatePage() {
     };
 
     const useRecentAsset = async (asset: CreateOverviewAsset) => {
-        await importReferenceMedia({ url: asset.url, fileStem: asset.id });
+        await importReferenceMedia({ url: asset.url, mimeType: asset.mimeType, fileStem: asset.id });
     };
 
     const selectSkill = (skill: AgentSkillSummary) => {
@@ -279,6 +292,7 @@ export default function CreatePage() {
                         hasOlder={agent.hasOlderMessages}
                         olderLoading={agent.olderMessagesLoading}
                         onLoadOlder={() => void agent.loadOlderMessages()}
+                        canConfigureModels={currentUser?.role === "admin"}
                     />
                 ) : (
                     <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1320px] flex-col items-center px-2.5 pb-3 pt-3 sm:px-8 sm:pb-8 sm:pt-12 lg:pt-[9vh] xl:pt-[11vh]">
@@ -287,9 +301,23 @@ export default function CreatePage() {
                             <h1 className="mt-2.5 text-[22px] font-semibold leading-tight sm:mt-5 sm:text-[30px]">{site.title} 创作 Agent</h1>
                             <p className="mt-2 text-sm text-[#8b949f] dark:text-[#7f8996]">从一个想法开始</p>
                         </div>
+                        <FirstUseGuide
+                            ready={publicSessionReady}
+                            completed={hasConversation || agent.conversations.length > 0}
+                            missingModels={missingModels}
+                            onUseExample={() => {
+                                setPrompt("为一款透明玻璃香水瓶创作电商主视觉：冷白背景，柔和侧光，突出瓶身折射与高级质感，输出一张 4:5 竖图。");
+                                window.requestAnimationFrame(() => inputRef.current?.focus());
+                            }}
+                        />
                         <div className="mt-3 w-full sm:mt-6">{composer}</div>
                         <div className="mt-2 flex w-full min-w-0 flex-wrap justify-center gap-1.5 sm:mt-3 sm:gap-2">
                             {skillsLoading ? <span className="px-2 py-2 text-xs text-[#9aa2ad]">正在加载创作 Skill...</span> : null}
+                            {!skillsLoading && skillsLoadError ? (
+                                <Button size="small" icon={<RefreshCw className="size-3.5" />} onClick={() => setSkillsLoadVersion((version) => version + 1)}>
+                                    重新加载 Skill
+                                </Button>
+                            ) : null}
                             {skills.map((skill, index) => {
                                 const visual = skillVisual(skill, index);
                                 const Icon = visual.icon;

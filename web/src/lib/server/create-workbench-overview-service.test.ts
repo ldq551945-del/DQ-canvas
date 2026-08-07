@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 
-import { buildCreateGenerationOverview } from "./create-workbench-overview-service";
+import { buildCreateGenerationOverview, mergeCreateOverviewAssets } from "./create-workbench-overview-service";
 
 describe("create workbench overview service", () => {
     it("returns four running tasks and six latest unique stable assets", () => {
@@ -24,7 +25,40 @@ describe("create workbench overview service", () => {
         expect(overview.recentAssets.filter((asset) => asset.url === "/api/media/image-one.webp")).toHaveLength(1);
         expect(overview.recentAssets.some((asset) => asset.url.startsWith("data:"))).toBe(false);
     });
+
+    it("merges recent audio assets, keeps newest URLs and rejects temporary media", () => {
+        const generationAssets = [{ id: "image-old", kind: "image" as const, title: "图片", url: "/api/reference-assets/shared.png", createdAt: "2026-07-25T12:00:00.000Z" }];
+        const creativeAssets = [
+            creativeAsset("audio-new", "audio", "/api/reference-assets/result.mp3", Date.parse("2026-07-27T12:00:00.000Z")),
+            creativeAsset("image-new", "image", "/api/reference-assets/shared.png", Date.parse("2026-07-26T12:00:00.000Z")),
+            creativeAsset("temporary", "video", "blob:preview", Date.parse("2026-07-28T12:00:00.000Z")),
+        ];
+
+        expect(mergeCreateOverviewAssets(generationAssets, creativeAssets)).toEqual([
+            expect.objectContaining({ id: "audio-new", kind: "audio", url: "/api/reference-assets/result.mp3", mimeType: "audio/mpeg" }),
+            expect.objectContaining({ id: "image-new", kind: "image", url: "/api/reference-assets/shared.png" }),
+        ]);
+    });
 });
+
+function creativeAsset(id: string, type: "image" | "video" | "audio", serverUrl: string, createdAt: number): CreativeAsset {
+    return {
+        id,
+        userId: "user-one",
+        conversationId: "conversation-one",
+        sourceRunId: "run-one",
+        sourceTaskId: id,
+        ordinal: 0,
+        type,
+        status: "ready",
+        title: id,
+        serverUrl,
+        mimeType: type === "audio" ? "audio/mpeg" : type === "video" ? "video/mp4" : "image/png",
+        metadata: {},
+        createdAt,
+        updatedAt: createdAt,
+    };
+}
 
 function generationLog(id: string, status: StoredGenerationLog["status"], createdAt: string, assets: StoredGenerationLog["assets"]): StoredGenerationLog {
     return {

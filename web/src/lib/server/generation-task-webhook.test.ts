@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -12,55 +12,68 @@ vi.mock("@/lib/server/database", () => ({
     withPostgresTransaction: vi.fn(async (handler: (client: { query: typeof mocks.query }) => unknown) => handler({ query: mocks.query })),
 }));
 
-import { GenerationWebhookError, recordGenerationWebhook, verifyGenerationWebhookSignature } from "./generation-task-webhook";
+import { GenerationWebhookError, recordGenerationWebhook } from "./generation-task-webhook";
 
 describe("generation task webhook", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.provider = "postgres";
-        vi.stubEnv("DQ_GENERATION_WEBHOOK_SECRET", "0123456789abcdef0123456789abcdef");
     });
 
-    it("accepts only an exact HMAC-SHA256 signature", () => {
-        const body = JSON.stringify({ id: "event-one" });
-        const signature = createHmac("sha256", process.env.DQ_GENERATION_WEBHOOK_SECRET!).update(body).digest("hex");
-
-        expect(verifyGenerationWebhookSignature(body, `sha256=${signature}`)).toBe(true);
-        expect(verifyGenerationWebhookSignature(`${body} `, `sha256=${signature}`)).toBe(false);
-        expect(verifyGenerationWebhookSignature(body, "invalid")).toBe(false);
-    });
-
-    it("deduplicates events before moving a matched media task to result_ready", async () => {
+    it("updates exactly one task by channel and upstream task id", async () => {
         mocks.query
             .mockResolvedValueOnce({ rows: [{ event_id: "event-one" }] })
             .mockResolvedValueOnce({ rows: [{ id: "video-one", task_type: "video" }] })
             .mockResolvedValueOnce({ rows: [] });
 
-        const result = await recordGenerationWebhook({
-            channelId: "channel-one",
-            eventId: "event-one",
-            upstreamTaskId: "upstream-one",
-            upstreamStatus: "completed",
-            resultUrl: "https://cdn.example/video.mp4",
-            rawBody: "{}",
-        });
+        const result = await recordGenerationWebhook(fixture());
 
         expect(result).toMatchObject({ duplicate: false, matched: true, taskId: "video-one", taskType: "video", resultReady: true });
-        expect(String(mocks.query.mock.calls[0]?.[0])).toContain("ON CONFLICT (channel_id, event_id) DO NOTHING");
-        expect(String(mocks.query.mock.calls[1]?.[0])).toContain("worker_id = NULL, lease_until = NULL");
-        expect(String(mocks.query.mock.calls[1]?.[0])).toContain("'result_ready'");
+        expect(String(mocks.query.mock.calls[0]?.[0])).toContain("signature_timestamp");
+        const taskUpdate = String(mocks.query.mock.calls[1]?.[0]);
+        expect(taskUpdate).toContain("channel_id = $1");
+        expect(taskUpdate).toContain("upstream_task_id = $2");
+        expect(taskUpdate).not.toContain("client_request_id");
+        expect(taskUpdate).not.toContain(" OR ");
     });
 
-    it("does not apply a duplicate event twice", async () => {
-        mocks.query.mockResolvedValueOnce({ rows: [] });
+    it("returns the persisted task state for an exact duplicate payload", async () => {
+        mocks.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [{ payload_hash: payloadHash("{}"), status: "result_ready", task_id: "video-one", task_type: "video" }] });
 
-        await expect(recordGenerationWebhook({ channelId: "channel-one", eventId: "event-one", upstreamTaskId: "upstream-one", rawBody: "{}" })).resolves.toEqual({ duplicate: true, matched: false });
-        expect(mocks.query).toHaveBeenCalledTimes(1);
+        await expect(recordGenerationWebhook({ ...fixture(), rawBody: "{}" })).resolves.toEqual({ duplicate: true, matched: true, taskId: "video-one", taskType: "video", resultReady: true });
+        expect(mocks.query).toHaveBeenCalledTimes(2);
+    });
+
+    it("records and rejects an event id replayed with a different payload", async () => {
+        mocks.query
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ payload_hash: payloadHash('{"old":true}'), status: "received", task_id: null, task_type: null }] })
+            .mockResolvedValueOnce({ rows: [] });
+
+        await expect(recordGenerationWebhook({ ...fixture(), rawBody: '{"new":true}' })).rejects.toEqual(expect.objectContaining<Partial<GenerationWebhookError>>({ status: 409 }));
+        expect(String(mocks.query.mock.calls[2]?.[0])).toContain("conflict_count = conflict_count + 1");
+        expect(mocks.query).toHaveBeenCalledTimes(3);
     });
 
     it("requires PostgreSQL for durable webhook idempotency", async () => {
         mocks.provider = "file";
 
-        await expect(recordGenerationWebhook({ channelId: "channel-one", eventId: "event-one", upstreamTaskId: "upstream-one", rawBody: "{}" })).rejects.toEqual(expect.objectContaining<Partial<GenerationWebhookError>>({ status: 409 }));
+        await expect(recordGenerationWebhook(fixture())).rejects.toEqual(expect.objectContaining<Partial<GenerationWebhookError>>({ status: 409 }));
     });
 });
+
+function fixture() {
+    return {
+        channelId: "channel-one",
+        eventId: "event-one",
+        upstreamTaskId: "upstream-one",
+        upstreamStatus: "completed",
+        resultUrl: "https://cdn.example/video.mp4",
+        rawBody: "{}",
+        signatureTimestamp: "2026-08-01T00:00:00.000Z",
+    };
+}
+
+function payloadHash(body: string) {
+    return createHash("sha256").update(body).digest("hex");
+}

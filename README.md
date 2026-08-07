@@ -438,7 +438,7 @@ docker compose up -d
 docker compose ps
 ```
 
-`DQ_MAINTENANCE_TOKEN` 是服务器部署密钥，不在管理后台填写。安装页会自动生成并放入可复制的环境变量；选择 Docker、宝塔或云数据库时，可复制的 Compose 模板同时包含 App 与 `generation-worker`，两个服务使用同一个令牌并一起启动。单独部署 Worker 时也必须注入完全相同的值。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
+`DQ_MAINTENANCE_TOKEN` 是外部维护接口部署密钥，不在管理后台填写；`DQ_WORKER_TOKEN` 是只给生成 Worker 的独立密钥，两个值必须不同。安装页会自动生成并放入可复制的环境变量；选择 Docker、宝塔或云数据库时，Compose 模板同时包含 App 与 `generation-worker`，但 Worker 只接收 Worker 令牌。完整变量说明见[配置说明](docs/content/docs/overview/configuration.mdx)。
 
 打开 `https://你的域名/install`，依次检查数据库、初始化表结构并创建首个管理员。
 
@@ -490,6 +490,12 @@ pnpm run dev
 4. 配置套餐、积分规则和可选支付渠道。
 5. 配置 SMTP、注册策略、本地媒体或 S3 兼容对象存储。
 6. 在“初始化配置”检查上线项，再验证真实生成、退款和备份恢复。
+
+### 本轮真实渠道验收
+
+仓库已经包含 Grok2API 的独立视频协议适配。相同上游地址和凭据可以在后台拆成文本、图片、视频三条渠道，分别拉取对应模型，避免把能力混在一条渠道中。视频完成后统一读取 `/v1/videos/:task_id/content`，通过带任务签名的站内媒体代理下载，经过 MP4 文件头校验后再持久化；不会把上游回环地址直接交给浏览器。
+
+2026-08-07 已在本地 Docker Compose 完成一次真实闭环：文本成功，图片成功并持久化，视频任务 `28ea8a5b-42f7-4a3a-9972-b4b9ecd67d34` 最终为 `success/completed`，媒体为 `video/mp4`、`713813` 字节，`ffprobe` 时长 `5.042` 秒。详细协议、失败原因和配置边界见[Grok2API 渠道适配](docs/content/docs/overview/grok2api.mdx)与[待测试记录](docs/content/docs/progress/pending-test.mdx)。
 
 ## 项目文件
 

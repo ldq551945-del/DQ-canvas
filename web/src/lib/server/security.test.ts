@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const dnsMocks = vi.hoisted(() => ({ lookup: vi.fn() }));
+const dnsMocks = vi.hoisted(() => ({ lookup: vi.fn(), fetch: vi.fn() }));
 
 vi.mock("node:dns/promises", () => ({ lookup: dnsMocks.lookup }));
+vi.mock("undici", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("undici")>();
+    return { ...actual, fetch: dnsMocks.fetch };
+});
 
 import {
     checkGenerationRateLimit,
@@ -17,6 +21,8 @@ import {
     rateLimitHeaders,
     resolveSafeOutboundUrl,
 } from "./security";
+
+beforeEach(() => dnsMocks.fetch.mockReset());
 
 describe("checkRateLimit", () => {
     it("blocks requests beyond the configured window limit", async () => {
@@ -36,6 +42,18 @@ describe("checkRateLimit", () => {
 
         if (previous === undefined) delete process.env.DQ_TRUSTED_PROXY_HOPS;
         else process.env.DQ_TRUSTED_PROXY_HOPS = previous;
+    });
+
+    it("rejects incomplete or malformed trusted proxy chains", () => {
+        const previous = process.env.DQ_TRUSTED_PROXY_HOPS;
+        process.env.DQ_TRUSTED_PROXY_HOPS = "2";
+        try {
+            expect(getClientIp(new Request("http://localhost", { headers: { "x-forwarded-for": "198.51.100.10" } }))).toBe("unknown");
+            expect(getClientIp(new Request("http://localhost", { headers: { "x-forwarded-for": "attacker, 203.0.113.10" } }))).toBe("unknown");
+        } finally {
+            if (previous === undefined) delete process.env.DQ_TRUSTED_PROXY_HOPS;
+            else process.env.DQ_TRUSTED_PROXY_HOPS = previous;
+        }
     });
 
     it("limits generation requests by user", async () => {
@@ -156,20 +174,20 @@ describe("checkRateLimit", () => {
     });
 
     it("pins a validated DNS result on the outbound dispatcher instead of handing the hostname back to fetch", async () => {
-        dnsMocks.lookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+        dnsMocks.lookup.mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
         const resolved = await resolveSafeOutboundUrl("https://provider.example/v1/models");
-        expect(resolved).toMatchObject({ hostname: "provider.example", address: "203.0.113.10" });
+        expect(resolved).toMatchObject({ hostname: "provider.example", address: "8.8.8.8" });
 
-        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+        dnsMocks.fetch.mockResolvedValue(Response.json({ ok: true }));
         await fetchSafeOutboundUrl("https://provider.example/v1/models");
 
-        const [url, init] = fetchMock.mock.calls[0];
+        const [url, init] = dnsMocks.fetch.mock.calls[0];
         expect(String(url)).toBe("https://provider.example/v1/models");
         expect((init as (RequestInit & { dispatcher?: unknown }) | undefined)?.dispatcher).toBeDefined();
     });
 
     it("pins the CONNECT destination when an outbound proxy is configured", async () => {
-        dnsMocks.lookup.mockResolvedValue([{ address: "203.0.113.10", family: 4 }]);
+        dnsMocks.lookup.mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
         const previousProxy = process.env.HTTPS_PROXY;
         process.env.HTTPS_PROXY = "http://127.0.0.1:8080";
         try {
@@ -177,14 +195,13 @@ describe("checkRateLimit", () => {
             const { fetchSafeOutboundUrl: fetchWithConfiguredProxy } = await import("./security");
             const { getOutboundProxyUrl } = await import("./proxy-dispatcher");
             expect(getOutboundProxyUrl()).toBe("http://127.0.0.1:8080");
-            vi.restoreAllMocks();
-            const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ok: true }));
+            dnsMocks.fetch.mockResolvedValue(Response.json({ ok: true }));
 
             await fetchWithConfiguredProxy("https://provider.example/v1/models");
 
-            const [url, init] = fetchMock.mock.calls[0];
+            const [url, init] = dnsMocks.fetch.mock.calls[0];
             expect(new Headers(init?.headers).get("host")).toBe("provider.example");
-            expect(String(url)).toBe("https://203.0.113.10/v1/models");
+            expect(String(url)).toBe("https://8.8.8.8/v1/models");
             expect((init as (RequestInit & { dispatcher?: unknown }) | undefined)?.dispatcher).toBeDefined();
         } finally {
             if (previousProxy === undefined) delete process.env.HTTPS_PROXY;

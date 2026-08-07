@@ -4,6 +4,10 @@ out/
 node_modules/
 .pnpm-store/
 .playwright-cli/
+web/.e2e-data/
+web/.e2e-artifacts/
+web/.trace-*/
+web/playwright-report/
 output/
 .env*
 !.env.example

@@ -194,7 +194,8 @@ describe("generation task scheduler", () => {
         expect(String(mocks.transactionQuery.mock.calls[0]?.[0])).toContain("FOR UPDATE SKIP LOCKED");
         expect(mocks.transactionQuery.mock.calls[0]?.[1]).toEqual([new Date(1_000), 20, "worker-one", ["due"], new Date(91_000)]);
         expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("worker_id = $3");
-        expect(mocks.postgresQuery.mock.calls[0]?.[1]).toHaveLength(13);
+        expect(mocks.postgresQuery.mock.calls[0]?.[1]).toHaveLength(14);
+        expect(mocks.postgresQuery.mock.calls[0]?.[1]?.at(-1)).toBe(false);
     });
 
     it("serializes the PostgreSQL background-removal slot and claims in FIFO order", async () => {

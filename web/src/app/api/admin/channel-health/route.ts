@@ -134,7 +134,9 @@ export async function POST(request: Request) {
     const healthUrl = textProtocol
         ? textProtocolUrl(providerBaseUrl, textProtocol, advancedConfig)
         : isDeclarativeHealthProtocol(protocol) && advancedConfig.createPath
-          ? literalChannelHealthUrl(providerBaseUrl, advancedConfig.createPath)
+          ? protocol === "vozeb-recommended" || protocol === "grok2api"
+              ? apiUrl(providerBaseUrl, advancedConfig.createPath.replace(/^\/v1(?=\/)/i, ""))
+              : literalChannelHealthUrl(providerBaseUrl, advancedConfig.createPath)
           : apiUrl(providerBaseUrl, "/models");
     if (!(await isSafeOutboundUrl(healthUrl))) {
         const result = { ok: false, kind, model, status: 0, error: "Base URL 不允许访问内网或保留地址" } satisfies HealthResult;

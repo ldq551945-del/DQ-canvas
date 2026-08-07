@@ -40,6 +40,19 @@ import { notifyCreativeRunEvent } from "./creative-run-event-signal";
 export { CreativeStoreConflict } from "./creative-runtime-repository";
 import { CreativeStoreConflict } from "./creative-runtime-repository";
 
+export type CreativeAssetPageOptions = {
+    ids?: string[];
+    messageIds?: string[];
+    runIds?: string[];
+    limit?: number;
+    offset?: number;
+};
+
+export type CreativeAssetPage = {
+    assets: CreativeAsset[];
+    hasMore: boolean;
+};
+
 export async function createCreativeConversation(userId: string, input: { surface: CreativeSurface; source?: CreativeConversationSource; projectId?: string; title?: string }) {
     const now = Date.now();
     const conversation: CreativeConversation = {
@@ -253,6 +266,61 @@ export async function listCreativeAssets(conversationId: string, userId: string)
         return result.rows.map(mapAsset);
     }
     return (await readRuntimeFile()).assets.filter((item) => item.conversationId === conversationId && item.userId === userId && item.status !== "deleted").sort((a, b) => a.createdAt - b.createdAt || a.ordinal - b.ordinal);
+}
+
+export async function listCreativeAssetPage(conversationId: string, userId: string, options: CreativeAssetPageOptions = {}): Promise<CreativeAssetPage> {
+    const size = boundedLimit(options.limit, 100);
+    const offset = Math.max(0, Math.min(10_000, Math.floor(Number(options.offset) || 0)));
+    const ids = options.ids || [];
+    const messageIds = options.messageIds || [];
+    const runIds = options.runIds || [];
+    const hasSelectors = ids.length > 0 || messageIds.length > 0 || runIds.length > 0;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery(
+            `SELECT * FROM creative_assets
+             WHERE conversation_id = $1 AND user_id = $2 AND status <> 'deleted'
+               AND ($3::boolean = false OR id = ANY($4::text[]) OR message_id = ANY($5::text[]) OR source_run_id = ANY($6::text[]))
+             ORDER BY created_at DESC, ordinal DESC, id DESC
+             LIMIT $7 OFFSET $8`,
+            [conversationId, userId, hasSelectors, ids, messageIds, runIds, size + 1, offset],
+        );
+        return { assets: result.rows.slice(0, size).map(mapAsset), hasMore: result.rows.length > size };
+    }
+    const wantedIds = new Set(ids);
+    const wantedMessageIds = new Set(messageIds);
+    const wantedRunIds = new Set(runIds);
+    const assets = (await readRuntimeFile()).assets
+        .filter(
+            (item) =>
+                item.conversationId === conversationId &&
+                item.userId === userId &&
+                item.status !== "deleted" &&
+                (!hasSelectors || wantedIds.has(item.id) || Boolean(item.messageId && wantedMessageIds.has(item.messageId)) || Boolean(item.sourceRunId && wantedRunIds.has(item.sourceRunId))),
+        )
+        .sort((left, right) => right.createdAt - left.createdAt || right.ordinal - left.ordinal || right.id.localeCompare(left.id))
+        .slice(offset, offset + size + 1);
+    return { assets: assets.slice(0, size), hasMore: assets.length > size };
+}
+
+export async function listRecentCreativeMediaAssetsForUser(userId: string, limit = 12) {
+    const size = Math.max(1, Math.min(50, Math.floor(limit)));
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery(
+            `SELECT * FROM creative_assets
+             WHERE user_id = $1 AND status = 'ready' AND type IN ('image', 'video', 'audio')
+               AND (NULLIF(server_url, '') IS NOT NULL OR NULLIF(remote_url, '') IS NOT NULL)
+             ORDER BY created_at DESC, ordinal DESC, id DESC
+             LIMIT $2`,
+            [userId, size],
+        );
+        return result.rows.map(mapAsset);
+    }
+    return (await readRuntimeFile()).assets
+        .filter((item) => item.userId === userId && item.status === "ready" && (item.type === "image" || item.type === "video" || item.type === "audio") && Boolean(item.serverUrl || item.remoteUrl))
+        .sort((left, right) => right.createdAt - left.createdAt || right.ordinal - left.ordinal || right.id.localeCompare(left.id))
+        .slice(0, size);
 }
 
 export async function listRecentCreativeMediaAssets(conversationId: string, userId: string, limit = 20) {

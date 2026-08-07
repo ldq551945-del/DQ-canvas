@@ -18,6 +18,8 @@ services:
       DQ_DATABASE_SSL: ${DQ_DATABASE_SSL:-0}
       DQ_ENCRYPTION_KEY: ${DQ_ENCRYPTION_KEY:?请在 .env 中配置 DQ_ENCRYPTION_KEY}
       DQ_MAINTENANCE_TOKEN: ${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      DQ_WORKER_TOKEN: ${DQ_WORKER_TOKEN:?请在 .env 中配置至少 32 位独立 Worker 令牌}
+      DQ_INSTALL_TOKEN: ${DQ_INSTALL_TOKEN:-}
       DQ_REMBG_URL: ${DQ_REMBG_URL:-http://rembg:7000}
       DQ_REMBG_INTERNAL_TOKEN: ${DQ_REMBG_INTERNAL_TOKEN:-}
       DQ_REMBG_MODEL: ${DQ_REMBG_MODEL:-silueta}
@@ -84,11 +86,14 @@ services:
     image: ${DQ_IMAGE:-ghcr.io/dao-qin/dq:latest}
     container_name: dq-generation-worker
     command: ["node", "/app/web/scripts/generation-worker.mjs"]
-    env_file:
-      - .env
     environment:
       DQ_WORKER_API_ORIGIN: http://app:3000
-      DQ_MAINTENANCE_TOKEN: ${DQ_MAINTENANCE_TOKEN:?请在 .env 中配置至少 32 位维护令牌}
+      DQ_WORKER_TOKEN: ${DQ_WORKER_TOKEN:?请在 .env 中配置至少 32 位独立 Worker 令牌}
+      DQ_GENERATION_WORKER_ID: ${DQ_GENERATION_WORKER_ID:-}
+      DQ_GENERATION_WORKER_INTERVAL_MS: ${DQ_GENERATION_WORKER_INTERVAL_MS:-2000}
+      DQ_GENERATION_WORKER_LANES: ${DQ_GENERATION_WORKER_LANES:-2}
+      DQ_GENERATION_WORKER_HEARTBEAT_MS: ${DQ_GENERATION_WORKER_HEARTBEAT_MS:-15000}
+      DQ_BILLING_REFUND_WORKER_INTERVAL_MS: ${DQ_BILLING_REFUND_WORKER_INTERVAL_MS:-15000}
     depends_on:
       app:
         condition: service_healthy

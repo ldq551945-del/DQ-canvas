@@ -21,6 +21,9 @@ cp .env.example .env
 NEXT_PUBLIC_SITE_URL=https://store.dqin-666zj.top
 POSTGRES_PASSWORD=replace-with-a-strong-database-password
 DQ_ENCRYPTION_KEY=填写 openssl rand -hex 32 的输出
+DQ_INSTALL_TOKEN=填写另一次 openssl rand -hex 32 的输出
+DQ_MAINTENANCE_TOKEN=填写第三次 openssl rand -hex 32 的输出
+DQ_WORKER_TOKEN=填写第四次 openssl rand -hex 32 的输出（必须与维护令牌不同）
 ```
 
 启动：
@@ -31,7 +34,7 @@ docker compose up -d
 docker compose ps
 ```
 
-访问 `/install`，先确认只读连接检查，再点击“初始化表结构”并创建管理员。
+访问 `/install`，先确认只读连接检查，再使用一次性安装令牌初始化表结构并创建管理员。完成后从 App 环境删除 `DQ_INSTALL_TOKEN` 并重启；维护令牌和 Worker 令牌分别保留在各自授权边界。
 
 ## Compose 服务
 
@@ -130,9 +133,10 @@ docker compose logs -f postgres
 docker compose logs -f rembg
 docker compose exec postgres pg_isready -U dq -d dq
 docker compose exec rembg python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:7000/readyz').read().decode())"
+cd web && pnpm smoke:deployment -- --base-url https://store.dqin-666zj.top
 ```
 
-安装页报数据库错误时，重点检查 `.env`、PostgreSQL 健康状态、数据库密码和 Host。浏览器只显示安全分类提示，完整连接错误保留在服务器日志。
+烟测会验证 Web、PostgreSQL、表结构、加密配置、生成 Worker 心跳、公开 Session、请求 ID、静态资源和关键公开页面，任一异常都会非零退出。安装页报数据库错误时，重点检查 `.env`、PostgreSQL 健康状态、数据库密码和 Host。浏览器只显示安全分类提示，完整连接错误保留在服务器日志。
 
 ## GHCR 权限
 

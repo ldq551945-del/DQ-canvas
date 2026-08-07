@@ -1,5 +1,6 @@
 import { DEFAULT_SITE_SETTINGS, getPublicUserSummary } from "@/lib/auth/store";
 import { getDatabaseProvider, getPostgresConnectionString, initializePostgresSchema, postgresQuery } from "@/lib/server/database";
+import { assertInstallToken, getInstallTokenStatus, InstallTokenError } from "@/lib/server/install-token";
 import { getEncryptionKeyStatus } from "@/lib/server/secret-crypto";
 
 export type InstallStatus = {
@@ -10,6 +11,8 @@ export type InstallStatus = {
     site: typeof DEFAULT_SITE_SETTINGS;
     security: {
         encryptionReady: boolean;
+        installTokenReady: boolean;
+        installTokenMessage: string;
         message: string;
     };
     database: {
@@ -36,7 +39,8 @@ const globalForInstallStatus = globalThis as typeof globalThis & {
 export async function getInstallStatus(): Promise<InstallStatus> {
     const provider = getDatabaseProvider();
     const encryption = getEncryptionKeyStatus();
-    const key = `${provider}:${provider === "postgres" ? getPostgresConnectionString() : ""}:${encryption.ready}`;
+    const installToken = getInstallTokenStatus();
+    const key = `${provider}:${provider === "postgres" ? getPostgresConnectionString() : ""}:${encryption.ready}:${installToken.ready}`;
     const now = Date.now();
     const cached = globalForInstallStatus.__dqInstallStatusCache;
     if (cached?.key === key) {
@@ -62,13 +66,15 @@ export function invalidateInstallStatusCache() {
 }
 
 async function loadInstallStatus(provider: "file" | "postgres", encryption = getEncryptionKeyStatus()): Promise<InstallStatus> {
+    const installToken = getInstallTokenStatus();
+    const security = { encryptionReady: encryption.ready, installTokenReady: installToken.ready, installTokenMessage: installToken.message, message: encryption.message };
     if (provider === "file") {
         try {
             const users = await getPublicUserSummary();
             return buildStatus({
                 provider,
                 userCount: users.total,
-                security: { encryptionReady: encryption.ready, message: encryption.message },
+                security,
                 database: {
                     configured: true,
                     healthy: true,
@@ -82,7 +88,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
             return buildStatus({
                 provider,
                 userCount: 0,
-                security: { encryptionReady: encryption.ready, message: encryption.message },
+                security,
                 database: {
                     configured: true,
                     healthy: false,
@@ -100,7 +106,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
         return buildStatus({
             provider,
             userCount: 0,
-            security: { encryptionReady: encryption.ready, message: encryption.message },
+            security,
             database: {
                 configured: false,
                 healthy: false,
@@ -119,7 +125,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
         return buildStatus({
             provider,
             userCount: 0,
-            security: { encryptionReady: encryption.ready, message: encryption.message },
+            security,
             database: {
                 configured: true,
                 healthy: false,
@@ -137,7 +143,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
             return buildStatus({
                 provider,
                 userCount: 0,
-                security: { encryptionReady: encryption.ready, message: encryption.message },
+                security,
                 database: {
                     configured: true,
                     healthy: true,
@@ -152,7 +158,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
         return buildStatus({
             provider,
             userCount,
-            security: { encryptionReady: encryption.ready, message: encryption.message },
+            security,
             database: {
                 configured: true,
                 healthy: true,
@@ -166,7 +172,7 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
         return buildStatus({
             provider,
             userCount: 0,
-            security: { encryptionReady: encryption.ready, message: encryption.message },
+            security,
             database: {
                 configured: true,
                 healthy: false,
@@ -179,9 +185,17 @@ async function loadInstallStatus(provider: "file" | "postgres", encryption = get
     }
 }
 
-export async function initializeInstallDatabase() {
+export async function initializeInstallDatabase(installToken: unknown) {
     if (getDatabaseProvider() !== "postgres") throw new InstallInitializationError("当前存储模式不需要初始化 PostgreSQL", 409);
     if (!getPostgresConnectionString()) throw new InstallInitializationError("请先配置 DATABASE_URL", 400);
+    const currentStatus = await getInstallStatus();
+    if (currentStatus.userCount > 0) throw new InstallInitializationError("项目已完成安装，禁止重复初始化数据库", 409);
+    try {
+        assertInstallToken(installToken);
+    } catch (error) {
+        if (error instanceof InstallTokenError) throw new InstallInitializationError(error.message, error.status);
+        throw error;
+    }
     if (!getEncryptionKeyStatus().ready) throw new InstallInitializationError("请先配置有效的 DQ_ENCRYPTION_KEY", 400);
     try {
         await initializePostgresSchema();
@@ -204,7 +218,7 @@ export class InstallInitializationError extends Error {
 
 function buildStatus(input: Omit<InstallStatus, "ready" | "firstAdminRequired" | "site">): InstallStatus {
     const runtimeReady = input.database.healthy && input.database.schemaReady && input.security.encryptionReady;
-    const firstAdminRequired = runtimeReady && input.userCount === 0;
+    const firstAdminRequired = runtimeReady && input.security.installTokenReady && input.userCount === 0;
     return {
         ...input,
         ready: runtimeReady && input.userCount > 0,

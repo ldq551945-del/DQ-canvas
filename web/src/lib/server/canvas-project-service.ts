@@ -17,8 +17,8 @@ export class CanvasProjectServiceError extends Error {
     }
 }
 
-export function listCanvasProjectsForUser(userId: string) {
-    return listCanvasProjectSummaries(userId);
+export function listCanvasProjectsForUser(userId: string, input: { page?: number; pageSize?: number } = {}) {
+    return listCanvasProjectSummaries(userId, input);
 }
 
 export async function getCanvasProjectForUser(userId: string, id: string) {

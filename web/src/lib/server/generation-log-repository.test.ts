@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MAX_GENERATION_LOG_ASSETS, normalizeStoredLog } from "./generation-log-repository";
+const mocks = vi.hoisted(() => ({ safeFetch: vi.fn() }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutboundUrl: mocks.safeFetch }));
+
+import { MAX_GENERATION_LOG_ASSETS, normalizeStoredLog, writeDataUrlAsset, writeRemoteAsset } from "./generation-log-repository";
+
+beforeEach(() => vi.clearAllMocks());
 
 function storedLogWithAssets(count: number) {
     return normalizeStoredLog({
@@ -28,6 +33,19 @@ function storedLogWithAssets(count: number) {
 describe("generation log asset normalization", () => {
     it("keeps all eight successful images in a workbench batch", () => {
         expect(storedLogWithAssets(8).assets).toHaveLength(8);
+    });
+
+    it("rejects forged remote video content before writing an asset", async () => {
+        mocks.safeFetch.mockResolvedValueOnce(new Response("<html>not a video</html>", { status: 200, headers: { "content-type": "video/mp4" } }));
+
+        await expect(writeRemoteAsset("https://cdn.example/result.mp4", "video", { ownerUserId: "user-1", source: "video-workbench" })).resolves.toBeNull();
+        expect(mocks.safeFetch).toHaveBeenCalledWith("https://cdn.example/result.mp4", expect.objectContaining({ cache: "no-store" }), { allowPrivateUpstreams: false });
+    });
+
+    it("rejects a forged data URL before writing an image asset", async () => {
+        const forged = `data:image/png;base64,${Buffer.from("<script>alert(1)</script>").toString("base64")}`;
+
+        await expect(writeDataUrlAsset(forged, "image", { ownerUserId: "user-1", source: "image-workbench" })).rejects.toThrow();
     });
 
     it("retains a bounded per-record asset limit", () => {

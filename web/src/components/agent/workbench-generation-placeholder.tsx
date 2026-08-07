@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import type { CSSProperties } from "react";
+import type { GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import styles from "./workbench-generation-placeholder.module.css";
 
 export const GENERATION_PLACEHOLDER_TILE_COUNT = 96;
@@ -27,6 +28,31 @@ export function WorkbenchGenerationPlaceholder({ kind, className }: { kind: "ima
             <span className={styles.sheen} aria-hidden="true" />
         </div>
     );
+}
+
+export function WorkbenchGenerationStatus({ state }: { state?: GenerationTaskExecutionState }) {
+    const status = state?.message || "排队中";
+    const elapsed = formatElapsed(state?.elapsedMs);
+    const progress = typeof state?.progress === "number" ? Math.max(0, Math.min(100, Math.round(state.progress))) : undefined;
+    return (
+        <span className="pointer-events-none absolute inset-x-3 bottom-3 z-10 rounded-md border border-white/50 bg-white/90 px-2.5 py-2 text-xs text-stone-700 shadow-sm backdrop-blur-sm dark:border-white/10 dark:bg-stone-950/85 dark:text-stone-200">
+            <span className="flex items-center justify-between gap-2">
+                <span className="font-medium">{status}</span>
+                <span className="text-stone-500 dark:text-stone-400">{elapsed}</span>
+            </span>
+            {progress !== undefined ? (
+                <span className="mt-1.5 block h-1 overflow-hidden rounded-full bg-stone-200 dark:bg-white/10" aria-label={`真实进度 ${progress}%`}>
+                    <span className="block h-full rounded-full bg-sky-500 transition-[width]" style={{ width: `${progress}%` }} />
+                </span>
+            ) : null}
+        </span>
+    );
+}
+
+function formatElapsed(value?: number) {
+    const seconds = Math.max(0, Math.floor(Number(value) / 1000) || 0);
+    const minutes = Math.floor(seconds / 60);
+    return minutes ? `${minutes}分${String(seconds % 60).padStart(2, "0")}秒` : `${seconds}秒`;
 }
 
 export function WorkbenchGenerationActivity({ kind, count }: { kind: "image" | "video"; count: number }) {

@@ -1,4 +1,4 @@
-import type { CanvasProject, CanvasProjectSummary } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectSummary, CanvasProjectSummaryPage } from "@/lib/canvas-project-contract";
 import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { summarizeCanvasProject, type CreateOverviewMedia, type CreateOverviewProject } from "@/lib/create-workbench-overview";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
@@ -22,23 +22,48 @@ export async function listCanvasProjects(userId: string) {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function listCanvasProjectSummaries(userId: string): Promise<CanvasProjectSummary[]> {
+export function listCanvasProjectSummaries(userId: string): Promise<CanvasProjectSummary[]>;
+export function listCanvasProjectSummaries(userId: string, input: { page?: number; pageSize?: number }): Promise<CanvasProjectSummaryPage>;
+export async function listCanvasProjectSummaries(userId: string, input?: { page?: number; pageSize?: number }): Promise<CanvasProjectSummary[] | CanvasProjectSummaryPage> {
+    const paged = input !== undefined;
+    const page = Math.max(1, Math.floor(Number(input?.page) || 1));
+    const pageSize = Math.max(1, Math.min(100, Math.floor(Number(input?.pageSize) || 20)));
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const result = await postgresQuery<Record<string, unknown>>(
-            `SELECT id, title, created_at, updated_at,
-                    project_json->>'sourceHandoffId' AS source_handoff_id,
-                    project_json->>'creativeConversationId' AS creative_conversation_id,
-                    jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
-                    jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count
-             FROM canvas_projects
-             WHERE user_id = $1
-             ORDER BY updated_at DESC, id ASC`,
-            [userId],
+            paged
+                ? `SELECT id, title, created_at, updated_at,
+                        project_json->>'sourceHandoffId' AS source_handoff_id,
+                        project_json->>'creativeConversationId' AS creative_conversation_id,
+                        jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
+                        jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count,
+                        preview.kind AS preview_kind,
+                        preview.url AS preview_url,
+                        COUNT(*) OVER() AS total_count
+                 FROM canvas_projects
+                 ${canvasProjectSummaryPreviewJoin()}
+                 WHERE user_id = $1
+                 ORDER BY updated_at DESC, id ASC
+                 LIMIT $2 OFFSET $3`
+                : `SELECT id, title, created_at, updated_at,
+                        project_json->>'sourceHandoffId' AS source_handoff_id,
+                        project_json->>'creativeConversationId' AS creative_conversation_id,
+                        jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'nodes') = 'array' THEN project_json->'nodes' ELSE '[]'::jsonb END) AS node_count,
+                        jsonb_array_length(CASE WHEN jsonb_typeof(project_json->'connections') = 'array' THEN project_json->'connections' ELSE '[]'::jsonb END) AS connection_count,
+                        preview.kind AS preview_kind,
+                        preview.url AS preview_url
+                 FROM canvas_projects
+                 ${canvasProjectSummaryPreviewJoin()}
+                 WHERE user_id = $1
+                 ORDER BY updated_at DESC, id ASC`,
+            paged ? [userId, pageSize, (page - 1) * pageSize] : [userId],
         );
-        return result.rows.map(mapProjectSummary);
+        if (!paged) return result.rows.map(mapProjectSummary);
+        return { items: result.rows.map(mapProjectSummary), total: Number(result.rows[0]?.total_count) || 0, page, pageSize };
     }
-    return (await listCanvasProjects(userId)).map(summarizeCanvasProjectRecord);
+    const summaries = (await listCanvasProjects(userId)).map(summarizeCanvasProjectRecord);
+    if (!paged) return summaries;
+    return { items: summaries.slice((page - 1) * pageSize, page * pageSize), total: summaries.length, page, pageSize };
 }
 
 export async function getLatestCanvasProjectOverview(userId: string): Promise<CreateOverviewProject | undefined> {
@@ -197,6 +222,8 @@ function mapPostgresOverview(row: Record<string, unknown>): CreateOverviewProjec
 function mapProjectSummary(row: Record<string, unknown>): CanvasProjectSummary {
     const sourceHandoffId = String(row.source_handoff_id || "").trim();
     const creativeConversationId = String(row.creative_conversation_id || "").trim();
+    const previewKind = row.preview_kind === "video" ? "video" : row.preview_kind === "image" ? "image" : undefined;
+    const previewUrl = String(row.preview_url || "").trim();
     return {
         id: String(row.id || ""),
         ...(sourceHandoffId ? { sourceHandoffId } : {}),
@@ -204,9 +231,38 @@ function mapProjectSummary(row: Record<string, unknown>): CanvasProjectSummary {
         title: String(row.title || ""),
         nodeCount: Math.max(0, Number(row.node_count) || 0),
         connectionCount: Math.max(0, Number(row.connection_count) || 0),
+        ...(previewKind && previewUrl && !/^(data|blob):/i.test(previewUrl) ? { preview: { kind: previewKind, url: previewUrl } } : {}),
         createdAt: isoDate(row.created_at),
         updatedAt: isoDate(row.updated_at),
     };
+}
+
+function canvasProjectSummaryPreviewJoin() {
+    return `LEFT JOIN LATERAL (
+                SELECT
+                    CASE WHEN node->>'type' = 'video' THEN 'video' ELSE 'image' END AS kind,
+                    btrim(media.url) AS url
+                FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(canvas_projects.project_json->'nodes') = 'array' THEN canvas_projects.project_json->'nodes' ELSE '[]'::jsonb END
+                ) WITH ORDINALITY AS project_node(node, node_order)
+                CROSS JOIN LATERAL (
+                    VALUES
+                        (node->'metadata'->>'serverUrl', 1),
+                        (node->'metadata'->>'remoteUrl', 2),
+                        (node->'metadata'->'drawingPreview'->>'serverUrl', 3),
+                        (node->'metadata'->>'content', 4)
+                ) AS media(url, url_order)
+                WHERE node->>'type' IN ('image', 'panorama', 'drawing', 'video')
+                  AND COALESCE(node->'metadata'->>'status', '') <> 'error'
+                  AND COALESCE(btrim(media.url), '') <> ''
+                  AND media.url !~* '^(data|blob):'
+                ORDER BY
+                    CASE WHEN node->'metadata'->>'status' = 'success' THEN 0 ELSE 1 END,
+                    CASE WHEN node->>'type' IN ('image', 'panorama', 'drawing') THEN 0 ELSE 1 END,
+                    node_order,
+                    url_order
+                LIMIT 1
+            ) AS preview ON true`;
 }
 
 function jsonArray(value: unknown): unknown[] {

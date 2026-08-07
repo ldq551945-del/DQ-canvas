@@ -47,7 +47,7 @@ describe("PostgreSQL auth read paths", () => {
         await upsertPostgresSystemChannels(executor, [{ id: "channel-one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "encrypted", apiFormat: "openai", models: ["gpt-test"], enabled: true, healthResults }]);
         const [statement, values] = query.mock.calls[0];
         expect(statement).toContain("health_results");
-        expect(JSON.parse(String(values?.[8]))).toEqual(healthResults);
+        expect(JSON.parse(String(values?.[9]))).toEqual(healthResults);
         expect(POSTGRESQL_SCHEMA_SQL).toContain("health_results jsonb NOT NULL DEFAULT '{}'::jsonb");
     });
 

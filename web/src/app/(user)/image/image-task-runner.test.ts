@@ -1,10 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { ImageTaskControllers, ImageTaskQueue, imageTaskControllerKey } from "./image-task-runner";
+import { ImageSubmissionGate, ImageTaskControllers, ImageTaskQueue, imageTaskControllerKey } from "./image-task-runner";
 
 describe("image task runner", () => {
+    it("rejects a rapid second submission until the first one enters the task queue", () => {
+        const gate = new ImageSubmissionGate();
+
+        expect(gate.tryStart()).toBe(true);
+        expect(gate.tryStart()).toBe(false);
+
+        gate.finish();
+        expect(gate.tryStart()).toBe(true);
+    });
+
     it("runs queued tasks when a slot is released", async () => {
-        let concurrencyLimit = 1;
+        const concurrencyLimit = 1;
         const activeCounts: number[] = [];
         const deleted = new Set<string>();
         const queue = new ImageTaskQueue({

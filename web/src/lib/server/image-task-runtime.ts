@@ -1,17 +1,18 @@
 import { runCustomImageTask, pollCustomImageTask } from "@/app/api/image-tasks/image-task-custom";
 import { runGeminiImageTask } from "@/app/api/image-tasks/image-task-gemini";
 import { runOpenAiImageTask } from "@/app/api/image-tasks/image-task-openai";
-import { directRemoteImageResult, imageUnits, ImageUpstreamTerminalError, inlineRemoteImageResult, pollOpenAiImageTask } from "@/app/api/image-tasks/image-task-support";
+import { directRemoteImageResult, imageUnits, ImageUpstreamTerminalError, inlineRemoteImageResult, normalizeImageResultUrlForPersistence, pollOpenAiImageTask, resolveProxiedMediaSource } from "@/app/api/image-tasks/image-task-support";
 import type { ImageTaskResult, ImageTaskRunResult } from "@/app/api/image-tasks/image-task-types";
 import { stableMediaUrl, writeImageGenerationLog } from "@/app/api/image-tasks/image-task-runner";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
-import { generationModelId } from "@/lib/server/generation-channel";
+import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask } from "@/lib/server/image-task-store";
-import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
+import { workerContext } from "@/lib/server/maintenance-auth";
 
 export type ImageUpstreamStep =
     { state: "pending"; upstream: NonNullable<ImageTask["upstream"]>; status: string } | { state: "result_ready"; resultUrl: string; status: string } | { state: "completed" } | { state: "failed"; error: string; status: string };
@@ -23,7 +24,7 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
     if (!running) return { state: "failed", error: "图片任务状态已变化", status: "conflict" };
     if (running.upstream?.id) return queryImageTaskUpstreamStep(running, origin, cookie, workerUserId);
 
-    const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
+    const authContext = cookie || workerContext(workerUserId || task.userId);
     const candidates = [running.config, ...(running.candidateConfigs || [])];
     let attempts = running.attempts || [];
     let latestError = "没有可用的图片渠道";
@@ -61,7 +62,7 @@ export async function createImageTaskUpstreamStep(task: ImageTask, origin: strin
 export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = ""): Promise<ImageUpstreamStep> {
     const upstream = task.upstream;
     if (!upstream?.id) return { state: "failed", error: "图片任务缺少上游任务 ID", status: "missing_upstream_id" };
-    const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
+    const authContext = cookie || workerContext(workerUserId || task.userId);
     try {
         const result =
             task.config.advancedConfig?.protocol === "custom" || task.config.advancedConfig?.protocol === "stable-diffusion"
@@ -75,9 +76,26 @@ export async function queryImageTaskUpstreamStep(task: ImageTask, origin: string
     }
 }
 
+export async function queryCancelledImageTaskUpstreamStep(task: ImageTask, origin: string, cookie = "", workerUserId = "") {
+    const upstream = task.upstream;
+    if (!upstream?.id) return { state: "terminal" as const, status: "missing_upstream_id" };
+    const authContext = cookie || workerContext(workerUserId || task.userId);
+    try {
+        const result =
+            task.config.advancedConfig?.protocol === "custom" || task.config.advancedConfig?.protocol === "stable-diffusion"
+                ? await pollCustomImageTask(task, upstream.id, upstream.pollBaseUrl, authContext, true)
+                : await pollOpenAiImageTask(task.config, upstream.id, upstream.mediaBaseUrl, upstream.pollBaseUrl, authContext, upstream.explicitPollUrl || "", true);
+        return result.pending ? { state: "pending" as const, status: "processing" } : { state: "terminal" as const, status: "completed" };
+    } catch (error) {
+        if (error instanceof ImageUpstreamTerminalError || error instanceof GenerationSubmissionSafeFailure) return { state: "terminal" as const, status: "failed" };
+        throw error;
+    }
+}
+
 export async function persistImageTaskResult(task: ImageTask, origin: string, resultUrl: string, cookie = "", workerUserId = "") {
-    const authContext = cookie || maintenanceWorkerContext(workerUserId || task.userId);
-    return completeImageResult(task, { dataUrl: resultUrl, remoteUrl: /^https?:\/\//i.test(resultUrl) ? resultUrl : undefined, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
+    const authContext = cookie || workerContext(workerUserId || task.userId);
+    const normalizedUrl = await normalizeImageResultUrlForPersistence(task.config, resultUrl, origin);
+    return completeImageResult(task, { dataUrl: normalizedUrl, remoteUrl: /^https?:\/\//i.test(normalizedUrl) ? normalizedUrl : undefined, pointsCost: task.billing?.pointsCost, pointsRecordId: task.billing?.pointsRecordId }, origin, authContext);
 }
 
 export async function markImageTaskFailed(task: ImageTask, error: string) {
@@ -103,7 +121,7 @@ export async function markImageTaskFailed(task: ImageTask, error: string) {
         pointsRecordId: current.billing?.pointsRecordId,
     });
     await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo });
-    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500) });
+    const failed = await transitionImageTask(current, ["pending", "running"], { status: "error", error: error.slice(0, 500), retryable: true });
     await writeImageGenerationLog(current, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
     return failed;
 }
@@ -115,7 +133,7 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
         await updateImageTask(task.id, { upstream: result.pending, billing });
         return { state: "pending", upstream: result.pending, status: "submitted" };
     }
-    const resultUrl = stableMediaUrl(result.remoteUrl || result.dataUrl);
+    const resultUrl = stableMediaUrl(result.dataUrl) || stableMediaUrl(result.remoteUrl);
     if (resultUrl) return { state: "result_ready", resultUrl, status: "completed" };
     try {
         await completeImageResult(task, result, origin, authContext);
@@ -145,9 +163,14 @@ async function refundImageCandidate(task: ImageTask) {
 
 async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, origin: string, authContext: string) {
     const remoteUrl = typeof result.remoteUrl === "string" ? result.remoteUrl : undefined;
-    const safeResult: ImageTaskResult = directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl));
-    const log = await writeImageGenerationLog(task, "success", safeResult, Date.now() - task.createdAt);
-    const asset = log?.assets[0];
+    const proxiedMedia = resolveProxiedMediaSource(result.dataUrl || "", origin);
+    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
+    const mediaHeaders = proxiedMedia.remoteUrl && channelId ? generationMediaProxyHeaders({ userId: task.userId, taskType: "image", taskId: task.id, channelId, upstreamModel: task.config.model, url: proxiedMedia.remoteUrl }) : undefined;
+    const inlineResult = proxiedMedia.proxyUrl ? await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders) : null;
+    if (proxiedMedia.proxyUrl && !inlineResult?.dataUrl?.startsWith("data:image/")) throw new GenerationSubmissionSafeFailure("上游图片代理结果无法验证或保存");
+    const safeResult: ImageTaskResult = inlineResult || directRemoteImageResult(remoteUrl) || (await inlineRemoteImageResult(result.dataUrl, origin, authContext, remoteUrl, mediaHeaders));
+    const logged = await writeImageGenerationLog(task, "success", safeResult, Date.now() - task.createdAt);
+    const asset = logged.asset;
     const current = await getImageTask(task.id);
     if (!current || current.status === "cancelled") return current;
     const completed = await transitionImageTask(current, ["pending", "running"], {
@@ -162,6 +185,7 @@ async function completeImageResult(task: ImageTask, result: ImageTaskRunResult, 
             mimeType: asset?.mimeType,
         },
         pointsRemaining: result.pointsRemaining,
+        retryable: false,
     });
     if (!completed) return getImageTask(task.id);
     const attempts = finishGenerationAttempt(completed.attempts || [], completed.attemptNo || completed.attempts?.at(-1)?.attemptNo || 1, {

@@ -120,6 +120,7 @@ export type SystemModelChannelRecord = {
     name: string;
     baseUrl: string;
     apiKeyCiphertext: string;
+    webhookSecretCiphertext: string;
     apiFormat: "openai" | "gemini";
     models: JsonValue;
     enabled: boolean;
@@ -255,6 +256,7 @@ export type GenerationLogAssetRecord = {
     mimeType?: string;
     width?: number;
     height?: number;
+    durationMs?: number;
     bytes?: number;
 };
 

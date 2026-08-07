@@ -2,7 +2,16 @@ import { describe, expect, it } from "vitest";
 
 import type { SystemModelChannel } from "@/lib/auth/store";
 import { applyChannelProtocol } from "@/lib/channel-protocol-registry";
-import { channelProtocolLabel, channelWorkspaceStatus, channelWorkspaceStatusLabel, defaultModelField, removeChannelFromWorkspace, switchChannelBindingUpstream, updateChannelInWorkspace } from "./admin-channel-workspace-model";
+import {
+    channelProtocolLabel,
+    channelWorkspaceStatus,
+    channelWorkspaceStatusLabel,
+    defaultModelField,
+    removeChannelFromWorkspace,
+    switchChannelBindingUpstream,
+    updateChannelInWorkspace,
+    validChannelBindingUpstream,
+} from "./admin-channel-workspace-model";
 
 const channel = applyChannelProtocol({ id: "sd2", name: "SD2 渠道", baseUrl: "https://api.example.com", apiKey: "secret", apiFormat: "openai", models: ["seedance-pro"], enabled: true } satisfies SystemModelChannel, "seedance");
 
@@ -51,6 +60,12 @@ describe("admin channel workspace model", () => {
         expect(switchChannelBindingUpstream("image-upstream")).toEqual({ upstreamModel: "image-upstream", logicalId: "", newLogicalId: "", newLogicalName: "" });
     });
 
+    it("does not carry an upstream model into another channel", () => {
+        expect(validChannelBindingUpstream({ models: ["image-upstream"] }, "text-upstream")).toBe("image-upstream");
+        expect(validChannelBindingUpstream({ models: ["image-upstream"] }, "image-upstream")).toBe("image-upstream");
+        expect(validChannelBindingUpstream({ models: [] }, "image-upstream")).toBe("");
+    });
+
     it("clears an unresolved default as soon as its only channel is disabled", () => {
         const settings = {
             systemChannels: [channel],
@@ -59,5 +74,47 @@ describe("admin channel workspace model", () => {
         };
 
         expect(updateChannelInWorkspace(settings, channel.id, { enabled: false }).defaultModels.videoModel).toBe("");
+    });
+
+    it("removes generated bindings when the channel model list is narrowed", () => {
+        const settings = {
+            systemChannels: [{ ...channel, models: ["video-a", "video-b"] }],
+            logicalModels: [
+                { id: "video-a", name: "Video A", capability: "video" as const, enabled: true, bindings: [{ id: "binding-a", channelId: channel.id, upstreamModel: "video-a", enabled: true, priority: 1 }] },
+                { id: "video-b", name: "Video B", capability: "video" as const, enabled: true, bindings: [{ id: "binding-b", channelId: channel.id, upstreamModel: "video-b", enabled: true, priority: 1 }] },
+            ],
+            defaultModels: { textModel: "", imageModel: "", videoModel: "video-b", audioModel: "" },
+        };
+
+        const updated = updateChannelInWorkspace(settings, channel.id, { models: ["video-a"] });
+
+        expect(updated.logicalModels.map((model) => model.id)).toEqual(["video-a"]);
+        expect(updated.defaultModels.videoModel).toBe("video-a");
+    });
+
+    it("keeps channels with the same address and key independent", () => {
+        const textChannel = {
+            ...channel,
+            id: "grok-text",
+            models: ["grok-text"],
+            advancedConfig: { ...channel.advancedConfig!, modelCatalogCapability: "text" as const },
+        };
+        const imageChannel = {
+            ...channel,
+            id: "grok-image",
+            models: ["grok-image"],
+            advancedConfig: { ...channel.advancedConfig!, modelCatalogCapability: "image" as const },
+        };
+        const settings = {
+            systemChannels: [textChannel, imageChannel],
+            logicalModels: [],
+            defaultModels: { textModel: "", imageModel: "", videoModel: "", audioModel: "" },
+        };
+
+        const updated = updateChannelInWorkspace(settings, imageChannel.id, { models: ["grok-image", "grok-image-edit"] });
+
+        expect(updated.systemChannels).toHaveLength(2);
+        expect(updated.systemChannels[0]).toMatchObject({ id: "grok-text", baseUrl: channel.baseUrl, apiKey: channel.apiKey, models: ["grok-text"] });
+        expect(updated.systemChannels[1]).toMatchObject({ id: "grok-image", baseUrl: channel.baseUrl, apiKey: channel.apiKey, models: ["grok-image", "grok-image-edit"] });
     });
 });

@@ -1,14 +1,15 @@
-"use client";
+﻿"use client";
 
 import { nanoid } from "nanoid";
 
 import { browserReadableMediaUrl } from "@/lib/browser-media-url";
-import { generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
+import { generationLogDraftSnapshot, generationLogPublicPrompt, type GenerationLogReferenceSnapshot, type GenerationLogRequestSnapshot, type GenerationLogSlotSnapshot, type GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { readImageMeta } from "@/lib/image-utils";
 import { deleteGenerationLogs as deleteServerGenerationLogs, listGenerationLogs, recordGenerationLog, type StoredGenerationLogRecord } from "@/services/api/generation-logs";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+import type { GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 
 export type GeneratedImage = {
     id: string;
@@ -27,17 +28,21 @@ export type GeneratedImage = {
 
 export type PendingImageTask = {
     resultId: string;
-    taskId: string;
+    clientRequestId?: string;
+    taskId?: string;
     kind: "generation" | "edit";
     model: string;
     index: number;
     startedAt: number;
+    taskState?: GenerationTaskExecutionState;
 };
 
 export type GenerationFailure = {
     resultId: string;
     index: number;
     error: string;
+    canRetry?: boolean;
+    taskState?: GenerationTaskExecutionState;
 };
 
 export type GenerationResult = {
@@ -45,7 +50,9 @@ export type GenerationResult = {
     status: "pending" | "success" | "failed";
     image?: GeneratedImage;
     error?: string;
+    canRetry?: boolean;
     task?: PendingImageTask;
+    taskState?: GenerationTaskExecutionState;
 };
 
 export type GenerationLog = {
@@ -77,6 +84,7 @@ export type GenerationLog = {
 
 export type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "size" | "count">;
 export type GenerationSnapshot = { text: string; userText?: string; config: AiConfig; references: ReferenceImage[]; count?: number };
+export type ImageWorkbenchLogPage = { items: GenerationLog[]; total: number; page: number; pageSize: number };
 
 export function updateResultAt(results: GenerationResult[], index: number, next: Partial<GenerationResult>) {
     return results.map((item, itemIndex) => (itemIndex === index ? { ...item, ...next } : item));
@@ -84,6 +92,11 @@ export function updateResultAt(results: GenerationResult[], index: number, next:
 
 export async function readStoredLogs(userId: string) {
     return (await readServerImageLogs()).map((log) => withLogOwner(log, userId));
+}
+
+export async function readStoredLogPage(userId: string, input: { page?: number; pageSize?: number } = {}): Promise<ImageWorkbenchLogPage> {
+    const result = await readServerImageLogPage(input);
+    return { ...result, items: result.items.map((log) => withLogOwner(log, userId)) };
 }
 
 export function withLogOwner(log: GenerationLog, userId: string): GenerationLog {
@@ -99,20 +112,20 @@ export function removeStoredImageLogs(ids: string[]) {
 }
 
 export async function readServerImageLogs() {
-    try {
-        const payload = await listGenerationLogs({ kind: "image", source: "image-workbench", pageSize: 100 });
-        const workbenchLogs = payload.items.filter((item) => item.id.startsWith("image-workbench:"));
-        const primaryWorkbenchLogs = workbenchLogs.filter((item) => !isTaskBackedWorkbenchRecord(item));
-        const aggregateAssetUrls = new Set(workbenchLogs.flatMap((item) => item.assets.map(stableAssetUrl).filter(Boolean)));
-        const records = payload.items.filter((item) => {
-            if (isTaskBackedWorkbenchRecord(item)) return !isDuplicateWorkbenchFallbackLog(item, primaryWorkbenchLogs);
-            if (item.id.startsWith("image-workbench:")) return true;
-            return !item.assets.some((asset) => aggregateAssetUrls.has(stableAssetUrl(asset))) && !isDuplicateServerImageTaskLog(item, workbenchLogs);
-        });
-        return Promise.all(records.map(serverImageLogToWorkbenchLog));
-    } catch {
-        return [];
-    }
+    return (await readServerImageLogPage({ page: 1, pageSize: 100 })).items;
+}
+
+export async function readServerImageLogPage(input: { page?: number; pageSize?: number } = {}): Promise<ImageWorkbenchLogPage> {
+    const payload = await listGenerationLogs({ kind: "image", source: "image-workbench", page: input.page || 1, pageSize: input.pageSize || 20 });
+    const workbenchLogs = payload.items.filter((item) => item.id.startsWith("image-workbench:"));
+    const primaryWorkbenchLogs = workbenchLogs.filter((item) => !isTaskBackedWorkbenchRecord(item));
+    const aggregateAssetUrls = new Set(workbenchLogs.flatMap((item) => item.assets.map(stableAssetUrl).filter(Boolean)));
+    const records = payload.items.filter((item) => {
+        if (isTaskBackedWorkbenchRecord(item)) return !isDuplicateWorkbenchFallbackLog(item, primaryWorkbenchLogs);
+        if (item.id.startsWith("image-workbench:")) return true;
+        return !item.assets.some((asset) => aggregateAssetUrls.has(stableAssetUrl(asset))) && !isDuplicateServerImageTaskLog(item, workbenchLogs);
+    });
+    return { items: await Promise.all(records.map(serverImageLogToWorkbenchLog)), total: payload.total, page: payload.page, pageSize: payload.pageSize };
 }
 
 function stableAssetUrl(asset: StoredGenerationLogRecord["assets"][number]) {
@@ -266,11 +279,24 @@ export async function serverImageLogToWorkbenchLog(record: StoredGenerationLogRe
     }));
     const parameters = snapshot?.parameters || {};
     const imageTasks = (snapshot?.slots || []).flatMap((slot): PendingImageTask[] =>
-        slot.status === "pending" && slot.taskId
-            ? [{ resultId: slot.id, taskId: slot.taskId, kind: slot.taskKind === "edit" ? "edit" : "generation", model: slot.taskModel || parameters.model || record.model, index: slot.index, startedAt: slot.startedAt || createdAt }]
+        slot.status === "pending" && (slot.taskId || slot.clientRequestId)
+            ? [
+                  {
+                      resultId: slot.id,
+                      clientRequestId: slot.clientRequestId,
+                      taskId: slot.taskId,
+                      kind: slot.taskKind === "edit" ? "edit" : "generation",
+                      model: slot.taskModel || parameters.model || record.model,
+                      index: slot.index,
+                      startedAt: slot.startedAt || createdAt,
+                      taskState: slot.taskState,
+                  },
+              ]
             : [],
     );
-    const failures = (snapshot?.slots || []).flatMap((slot): GenerationFailure[] => (slot.status === "failed" ? [{ resultId: slot.id, index: slot.index, error: slot.error || record.error || "生成失败" }] : []));
+    const failures = (snapshot?.slots || []).flatMap((slot): GenerationFailure[] =>
+        slot.status === "failed" ? [{ resultId: slot.id, index: slot.index, error: slot.error || record.error || "生成失败", ...(slot.canRetry ? { canRetry: true } : {}), taskState: slot.taskState }] : [],
+    );
     const references = (snapshot?.references || []).flatMap(imageReferenceFromSnapshot);
     const pendingCount = (snapshot?.slots || []).filter((slot) => slot.status === "pending").length;
     return normalizeLog({
@@ -316,37 +342,20 @@ export function imageServerLogIds(id: string) {
 }
 
 export async function recordImageWorkbenchLog(log: GenerationLog) {
-    const assets = log.images
-        .map((image) => ({
-            type: "image" as const,
-            url: image.serverUrl || (isStableImageUrl(image.dataUrl) ? image.dataUrl : "") || image.remoteUrl || "",
-            remoteUrl: image.remoteUrl,
-            serverUrl: image.serverUrl,
-            mimeType: image.mimeType,
-            width: image.width,
-            height: image.height,
-            bytes: image.bytes,
-        }))
-        .filter((asset) => Boolean(asset.url));
     await recordGenerationLog({
         conversationId: log.creativeConversationId,
         id: `image-workbench:${log.id}`,
         kind: "image",
         source: "image-workbench",
-        status: log.pendingCount ? "pending" : log.failCount && !log.successCount ? "failed" : "success",
+        status: "pending",
         title: log.title,
         prompt: log.prompt,
         model: log.model || log.config.imageModel || log.config.model,
-        summary: log.pendingCount ? "图片生成中" : log.failCount && !log.successCount ? "图片生成失败" : "图片生成完成",
+        summary: "图片生成中",
         durationMs: log.durationMs,
-        count: log.imageCount || Math.max(1, assets.length + (log.failCount || 0)),
-        successCount: log.successCount || assets.length,
-        failCount: log.failCount || 0,
-        assets,
-        requestSnapshot: log.requestSnapshot,
-        error: log.error,
+        count: log.imageCount || Math.max(1, log.pendingCount || 1),
+        requestSnapshot: generationLogDraftSnapshot(log.requestSnapshot),
         createdAt: log.createdAt,
-        completedAt: log.pendingCount ? undefined : Date.now(),
     });
 }
 
@@ -364,7 +373,7 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         })),
     );
     const config = normalizeLogConfig(log);
-    const imageTasks = (log.imageTasks || []).filter((task): task is PendingImageTask => Boolean(task?.resultId && task.taskId));
+    const imageTasks = (log.imageTasks || []).filter((task): task is PendingImageTask => Boolean(task?.resultId && (task.taskId || task.clientRequestId)));
     const failures = (log.failures || []).filter((failure): failure is GenerationFailure => Boolean(failure?.resultId));
     const pendingCount = log.pendingCount ?? imageTasks.length;
     const failCount = log.failCount ?? failures.length;
@@ -393,15 +402,6 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         failures,
         requestSnapshot: log.requestSnapshot,
         error: log.error,
-    };
-}
-
-function serializeLog(log: GenerationLog): GenerationLog {
-    return {
-        ...log,
-        references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
-        images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : isStableImageUrl(image.dataUrl) ? image.dataUrl : "" })),
-        thumbnails: [],
     };
 }
 
@@ -470,7 +470,10 @@ export function resultsFromLog(log: GenerationLog): GenerationResult[] {
     (log.failures || []).forEach((failure, fallbackIndex) => {
         if (usedResultIds.has(failure.resultId)) return;
         usedResultIds.add(failure.resultId);
-        entries.push({ index: failure.index ?? entries.length + fallbackIndex, result: { id: failure.resultId, status: "failed", error: failure.error || log.error || "生成失败" } });
+        entries.push({
+            index: failure.index ?? entries.length + fallbackIndex,
+            result: { id: failure.resultId, status: "failed", error: failure.error || log.error || "生成失败", ...(failure.canRetry ? { canRetry: true } : {}), taskState: failure.taskState },
+        });
     });
     const knownPendingCount = entries.filter((entry) => entry.result.status === "pending").length;
     const missingPendingCount = Math.max(0, (log.pendingCount || 0) - knownPendingCount);
@@ -483,6 +486,27 @@ export function resultsFromLog(log: GenerationLog): GenerationResult[] {
         entries.push({ index: entries.length, result: { id: `${log.id}-failed-${index}`, status: "failed", error: log.error || "生成失败" } });
     }
     return entries.sort((a, b) => a.index - b.index).map((entry) => entry.result);
+}
+
+export function summarizeImageConversationLogs(logs: GenerationLog[], title?: string): GenerationLog {
+    const latest = logs[0];
+    if (!latest) throw new Error("图片对话缺少生成记录");
+    const results = logs.flatMap(resultsFromLog);
+    const successfulImages = results.flatMap((result) => (result.status === "success" && result.image ? [result.image] : []));
+    const failCount = results.filter((result) => result.status === "failed").length;
+    const pendingCount = results.filter((result) => result.status === "pending").length;
+    const first = logs.reduce((earliest, log) => (log.createdAt < earliest.createdAt ? log : earliest), latest);
+    return {
+        ...latest,
+        title: title || first.title,
+        durationMs: logs.reduce((total, log) => total + log.durationMs, 0),
+        successCount: successfulImages.length,
+        failCount,
+        pendingCount,
+        imageCount: results.length,
+        status: pendingCount ? "生成中" : successfulImages.length ? "成功" : "失败",
+        thumbnails: successfulImages.map(stableResultImageUrl).filter(Boolean),
+    };
 }
 
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
@@ -498,7 +522,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
 export function buildLogFromResults(baseLog: GenerationLog | null, snapshot: GenerationSnapshot, results: GenerationResult[], durationMs: number, count: string, error?: string): GenerationLog {
     const images = results.flatMap((item, index) => (item.status === "success" && item.image ? [{ ...item.image, id: item.id, slotIndex: item.image.slotIndex ?? index }] : []));
     const imageTasks = results.flatMap((item, index) => (item.status === "pending" && item.task ? [{ ...item.task, resultId: item.id, index }] : []));
-    const failures = results.flatMap((item, index) => (item.status === "failed" ? [{ resultId: item.id, index, error: item.error || error || "生成失败" }] : []));
+    const failures = results.flatMap((item, index) => (item.status === "failed" ? [{ resultId: item.id, index, error: item.error || error || "生成失败", ...(item.canRetry ? { canRetry: true } : {}), taskState: item.taskState }] : []));
     const pendingCount = results.filter((item) => item.status === "pending").length;
     const failCount = failures.length;
     const logConfig = buildLogConfig(snapshot.config, count);
@@ -638,6 +662,7 @@ function mergeImageRequestSnapshot(base: GenerationLogRequestSnapshot | undefine
     const slots = results.map((result, index): GenerationLogSlotSnapshot => {
         const previous = previousSlots.get(result.id);
         const task = result.task;
+        const freshPendingRequest = result.status === "pending" && Boolean(task?.clientRequestId) && task?.clientRequestId !== previous?.clientRequestId;
         const slot: GenerationLogSlotSnapshot = {
             ...previous,
             id: result.id,
@@ -647,11 +672,14 @@ function mergeImageRequestSnapshot(base: GenerationLogRequestSnapshot | undefine
             parameters: previous?.parameters || parameters,
             referenceIds: previous?.referenceIds || currentReferenceIds,
             assetIndex: result.status === "success" ? assetIndex : undefined,
-            taskId: task?.taskId || result.image?.taskId || previous?.taskId,
+            clientRequestId: task?.clientRequestId || previous?.clientRequestId,
+            taskId: task?.taskId || result.image?.taskId || (freshPendingRequest ? undefined : previous?.taskId),
             taskKind: task?.kind || previous?.taskKind,
             taskModel: task?.model || previous?.taskModel || parameters.model,
             startedAt: task?.startedAt || previous?.startedAt,
             error: result.status === "failed" ? result.error || error || previous?.error || "生成失败" : undefined,
+            canRetry: result.status === "failed" ? result.canRetry === true : undefined,
+            taskState: result.taskState || previous?.taskState,
         };
         if (result.status === "success") assetIndex += 1;
         return slot;

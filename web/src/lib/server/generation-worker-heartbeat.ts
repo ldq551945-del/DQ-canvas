@@ -1,7 +1,7 @@
 import { getDatabaseProvider } from "@/lib/server/database";
 import { latestGenerationWorkerHeartbeat, upsertGenerationWorkerHeartbeat } from "@/lib/server/database/generation-worker-heartbeat-repository";
 import { GENERATION_WORKER_HEARTBEAT_MAX_STALE_MS, normalizeGenerationWorkerStaleMs } from "@/lib/server/generation-worker-heartbeat-policy";
-import { isMaintenanceTokenConfigured } from "@/lib/server/maintenance-auth";
+import { isWorkerTokenConfigured } from "@/lib/server/maintenance-auth";
 
 const runtime = globalThis as typeof globalThis & { __dqGenerationWorkerHeartbeats?: Map<string, number> };
 const fileHeartbeats = (runtime.__dqGenerationWorkerHeartbeats ??= new Map<string, number>());
@@ -19,7 +19,7 @@ export async function recordGenerationWorkerHeartbeat(workerId: string, at = Dat
 
 export async function getGenerationWorkerHealth(now = Date.now()) {
     const staleAfterMs = normalizeGenerationWorkerStaleMs(process.env.DQ_GENERATION_WORKER_STALE_MS);
-    if (!isMaintenanceTokenConfigured()) return { required: true, healthy: false, lastHeartbeatAt: null, staleAfterMs, reason: "maintenance_token_missing" as const };
+    if (!isWorkerTokenConfigured()) return { required: true, healthy: false, lastHeartbeatAt: null, staleAfterMs, reason: "worker_token_missing" as const };
     const lastSeenAt = getDatabaseProvider() === "postgres" ? await latestGenerationWorkerHeartbeat() : latestFileHeartbeat();
     return {
         required: true,

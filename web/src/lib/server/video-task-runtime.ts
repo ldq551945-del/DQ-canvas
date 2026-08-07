@@ -1,6 +1,7 @@
 import { refundUserPoints } from "@/lib/auth/store";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import { generationModelId } from "@/lib/server/generation-channel";
+import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
 import { finishGenerationAttempt } from "@/lib/server/generation-attempt";
 import { fetchInternalApi } from "@/lib/server/internal-origin";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
@@ -9,7 +10,9 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { normalizeVideoResult } from "@/lib/server/video-result-normalizer";
 import { VIDEO_PROVIDER_FAILED, VIDEO_PROVIDER_SUCCESS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderStatus, readVideoProviderUrl, videoProviderMediaUrl } from "@/lib/server/video-provider-response";
 import { claimVideoTaskPoll, completeReconciledVideoTask, failReconciledVideoTask, getVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
-import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
+import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
+import { workerHeaders } from "@/lib/server/maintenance-auth";
+import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 
 export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
 
@@ -28,7 +31,8 @@ export async function queryVideoTaskUpstream(task: VideoTask, origin: string, co
     if (task.upstream.resultUrl) return { state: "result_ready", status: "completed", resultUrl: task.upstream.resultUrl };
     const data = await queryVideoUpstream(task, origin, cookie, workerUserId);
     const status = readVideoProviderStatus(data, task.config.advancedConfig?.statusField);
-    const resultUrl = readVideoProviderUrl(data, task.config.advancedConfig?.resultField);
+    const providerResultUrl = readVideoProviderUrl(data, task.config.advancedConfig?.resultField);
+    const resultUrl = grok2ApiResultUrl(task, status, providerResultUrl);
     if (resultUrl || VIDEO_PROVIDER_SUCCESS.has(status)) {
         return resultUrl ? { state: "result_ready", status: status || "completed", resultUrl } : { state: "failed", status: status || "completed", error: "视频任务已完成但没有返回视频地址" };
     }
@@ -55,20 +59,30 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
         pointsRecordId: task.upstream.pointsRecordId,
     });
     await updateVideoTask(task.id, { attempts });
-    const result = await normalizeVideoResult({
-        url: videoProviderMediaUrl(task.config.baseUrl, resultUrl),
-        origin,
-        cookie,
-        internalHeaders: workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined,
-        requestedDurationSeconds: task.requestedDurationSeconds,
-        mimeType: "video/mp4",
-        ownerUserId: task.userId,
-        source: task.source,
-        conversationId: task.conversationId,
-        runId: task.runId,
-        taskId: task.id,
-        projectId: task.projectId,
-    });
+    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
+    const mediaUrl = videoProviderMediaUrl(task.config.baseUrl, resultUrl);
+    const internalHeaders = new Headers(workerUserId ? workerHeaders(workerUserId) : undefined);
+    if (mediaUrl.includes("/_media?") && channelId) {
+        Object.entries(generationMediaProxyHeaders({ userId: task.userId, taskType: "video", taskId: task.id, channelId, upstreamModel: task.config.model, url: resultUrl })).forEach(([key, value]) => internalHeaders.set(key, value));
+    }
+    const result = task.result?.url
+        ? task.result
+        : await normalizeVideoResult({
+              url: mediaUrl,
+              origin,
+              cookie,
+              internalHeaders,
+              requestedDurationSeconds: task.requestedDurationSeconds,
+              mimeType: "video/mp4",
+              ownerUserId: task.userId,
+              source: task.source,
+              conversationId: task.conversationId,
+              runId: task.runId,
+              taskId: task.id,
+              projectId: task.projectId,
+          });
+    if (!task.result?.url) await updateVideoTask(task.id, { result });
+    await writeVideoGenerationLog({ ...task, result }, "success");
     const completed = await completeReconciledVideoTask(task.id, result);
     if (completed) await registerVideoAsset(completed);
     return completed || getVideoTask(task.id);
@@ -77,6 +91,7 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
 async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     const attempts = finishGenerationAttempt(task.attempts || [], task.attempts?.at(-1)?.attemptNo || 1, { status: "failed", error });
     await updateVideoTask(task.id, { attempts });
+    await writeVideoGenerationLog({ ...task, attempts }, "failed", error, retryable);
     const failed = await failReconciledVideoTask(task.id, error, retryable);
     if (failed && task.status === "running") await refundVideoTask(failed);
     return failed || getVideoTask(task.id);
@@ -114,7 +129,7 @@ async function queryVideoUpstream(task: VideoTask, origin: string, cookie: strin
     let lastError = "";
     for (const path of paths) {
         const response = await fetchInternalApi(`${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, {
-            headers: workerUserId ? maintenanceWorkerHeaders(workerUserId) : { cookie },
+            headers: videoProxyHeaders(task, cookie, workerUserId),
             cache: "no-store",
             signal: AbortSignal.timeout(Math.min(resolveModelRequestTimeoutMs(task.config, "video"), 60_000)),
         });
@@ -144,7 +159,7 @@ async function readyVideoContentPath(task: VideoTask, origin: string, cookie: st
     const paths = [`/v1/videos/${id}/content`, `/videos/${id}/content`];
     for (const path of paths) {
         const url = `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path}`;
-        const headers = workerUserId ? maintenanceWorkerHeaders(workerUserId) : { cookie };
+        const headers = videoProxyHeaders(task, cookie, workerUserId);
         const head = await fetchInternalApi(url, { method: "HEAD", headers, cache: "no-store", signal: AbortSignal.timeout(60_000) }).catch(() => null);
         if (head && videoContentReady(head)) return path;
         if (head && ![405, 501].includes(head.status)) continue;
@@ -164,6 +179,18 @@ function videoContentReady(response: Response) {
     const contentType = response.headers.get("content-type")?.toLowerCase() || "";
     const disposition = response.headers.get("content-disposition")?.toLowerCase() || "";
     return contentType.startsWith("video/") || contentType === "application/octet-stream" || /filename[^;]*\.(?:mp4|webm|mov|m4v)\b/.test(disposition);
+}
+
+function videoProxyHeaders(task: VideoTask, cookie: string, workerUserId: string) {
+    return {
+        ...(workerUserId ? workerHeaders(workerUserId) : cookie ? { cookie } : {}),
+        ...systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model),
+    };
+}
+
+function grok2ApiResultUrl(task: VideoTask, status: string, providerResultUrl: string) {
+    if (task.config.advancedConfig?.protocol !== "grok2api" || !VIDEO_PROVIDER_SUCCESS.has(status)) return providerResultUrl;
+    return `/v1/videos/${encodeURIComponent(task.upstream.id)}/content`;
 }
 
 function globalAiOpcPreset(task: VideoTask) {

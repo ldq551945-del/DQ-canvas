@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
     touchVideoTask: vi.fn(),
     transitionVideoTask: vi.fn(),
     updateVideoTask: vi.fn(),
+    writeVideoGenerationLog: vi.fn(),
     scheduleGenerationTask: vi.fn(),
     withGenerationConcurrencyLimit: vi.fn(async (_userId, _type, _staleMs, _limit, handler) => handler()),
 }));
@@ -41,8 +42,9 @@ vi.mock("@/lib/server/security", () => ({
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeVideoGenerationLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
-    createVideoTask: mocks.createVideoTask,
+    registerVideoTask: mocks.createVideoTask,
     claimVideoTaskPoll: mocks.claimVideoTaskPoll,
     completeReconciledVideoTask: mocks.completeReconciledVideoTask,
     failReconciledVideoTask: mocks.failReconciledVideoTask,
@@ -91,7 +93,7 @@ describe("video generation candidate failover", () => {
         storedTask = undefined;
         mocks.createVideoTask.mockImplementation(async (input) => {
             storedTask = { ...input, id: "local-task", status: "running", createdAt: Date.now(), updatedAt: Date.now() };
-            return storedTask;
+            return { task: storedTask, created: true };
         });
         mocks.getVideoTask.mockImplementation(async () => storedTask);
         mocks.claimVideoTaskPoll.mockImplementation(async () => storedTask);
@@ -123,6 +125,42 @@ describe("video generation candidate failover", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({ task: { id: "existing-task", upstreamId: "existing-upstream" } });
         expect(mocks.withGenerationConcurrencyLimit).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("rechecks idempotency inside the concurrency lock before submitting upstream", async () => {
+        mocks.getStoredGenerationTaskByRequest.mockResolvedValueOnce(undefined).mockResolvedValueOnce({
+            id: "existing-task",
+            status: "running",
+            config: { model: "video-one", logicalModelId: "video" },
+            upstream: { id: "existing-upstream" },
+        });
+
+        const response = await POST(request({ model: "video" }, [], { clientRequestId: "same-request" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ task: { id: "existing-task", upstreamId: "existing-upstream" } });
+        expect(mocks.getStoredGenerationTaskByRequest).toHaveBeenCalledTimes(2);
+        expect(mocks.createVideoTask).not.toHaveBeenCalled();
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
+    });
+
+    it("does not submit upstream when atomic registration returns an existing task", async () => {
+        const existing = {
+            id: "existing-task",
+            status: "running",
+            config: { model: "video-one", logicalModelId: "video" },
+            upstream: { id: "existing-upstream" },
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        mocks.createVideoTask.mockResolvedValueOnce({ task: existing, created: false });
+
+        const response = await POST(request({ model: "video" }, [], { clientRequestId: "same-request" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ task: { id: "existing-task", upstreamId: "existing-upstream" } });
+        expect(mocks.linkStoredGenerationTask).not.toHaveBeenCalled();
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
@@ -221,7 +259,7 @@ describe("video generation candidate failover", () => {
 
     it("forwards the authenticated maintenance worker identity to the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
-        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("DQ_WORKER_TOKEN", token);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: "upstream-worker", status: "queued" }));
 
         const response = await POST(

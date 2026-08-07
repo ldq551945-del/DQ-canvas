@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { lockBillingOrderCoupon, prepareBillingOrderCommerce, redeemBillingOrderCoupon, refundBillingOrderCoupon, releaseBillingOrderCoupon } from "@/lib/server/billing-commerce-service";
+import { lockBillingOrderCoupon, prepareBillingOrderCommerce, redeemBillingOrderCoupon, releaseBillingOrderCoupon } from "@/lib/server/billing-commerce-service";
 import { BillingInputError, isBillingInputError } from "@/lib/server/billing-errors";
 import { lockAuthMutation } from "@/lib/server/auth-mutation-lock";
 import { expirePendingBillingOrders } from "@/lib/server/billing-order-expiration-service";
@@ -17,20 +17,17 @@ import {
     type QueryExecutor,
     type UserPlanAssignmentRecord,
 } from "@/lib/server/database";
-import { refundPaymentTransaction, type PaymentRefundResult } from "@/lib/server/payment-refund-service";
 import { getPaymentRuntimeConfig, isPaymentRuntimeProviderCheckoutReady } from "@/lib/server/payment-config-store";
 import { adjustPermanentPointsInPostgresTransaction } from "@/lib/server/points-wallet-service";
 import { resolveBillingProductPrices } from "@/lib/server/promotion-service";
-import { prepareReferralRewardsForPaidOrder, reverseReferralRewardsForRefundedOrder } from "@/lib/server/referral-service";
+import { prepareReferralRewardsForPaidOrder } from "@/lib/server/referral-service";
 import {
     assertBillingDatabaseReady,
     buildPaidOrderResult,
-    buildRefundedOrderResult,
     createOrderPlanAssignment,
     deterministicPaymentId,
     generateOrderNo,
     isAutomaticallyExpiredOrder,
-    isRefundClaimStale,
     mergeJson,
     normalizeBillingProductInput,
     normalizeBillingProductPatch,
@@ -44,8 +41,6 @@ import {
     normalizeProvider,
     normalizeText,
     orderExpiresMinutes,
-    paymentRefundMetadata,
-    readRefundAttempt,
     resolveEnabledPlan,
     roundAmount,
     sanitizeJson,
@@ -88,6 +83,7 @@ type CompleteBillingOrderPaymentInput = {
     currency?: unknown;
     rawPayload?: unknown;
     paidAt?: unknown;
+    verificationSource?: "provider" | "admin";
 };
 
 type BillingOperationInput = {
@@ -258,10 +254,20 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         if (!order) throw new BillingInputError("订单不存在", 404);
         const provider = normalizeProvider(input.provider || order.provider);
         if (provider !== normalizeProvider(order.provider)) throw new BillingInputError("支付回调渠道与订单渠道不一致", 409);
+        const providerVerified = input.verificationSource === "provider";
+        if (providerVerified && input.amountCents === undefined) throw new BillingInputError("支付金额尚未核实", 409);
+        if (providerVerified && input.currency === undefined) throw new BillingInputError("支付币种尚未核实", 409);
         const paidAmountCents = input.amountCents === undefined ? order.amountCents : normalizePositiveInteger(input.amountCents, 0, 100_000_000, -1);
         if (paidAmountCents !== order.amountCents) throw new BillingInputError("支付金额与订单金额不一致", 409);
         const paidCurrency = input.currency === undefined ? order.currency : normalizeCurrency(input.currency);
         if (paidCurrency !== order.currency) throw new BillingInputError("支付币种与订单币种不一致", 409);
+        const incomingTradeId = normalizeText(input.providerTradeId, "", 160);
+        const incomingPaymentId = normalizeText(input.providerPaymentId, "", 160);
+        const incomingIdentifiers = [...new Set([incomingTradeId, incomingPaymentId].filter(Boolean))];
+        if (providerVerified && !incomingIdentifiers.length) throw new BillingInputError("支付交易号尚未核实", 409);
+        await repos.billing.lockPaymentIdentity(provider, incomingIdentifiers.length ? incomingIdentifiers : [`order:${order.id}`]);
+        const existingPayment = incomingIdentifiers.length ? await repos.billing.getPaymentByProviderIdentifiers(provider, incomingIdentifiers, true) : null;
+        if (existingPayment) assertPaymentTransactionOwnership(existingPayment, order, provider);
         if (order.status === "paid") {
             assertDuplicatePaymentIdentity(order, input);
             return buildPaidOrderResult(order, client);
@@ -273,8 +279,8 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
         if (!user || user.status !== "active") throw new BillingInputError("用户不可用", 403);
 
         const paidAt = normalizeIso(input.paidAt, new Date().toISOString());
-        const providerTradeId = normalizeText(input.providerTradeId, `${provider}:${order.orderNo}`, 160);
-        const providerPaymentId = normalizeText(input.providerPaymentId, providerTradeId, 160);
+        const providerTradeId = incomingTradeId || `${provider}:${order.orderNo}`;
+        const providerPaymentId = incomingPaymentId || providerTradeId;
         await redeemBillingOrderCoupon(client, order, paidAt);
         const payment: PaymentTransactionRecord = {
             id: deterministicPaymentId(provider, providerTradeId),
@@ -293,6 +299,7 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
             updatedAt: paidAt,
         };
         const savedPayment = await repos.billing.upsertPayment(payment);
+        assertPaymentTransactionOwnership(savedPayment, order, provider);
 
         if (order.pointsAmount > 0) {
             await adjustPermanentPointsInPostgresTransaction(client, {
@@ -338,6 +345,15 @@ export async function completeBillingOrderPayment(input: CompleteBillingOrderPay
     });
 }
 
+function assertPaymentTransactionOwnership(payment: PaymentTransactionRecord, order: BillingOrderRecord, provider: string) {
+    if (payment.orderId !== order.id || payment.userId !== order.userId || normalizeProvider(payment.provider) !== provider) {
+        throw new BillingInputError("该支付交易已绑定其他订单，禁止重复发放权益", 409);
+    }
+    if (payment.amountCents !== order.amountCents || normalizeCurrency(payment.currency) !== normalizeCurrency(order.currency)) {
+        throw new BillingInputError("支付交易金额或币种与订单快照不一致", 409);
+    }
+}
+
 function assertDuplicatePaymentIdentity(order: BillingOrderRecord, input: Pick<CompleteBillingOrderPaymentInput, "providerTradeId" | "providerPaymentId">) {
     const incoming = [normalizeText(input.providerTradeId, "", 160), normalizeText(input.providerPaymentId, "", 160)].filter(Boolean);
     const stored = [order.providerOrderId, order.providerPaymentId].map((value) => normalizeText(value, "", 160)).filter(Boolean);
@@ -371,173 +387,4 @@ export async function closeBillingOrder(orderId: string, input: BillingOperation
     });
 }
 
-export async function refundBillingOrder(orderId: string, input: BillingOperationInput = {}) {
-    await assertBillingDatabaseReady();
-    const normalizedOrderId = normalizeId(orderId);
-    const reason = normalizeText(input.reason, "运营退款", 200);
-    const operatorUserId = normalizeOptionalText(input.operatorUserId, 120) || "";
-    const claimId = randomUUID();
-
-    const claim = await withPostgresTransaction(async (client) => {
-        await lockAuthMutation(client);
-        const repos = createPostgresRepositories(client);
-        const order = await repos.billing.getOrderById(normalizedOrderId, true);
-        if (!order) throw new BillingInputError("订单不存在", 404);
-        if (order.status === "refunded") return { kind: "completed" as const, result: await buildRefundedOrderResult(order, client) };
-        if (order.status === "refunding" && !isRefundClaimStale(order)) throw new BillingInputError("退款正在处理中，请稍后再试", 409);
-        if (order.status !== "paid" && order.status !== "refunding") throw new BillingInputError("只有已支付订单可以退款", 409);
-        if (!order.userId) throw new BillingInputError("订单没有绑定用户", 409);
-
-        const payment = (await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 1, status: "succeeded" })).items[0];
-        const now = new Date().toISOString();
-        const claimedOrder = await repos.billing.updateOrder(order.id, {
-            status: "refunding",
-            metadata: mergeJson(order.metadata, {
-                refundAttempt: { claimId, reason, operatorUserId, startedAt: now },
-            }),
-        });
-        if (!claimedOrder) throw new BillingInputError("订单不存在", 404);
-        return { kind: "claimed" as const, order: claimedOrder, payment, claimId };
-    });
-
-    if (claim.kind === "completed") return claim.result;
-
-    let providerRefund: PaymentRefundResult;
-    try {
-        providerRefund = await refundPaymentTransaction(claim.order, claim.payment, { reason, operatorUserId });
-    } catch (error) {
-        await withPostgresTransaction(async (client) => {
-            await lockAuthMutation(client);
-            const repos = createPostgresRepositories(client);
-            const current = await repos.billing.getOrderById(claim.order.id, true);
-            if (current?.status === "refunding" && readRefundAttempt(current.metadata)?.claimId === claimId) {
-                await repos.billing.updateOrder(current.id, {
-                    status: "paid",
-                    metadata: mergeJson(current.metadata, {
-                        refundAttempt: {
-                            ...(readRefundAttempt(current.metadata) || {}),
-                            failedAt: new Date().toISOString(),
-                            error: error instanceof Error ? error.message.slice(0, 300) : "退款失败",
-                        },
-                    }),
-                });
-            }
-        });
-        throw error;
-    }
-
-    if (providerRefund.status === "pending") {
-        const updated = await withPostgresTransaction(async (client) => {
-            await lockAuthMutation(client);
-            const repos = createPostgresRepositories(client);
-            const current = await repos.billing.getOrderById(claim.order.id, true);
-            if (!current) throw new BillingInputError("订单不存在", 404);
-            if (current.status === "refunded") return current;
-            if (current.status !== "refunding" || readRefundAttempt(current.metadata)?.claimId !== claimId) throw new BillingInputError("退款状态已变化，请刷新后重试", 409);
-            const next = await repos.billing.updateOrder(current.id, {
-                status: "refunding",
-                metadata: mergeJson(current.metadata, { refund: paymentRefundMetadata(providerRefund, false) }),
-            });
-            if (!next) throw new BillingInputError("订单不存在", 404);
-            return next;
-        });
-        return { order: updated, providerRefund, pending: true };
-    }
-
-    return withPostgresTransaction(async (client) => {
-        await lockAuthMutation(client);
-        const repos = createPostgresRepositories(client);
-        const order = await repos.billing.getOrderById(claim.order.id, true);
-        if (!order) throw new BillingInputError("订单不存在", 404);
-        if (order.status === "refunded") return buildRefundedOrderResult(order, client);
-        if (order.status !== "refunding" || readRefundAttempt(order.metadata)?.claimId !== claimId) throw new BillingInputError("退款状态已变化，请刷新后重试", 409);
-        if (!order.userId) throw new BillingInputError("订单没有绑定用户", 409);
-
-        const payment = claim.payment || (await repos.billing.listPayments({ orderId: order.id, page: 1, pageSize: 1, status: "succeeded" })).items[0];
-        const user = await repos.users.getById(order.userId);
-        if (!user) throw new BillingInputError("订单用户不存在", 404);
-        const now = new Date().toISOString();
-        await refundBillingOrderCoupon(client, order, now);
-
-        const refundedPayment = payment
-            ? await repos.billing.upsertPayment({
-                  ...payment,
-                  status: "refunded",
-                  rawPayload: mergeJson(payment.rawPayload, {
-                      refund: {
-                          reason,
-                          operatorUserId,
-                          refundedAt: now,
-                          rawPayload: sanitizeJson(input.rawPayload),
-                          providerRefund: paymentRefundMetadata(providerRefund, true),
-                      },
-                  }),
-                  refundedAt: now,
-                  updatedAt: now,
-              })
-            : undefined;
-
-        const assignments = order.productKind === "plan" ? await repos.billing.listPlanAssignments({ userId: order.userId, source: "order", page: 1, pageSize: 100 }) : undefined;
-        const assignment = assignments?.items.find((item) => item.sourceId === order.id);
-        const canceledAssignment = assignment
-            ? await repos.billing.updatePlanAssignment(assignment.id, {
-                  status: "canceled",
-                  endsAt: now,
-                  metadata: mergeJson(assignment.metadata, { refund: { reason, refundedAt: now } }),
-              })
-            : undefined;
-
-        const requestedPointsReversal = order.pointsAmount > 0 ? order.pointsAmount : 0;
-        const walletAdjustment = requestedPointsReversal
-            ? await adjustPermanentPointsInPostgresTransaction(client, {
-                  userId: user.id,
-                  amount: -requestedPointsReversal,
-                  description: `订单退款：${order.subject}`,
-                  idempotencyKey: `billing-order:${order.id}:refund`,
-                  type: "admin-adjust",
-                  minimumBalance: 0,
-                  requireActive: false,
-                  now: new Date(now),
-              })
-            : null;
-        const pointsReversed = Math.max(0, -(walletAdjustment?.record.amount || 0));
-        await reverseReferralRewardsForRefundedOrder(client, { orderId: order.id, refundedAt: now, reason });
-        let updatedUser = user;
-        if (order.productKind === "plan") {
-            const activeAssignment = await repos.billing.getActivePlanAssignment(user.id, new Date(now));
-            const settings = await repos.settings.getSettings();
-            const fallbackPlanId = settings.settings?.defaultPlanId || "free";
-            const planUser = await repos.users.update(user.id, { planId: activeAssignment?.planId || fallbackPlanId });
-            if (!planUser) throw new BillingInputError("订单用户不存在", 404);
-            updatedUser = planUser;
-        } else {
-            const refreshedUser = await repos.users.getById(user.id);
-            if (!refreshedUser) throw new BillingInputError("订单用户不存在", 404);
-            updatedUser = refreshedUser;
-        }
-
-        const updatedOrder = await repos.billing.updateOrder(order.id, {
-            status: "refunded",
-            closedAt: now,
-            metadata: mergeJson(order.metadata, {
-                refund: {
-                    reason,
-                    operatorUserId,
-                    refundedAt: now,
-                    pointsReversed,
-                    providerRefund: paymentRefundMetadata(providerRefund, false),
-                },
-            }),
-        });
-        if (!updatedOrder) throw new BillingInputError("订单不存在", 404);
-
-        return {
-            order: updatedOrder,
-            payment: refundedPayment,
-            assignment: canceledAssignment,
-            user: updatedUser,
-            pointsReversed,
-            providerRefund,
-        };
-    });
-}
+export { refundBillingOrder } from "@/lib/server/billing-refund-orchestration-service";

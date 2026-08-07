@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
     register: vi.fn(),
     touch: vi.fn(),
     update: vi.fn(),
+    writeLog: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
@@ -18,6 +19,8 @@ vi.mock("@/lib/globalaiopc-catalog", () => ({ resolveGlobalAiOpcPreset: vi.fn(()
 vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.fetchInternalApi }));
 vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/video-result-normalizer", () => ({ normalizeVideoResult: mocks.normalize }));
+vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-dq-media-authorization": "signed" })) }));
+vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeLog }));
 vi.mock("@/lib/server/video-task-store", () => ({
     claimVideoTaskPoll: mocks.claim,
     completeReconciledVideoTask: mocks.complete,
@@ -27,7 +30,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
     updateVideoTask: mocks.update,
 }));
 
-import { queryVideoTaskUpstream, refreshVideoTaskFromUpstream } from "./video-task-runtime";
+import { persistVideoTaskResult, queryVideoTaskUpstream, refreshVideoTaskFromUpstream } from "./video-task-runtime";
 import type { VideoTask } from "./video-task-store";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 
@@ -37,6 +40,7 @@ describe("video task upstream reconciliation", () => {
         mocks.normalize.mockResolvedValue({ url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 });
         mocks.register.mockResolvedValue(undefined);
         mocks.update.mockResolvedValue(undefined);
+        mocks.writeLog.mockResolvedValue({});
     });
 
     afterEach(() => {
@@ -46,7 +50,7 @@ describe("video task upstream reconciliation", () => {
     it("forwards the maintenance worker identity when polling the internal system proxy", async () => {
         const token = "maintenance-token-used-by-generation-worker";
         const task = videoTask();
-        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("DQ_WORKER_TOKEN", token);
         mocks.fetchInternalApi.mockResolvedValue(json({ id: task.upstream.id, status: "processing" }));
 
         await expect(queryVideoTaskUpstream(task, "http://localhost", "", task.userId)).resolves.toMatchObject({ state: "pending" });
@@ -68,6 +72,7 @@ describe("video task upstream reconciliation", () => {
 
         expect(result).toEqual(completed);
         expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining("/_media?url="), requestedDurationSeconds: 5 }));
+        expect(new Headers(mocks.normalize.mock.calls[0]?.[0]?.internalHeaders).get("x-dq-media-authorization")).toBe("signed");
         expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
         expect(mocks.register).toHaveBeenCalledOnce();
         expect(mocks.refund).not.toHaveBeenCalled();
@@ -136,6 +141,58 @@ describe("video task upstream reconciliation", () => {
         expect(mocks.complete).not.toHaveBeenCalled();
         expect(mocks.fail).not.toHaveBeenCalled();
         expect(mocks.refund).not.toHaveBeenCalled();
+    });
+
+    it("uses the Grok content endpoint instead of the provider loopback result URL", async () => {
+        const task = videoTask({
+            config: {
+                ...videoTask().config,
+                model: "grok-imagine-video",
+                advancedConfig: { protocol: "grok2api", queryPath: "/v1/videos/:task_id", statusField: "status", resultField: "video.url" } as NonNullable<VideoTask["config"]["advancedConfig"]>,
+            },
+        });
+        mocks.fetchInternalApi.mockResolvedValue(
+            json({
+                status: "done",
+                progress: 100,
+                video: { url: `http://127.0.0.1:8000/v1/videos/${task.upstream.id}/content` },
+            }),
+        );
+
+        await expect(queryVideoTaskUpstream(task, "http://localhost", "session=test")).resolves.toEqual({
+            state: "result_ready",
+            status: "done",
+            resultUrl: `/v1/videos/${task.upstream.id}/content`,
+        });
+    });
+
+    it("persists the relative Grok content path through the task-authorized media proxy", async () => {
+        vi.stubEnv("DQ_WORKER_TOKEN", "test-generation-worker-token-at-least-32-characters");
+        const task = videoTask({
+            config: {
+                ...videoTask().config,
+                model: "grok-imagine-video",
+                advancedConfig: { protocol: "grok2api", queryPath: "/v1/videos/:task_id", statusField: "status", resultField: "video.url" } as NonNullable<VideoTask["config"]["advancedConfig"]>,
+            },
+        });
+        const completed = { ...task, status: "success" as const, result: { url: "/api/reference-assets/grok-result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
+        mocks.normalize.mockResolvedValue(completed.result);
+        mocks.fetchInternalApi.mockResolvedValue(json({ status: "done", progress: 100, video: { url: `http://127.0.0.1:8000/v1/videos/${task.upstream.id}/content` } }));
+        mocks.complete.mockResolvedValue(completed);
+
+        const step = await queryVideoTaskUpstream(task, "http://localhost", "", task.userId);
+        expect(step).toEqual({ state: "result_ready", status: "done", resultUrl: `/v1/videos/${task.upstream.id}/content` });
+        if (step.state !== "result_ready") throw new Error("Expected the Grok video result to be ready");
+        await expect(persistVideoTaskResult(task, step.resultUrl, "http://localhost", "", task.userId)).resolves.toEqual(completed);
+
+        expect(mocks.normalize).toHaveBeenCalledWith(
+            expect.objectContaining({
+                url: `${task.config.baseUrl}/_media?url=${encodeURIComponent(`/v1/videos/${task.upstream.id}/content`)}`,
+                internalHeaders: expect.any(Headers),
+            }),
+        );
+        expect(new Headers(mocks.normalize.mock.calls[0]?.[0]?.internalHeaders).get("x-dq-media-authorization")).toBe("signed");
+        expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/grok-result.mp4" }));
     });
 
     it("recovers a completed New API video from the standard content endpoint when status queries are unavailable", async () => {

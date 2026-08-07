@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { Button, Modal } from "antd";
 import { Check, Lock, LockOpen, X } from "lucide-react";
 
@@ -18,6 +18,16 @@ type DragMode = "move" | "resize";
 type ResizeHandle = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
 
 const handles: ResizeHandle[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
+const handleLabels: Record<ResizeHandle, string> = {
+    nw: "左上",
+    n: "上",
+    ne: "右上",
+    e: "右",
+    se: "右下",
+    s: "下",
+    sw: "左下",
+    w: "左",
+};
 const minSize = 0.06;
 const defaultCrop = { x: 0.12, y: 0.12, width: 0.76, height: 0.76 };
 
@@ -56,27 +66,57 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
         document.addEventListener("pointerup", up);
     };
 
+    const adjustWithKeyboard = (event: KeyboardEvent<HTMLElement>, mode: DragMode, handle?: ResizeHandle) => {
+        const delta = cropKeyboardDelta(event.key, event.shiftKey);
+        if (!delta) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const box = boxRef.current?.getBoundingClientRect();
+        if (!box) return;
+        setCrop((current) => (mode === "move" ? moveCrop(current, delta.dx, delta.dy) : resizeCrop(current, delta.dx, delta.dy, handle || "se", locked, box)));
+    };
+
     return (
         <Modal title="裁剪图片" open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden>
             <div className="space-y-4">
                 <div className="flex justify-center">
                     <div ref={boxRef} className="relative inline-block max-w-full overflow-hidden rounded-lg bg-black select-none">
-                        <img src={imagePreviewUrl(dataUrl, 1920)} alt="" className="block max-h-[62vh] max-w-full opacity-90" draggable={false} />
+                        <img src={imagePreviewUrl(dataUrl, 1920)} alt="待裁剪图片" className="block max-h-[62vh] max-w-full opacity-90" draggable={false} />
                         <CropMask crop={crop} />
-                        <div className="absolute cursor-move border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.3),0_0_28px_rgba(0,0,0,.28)]" style={cropStyle(crop)} onPointerDown={(event) => startDrag("move", event)}>
+                        <div
+                            className="absolute touch-none cursor-move border-2 border-white shadow-[0_0_0_1px_rgba(0,0,0,.3),0_0_28px_rgba(0,0,0,.28)] outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                            style={cropStyle(crop)}
+                            onPointerDown={(event) => startDrag("move", event)}
+                            onKeyDown={(event) => adjustWithKeyboard(event, "move")}
+                            tabIndex={0}
+                            role="group"
+                            aria-label="裁剪区域，方向键移动，Shift 加方向键可快速移动"
+                            aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
+                        >
                             <div className="pointer-events-none absolute inset-x-0 top-1/3 border-t border-white/50" />
                             <div className="pointer-events-none absolute inset-x-0 top-2/3 border-t border-white/50" />
                             <div className="pointer-events-none absolute inset-y-0 left-1/3 border-l border-white/50" />
                             <div className="pointer-events-none absolute inset-y-0 left-2/3 border-l border-white/50" />
                             {handles.map((handle) => (
-                                <button key={handle} type="button" className="absolute size-3 rounded-full border border-black bg-white" style={handleStyle(handle)} onPointerDown={(event) => startDrag("resize", event, handle)} aria-label="调整裁剪框" />
+                                <button
+                                    key={handle}
+                                    type="button"
+                                    className="absolute grid size-8 place-items-center rounded-full border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                                    style={handleStyle(handle)}
+                                    onPointerDown={(event) => startDrag("resize", event, handle)}
+                                    onKeyDown={(event) => adjustWithKeyboard(event, "resize", handle)}
+                                    aria-label={`调整裁剪框：${handleLabels[handle]}`}
+                                    aria-keyshortcuts="ArrowLeft ArrowRight ArrowUp ArrowDown"
+                                >
+                                    <span aria-hidden="true" className="size-3 rounded-full border border-black bg-white" />
+                                </button>
                             ))}
                         </div>
                     </div>
                 </div>
 
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-3 text-sm opacity-80">
+                    <div className="flex flex-wrap items-center gap-3 text-sm opacity-80" role="status" aria-live="polite">
                         <span>裁剪尺寸 {cropSize ? `${cropSize.width} x ${cropSize.height}` : "未知"}</span>
                         <span>比例 {cropSize ? formatRatio(cropSize.width, cropSize.height) : "未知"}</span>
                         {image ? (
@@ -85,7 +125,7 @@ export function CanvasNodeCropDialog({ dataUrl, open, onClose, onConfirm }: { da
                             </span>
                         ) : null}
                     </div>
-                    <Button icon={locked ? <Lock className="size-4" /> : <LockOpen className="size-4" />} onClick={() => setLocked((value) => !value)}>
+                    <Button icon={locked ? <Lock className="size-4" /> : <LockOpen className="size-4" />} onClick={() => setLocked((value) => !value)} aria-pressed={locked}>
                         {locked ? "锁定比例" : "自由比例"}
                     </Button>
                 </div>
@@ -115,12 +155,21 @@ function CropMask({ crop }: { crop: CanvasImageCropRect }) {
     );
 }
 
-function moveCrop(crop: CanvasImageCropRect, dx: number, dy: number): CanvasImageCropRect {
+export function cropKeyboardDelta(key: string, fast = false) {
+    const step = fast ? 0.05 : 0.01;
+    if (key === "ArrowLeft") return { dx: -step, dy: 0 };
+    if (key === "ArrowRight") return { dx: step, dy: 0 };
+    if (key === "ArrowUp") return { dx: 0, dy: -step };
+    if (key === "ArrowDown") return { dx: 0, dy: step };
+    return null;
+}
+
+export function moveCrop(crop: CanvasImageCropRect, dx: number, dy: number): CanvasImageCropRect {
     return { ...crop, x: clamp(crop.x + dx, 0, 1 - crop.width), y: clamp(crop.y + dy, 0, 1 - crop.height) };
 }
 
-function resizeCrop(crop: CanvasImageCropRect, dx: number, dy: number, handle: ResizeHandle, locked: boolean, box: DOMRect): CanvasImageCropRect {
-    let next = { ...crop };
+export function resizeCrop(crop: CanvasImageCropRect, dx: number, dy: number, handle: ResizeHandle, locked: boolean, box: Pick<DOMRect, "width" | "height">): CanvasImageCropRect {
+    const next = { ...crop };
     if (handle.includes("e")) next.width = crop.width + dx;
     if (handle.includes("s")) next.height = crop.height + dy;
     if (handle.includes("w")) {
@@ -150,8 +199,8 @@ function cropStyle(crop: CanvasImageCropRect) {
 }
 
 function handleStyle(handle: ResizeHandle) {
-    const top = handle.includes("n") ? "-6px" : handle.includes("s") ? "calc(100% - 6px)" : "calc(50% - 6px)";
-    const left = handle.includes("w") ? "-6px" : handle.includes("e") ? "calc(100% - 6px)" : "calc(50% - 6px)";
+    const top = handle.includes("n") ? "-16px" : handle.includes("s") ? "calc(100% - 16px)" : "calc(50% - 16px)";
+    const left = handle.includes("w") ? "-16px" : handle.includes("e") ? "calc(100% - 16px)" : "calc(50% - 16px)";
     return { top, left, cursor: `${handle}-resize` };
 }
 

@@ -4,6 +4,7 @@ import { AudioLines, Copy, Download, FileText, Film, ImageIcon, PencilLine, Shar
 import { Button, Image, Modal, Space, Tag, Tooltip, Typography } from "antd";
 import { formatBytes } from "@/lib/image-utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { cn } from "@/lib/utils";
 import type { Asset } from "@/stores/use-asset-store";
 
@@ -31,7 +32,7 @@ export function AssetCard({
         <article className="group min-w-0 overflow-hidden rounded-xl border border-border bg-card transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/30">
             <button type="button" aria-label={`查看 ${asset.title}`} className="relative block w-full overflow-hidden bg-muted text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={onOpen}>
                 {cover ? (
-                    <img src={imagePreviewUrl(cover, 800)} alt={asset.title} className="aspect-[16/10] w-full object-cover transition-transform duration-300 group-hover:scale-[1.025]" />
+                    <LazyMediaImage src={imagePreviewUrl(cover, 800)} alt={asset.title} containerClassName="aspect-[16/10] w-full" imageClassName="size-full object-cover transition-transform duration-300 group-hover:scale-[1.025]" />
                 ) : (
                     <span className="flex aspect-[16/10] flex-col items-center justify-center gap-2 p-4 text-center text-xs leading-5 text-muted-foreground sm:p-6">
                         <span className="grid size-9 place-items-center rounded-full border border-border bg-background/80 text-foreground">{assetKindIcon(asset.kind)}</span>

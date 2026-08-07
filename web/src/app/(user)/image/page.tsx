@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquare, CircleAlert, ClipboardPaste, Download, FolderPlus, ImagePlus, LoaderCircle, PenLine, Sparkles, Square, Trash2, Upload } from "lucide-react";
+import { CheckSquare, CircleAlert, CircleStop, ClipboardPaste, Download, FolderPlus, ImagePlus, LoaderCircle, PenLine, Sparkles, Square, Trash2, Upload } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { App, Button, Drawer, Image, Modal, Tooltip, Typography } from "antd";
@@ -21,10 +21,12 @@ import { workbenchReferencesFromAttachments } from "@/components/agent/workbench
 import { CompactEmptyState } from "@/components/compact-empty-state";
 import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
-import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
+import { WorkbenchHistoryLoadError } from "@/components/agent/workbench-history-load-error";
+import { focusWorkbenchPromptEditor, moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
 import { ResultSelectCheckbox, WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
 import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
+import { workbenchConversationRecordGroups } from "@/components/agent/workbench-conversation-results";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
 import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions";
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
@@ -53,6 +55,7 @@ import {
     saveStoredImageLog,
     snapshotFromLog,
     stableResultImageUrl,
+    summarizeImageConversationLogs,
     updateResultAt,
     withLogOwner,
     type GeneratedImage,
@@ -105,17 +108,21 @@ export default function ImagePage() {
         enableSmartPlanning,
         selectSkill,
         selectImageModel,
-        agentSessionByRecordId,
         hasOlderAgentMessages,
         olderAgentMessagesLoading,
         loadOlderAgentMessages,
         importedCreatePromptRef,
         references,
         setReferences,
-        results,
+        resultEntries,
         setResults,
         logs,
         setLogs,
+        historyLoading,
+        historyLoadingMore,
+        historyTotal,
+        historyHasMore,
+        historyLoadError,
         logsOpen,
         setLogsOpen,
         promptDialogOpen,
@@ -145,6 +152,7 @@ export default function ImagePage() {
         userIdRef,
         mountedRef,
         activeImageTasks,
+        imageSubmitting,
         setActiveImageTasks,
         imageTaskQueueRef,
         imageTaskQueue,
@@ -168,7 +176,6 @@ export default function ImagePage() {
         setLogResults,
         persistLogResults,
         patchLogResult,
-        patchLogResultAt,
         runQueuedImageTask,
         resumePendingLogs,
         completeGenerationTask,
@@ -184,6 +191,7 @@ export default function ImagePage() {
         createSession,
         deleteSelectedLogs,
         refreshLogs,
+        loadMoreLogs,
         previewGenerationLog,
         buildRequestSnapshot,
         runGenerationSlot,
@@ -198,10 +206,17 @@ export default function ImagePage() {
         deleteResultsByIds,
         deleteSelectedResults,
         deleteMissingResults,
+        cancellingLogIds,
+        cancelGenerationLog,
         renameGenerationLog,
     } = controller;
     const agentModelOptions = selectableModelsByCapability(effectiveConfig, "image").map((id) => ({ id, name: modelOptionLabel(effectiveConfig, id), capability: "image" as const }));
     const selectedAgentModels = agentModelOptions.filter((item) => selectedModelIds.includes(item.id));
+    const conversationLogs = workbenchConversationRecordGroups(logs).map(({ record, records }) => {
+        const session = findWorkbenchAgentSessionForRecord(agentSessions, record.id, record.creativeConversationId);
+        return summarizeImageConversationLogs(records, session?.title);
+    });
+    const activeHistoryLogId = previewLog ? conversationLogs.find((log) => log.id === previewLog.id || Boolean(log.creativeConversationId && log.creativeConversationId === previewLog.creativeConversationId))?.id : undefined;
     return (
         <div className="flex h-full flex-col overflow-hidden bg-background text-foreground">
             <main className="min-h-0 flex-1 overflow-y-auto p-2 lg:overflow-hidden sm:p-3">
@@ -211,15 +226,15 @@ export default function ImagePage() {
                             subtitle="图片创作助手"
                             onNew={createSession}
                             historyContent={(query, closeHistory) => {
-                                const filteredLogs = logs.filter((log) => {
-                                    const session = agentSessionByRecordId.get(log.id);
+                                const filteredLogs = conversationLogs.filter((log) => {
+                                    const session = findWorkbenchAgentSessionForRecord(agentSessions, log.id, log.creativeConversationId);
                                     return matchesWorkbenchHistoryQuery(query, log.title, generationLogPublicPrompt(log), session?.searchText || "", ...(session?.messages.map((item) => item.text) || []));
                                 });
                                 return (
                                     <LogPanel
                                         logs={filteredLogs}
                                         selectedLogIds={selectedLogIds}
-                                        activeLogId={previewLog?.id}
+                                        activeLogId={activeHistoryLogId}
                                         onSelectedLogIdsChange={setSelectedLogIds}
                                         onCreateSession={createSession}
                                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
@@ -228,12 +243,17 @@ export default function ImagePage() {
                                             void previewGenerationLog(log);
                                         }}
                                         onRenameLog={(log, title) => void renameGenerationLog(log, title)}
+                                        historyTotal={historyTotal}
+                                        historyHasMore={historyHasMore}
+                                        historyLoadingMore={historyLoadingMore}
+                                        onLoadMore={() => void loadMoreLogs()}
                                         compact
                                     />
                                 );
                             }}
                         />
                         <WorkbenchBackgroundTaskNotice count={logs.reduce((total, log) => total + (log.pendingCount || 0), 0)} />
+                        <WorkbenchHistoryLoadError error={historyLoadError} loading={historyLoading} onRetry={() => void refreshLogs()} />
                         {agentMessages.length ? (
                             <WorkbenchAgentConversation
                                 messages={agentMessages}
@@ -303,7 +323,8 @@ export default function ImagePage() {
                                         type="primary"
                                         shape="round"
                                         className="!h-9 !px-3 tabular-nums"
-                                        disabled={!canGenerate || activeImageTasks >= imageConcurrencyLimit}
+                                        loading={imageSubmitting}
+                                        disabled={imageSubmitting || !canGenerate || activeImageTasks >= imageConcurrencyLimit}
                                         icon={<Sparkles className="size-4" />}
                                         onClick={() => void runAgentGenerate()}
                                         aria-label={`开始生成，消耗 ${formatCreditAmount(pointsCost)} 积分`}
@@ -390,7 +411,7 @@ export default function ImagePage() {
                         </WorkbenchComposerFrame>
 
                         <div className="hidden">
-                            <Button type="primary" size="large" block disabled={!canGenerate || activeImageTasks >= imageConcurrencyLimit} onClick={() => void generate()}>
+                            <Button type="primary" size="large" block loading={imageSubmitting} disabled={imageSubmitting || !canGenerate || activeImageTasks >= imageConcurrencyLimit} onClick={() => void generate()}>
                                 <span className="inline-flex items-center justify-center gap-2">
                                     <span className="inline-flex items-center gap-1.5 tabular-nums">
                                         <Sparkles className="size-[17px]" />
@@ -413,7 +434,7 @@ export default function ImagePage() {
                                 <h2 className="text-lg font-semibold sm:text-xl">生成结果</h2>
                             </div>
                             <div className="flex flex-wrap items-center justify-end gap-2">
-                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!results.length} onClick={toggleAllResults}>
+                                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!resultEntries.length} onClick={toggleAllResults}>
                                     {allResultsSelected ? "取消" : "全选"}
                                 </Button>
                                 <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedVisibleResultIds.length} onClick={() => void deleteSelectedResults()}>
@@ -425,6 +446,11 @@ export default function ImagePage() {
                                     </Button>
                                 ) : null}
                                 {previewPendingCount ? <WorkbenchGenerationActivity kind="image" count={previewPendingCount} /> : null}
+                                {previewLog?.status === "生成中" && !resultEntries.some((entry) => entry.result.taskState?.publicStatus === "cancelled") ? (
+                                    <Button danger size="small" icon={<CircleStop className="size-3.5" />} loading={cancellingLogIds.includes(previewLog.id)} onClick={() => void cancelGenerationLog(previewLog)}>
+                                        取消任务
+                                    </Button>
+                                ) : null}
                                 {activeImageTasks ? (
                                     <span className="inline-flex h-7 items-center rounded-md bg-stone-100 px-2 text-xs font-medium text-stone-700 ring-1 ring-stone-200 dark:bg-white/10 dark:text-stone-200 dark:ring-white/10">
                                         运行 {activeImageTasks}/{imageConcurrencyLimit}
@@ -432,40 +458,52 @@ export default function ImagePage() {
                                 ) : null}
                             </div>
                         </div>
-                        {results.length ? (
-                            <div data-testid="image-results-grid" className={results.length === 1 ? "flex w-full items-start" : "grid w-full grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4"}>
-                                {results.map((result, index) => (
-                                    <div key={result.id} data-testid="image-result-slot" className={results.length === 1 ? "w-[320px] max-w-full" : "min-w-0"}>
-                                        {result.status === "success" && result.image ? (
+                        {resultEntries.length ? (
+                            <div data-testid="image-results-grid" className={resultEntries.length === 1 ? "flex w-full items-start" : "grid w-full grid-cols-1 items-start gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4"}>
+                                {resultEntries.map((entry) => (
+                                    <div key={entry.key} data-testid="image-result-slot" data-record-id={entry.recordId} className={resultEntries.length === 1 ? "w-[320px] max-w-full" : "min-w-0"}>
+                                        {entry.result.status === "success" && entry.result.image ? (
                                             <ResultImageCard
-                                                image={result.image}
-                                                index={index}
-                                                large={results.length === 1}
-                                                fluid={results.length > 1}
-                                                missing={missingResultIds.includes(result.id) || !result.image.dataUrl}
-                                                selected={selectedResultIds.includes(result.id)}
-                                                onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                                onMissing={() => markResultMissing(result.id)}
+                                                image={entry.result.image}
+                                                index={entry.displayIndex}
+                                                large={resultEntries.length === 1}
+                                                fluid={resultEntries.length > 1}
+                                                missing={missingResultIds.includes(entry.key) || !entry.result.image.dataUrl}
+                                                selected={selectedResultIds.includes(entry.key)}
+                                                onSelectedChange={(checked) => toggleResultSelected(entry.key, checked)}
+                                                onMissing={() => markResultMissing(entry.key)}
                                                 onEdit={addResultToReferences}
                                                 onDownload={downloadImage}
                                                 onSaveAsset={saveResultToAssets}
                                             />
-                                        ) : result.status === "failed" ? (
+                                        ) : entry.result.status === "failed" ? (
                                             <FailedImageCard
-                                                error={result.error || "生成失败"}
-                                                large={results.length === 1}
-                                                selected={selectedResultIds.includes(result.id)}
-                                                onSelectedChange={(checked) => toggleResultSelected(result.id, checked)}
-                                                onRetry={() => retryResult(index)}
+                                                error={entry.result.error || "生成失败"}
+                                                retryable={entry.result.canRetry === true}
+                                                state={entry.result.taskState}
+                                                large={resultEntries.length === 1}
+                                                selected={selectedResultIds.includes(entry.key)}
+                                                onSelectedChange={(checked) => toggleResultSelected(entry.key, checked)}
+                                                onRetry={() => retryResult(entry.recordId, entry.resultId)}
                                             />
                                         ) : (
-                                            <PendingImageCard large={results.length === 1} />
+                                            <PendingImageCard large={resultEntries.length === 1} state={entry.result.taskState || entry.result.task?.taskState} />
                                         )}
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <CompactEmptyState title="还没有生成图片" description="完成一次生成后，结果会按时间保留在这里。" icon={<ImagePlus className="size-4" />} className="min-h-20 sm:min-h-40 lg:min-h-[360px]" />
+                            <CompactEmptyState
+                                title="还没有生成图片"
+                                description={model ? "描述想要的画面并开始生成，结果会按时间保留在这里。" : "当前没有可用图片模型，配置完成后即可开始生成。"}
+                                icon={<ImagePlus className="size-4" />}
+                                action={
+                                    <Button size="small" type="primary" icon={model ? <Sparkles className="size-3.5" /> : <CircleAlert className="size-3.5" />} onClick={() => (model ? focusWorkbenchPromptEditor() : openConfigDialog(true, "image"))}>
+                                        {model ? "开始创作" : "查看模型配置"}
+                                    </Button>
+                                }
+                                className="min-h-20 sm:min-h-40 lg:min-h-[360px]"
+                            />
                         )}
                     </div>
                 </section>
@@ -474,14 +512,18 @@ export default function ImagePage() {
             <Drawer title="生成记录" placement="bottom" size="min(86dvh, 720px)" open={logsOpen} onClose={() => setLogsOpen(false)} styles={{ body: { padding: 0, overflow: "hidden" } }}>
                 <div className="thin-scrollbar h-full overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-4">
                     <LogPanel
-                        logs={logs}
+                        logs={conversationLogs}
                         selectedLogIds={selectedLogIds}
-                        activeLogId={previewLog?.id}
+                        activeLogId={activeHistoryLogId}
                         onSelectedLogIdsChange={setSelectedLogIds}
                         onCreateSession={createSession}
                         onDeleteSelected={() => setDeleteConfirmOpen(true)}
                         onPreviewLog={(log) => void previewGenerationLog(log)}
                         onRenameLog={(log, title) => void renameGenerationLog(log, title)}
+                        historyTotal={historyTotal}
+                        historyHasMore={historyHasMore}
+                        historyLoadingMore={historyLoadingMore}
+                        onLoadMore={() => void loadMoreLogs()}
                     />
                 </div>
             </Drawer>

@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { GenerationTaskRequestError } from "@/services/api/generation-task-request-error";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { imageToDataUrl } from "@/services/image-storage";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -22,16 +23,19 @@ type RequestOptions = {
     parentTaskId?: string;
     attemptNo?: number;
     clientRequestId?: string;
+    generationLogId?: string;
+    generationSlotId?: string;
     sourceNodeId?: string;
     targetNodeId?: string;
     validateBeforeSubmit?: () => void;
+    onTaskState?: (state: GenerationTaskExecutionState) => void;
 };
 
 export type ImageGenerationTask = {
     id: string;
     kind: "generation" | "edit";
     model: string;
-    status?: "pending" | "running" | "success" | "error";
+    status?: "pending" | "running" | "success" | "error" | "cancelled";
 };
 
 type ImageTaskPayload = {
@@ -39,12 +43,34 @@ type ImageTaskPayload = {
         GenerationTaskExecutionState & {
             result?: { dataUrl?: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
             error?: string;
+            canRetry?: boolean;
         };
     error?: string;
 };
 
 const IMAGE_TASK_POLL_INTERVAL_MS = 1800;
 const IMAGE_TASK_TIMEOUT_MS = 30 * 60 * 1000;
+
+export class ImageGenerationTaskTerminalError extends Error {
+    constructor(
+        message: string,
+        readonly canRetry: boolean,
+    ) {
+        super(message);
+        this.name = "ImageGenerationTaskTerminalError";
+    }
+}
+
+export class ImageGenerationTaskDeferredError extends Error {
+    constructor(message = "图片仍在后台生成，系统会继续查询原任务") {
+        super(message);
+        this.name = "ImageGenerationTaskDeferredError";
+    }
+}
+
+export function isImageGenerationTaskDeferredError(error: unknown) {
+    return error instanceof ImageGenerationTaskDeferredError;
+}
 
 export async function createImageGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mask?: ReferenceImage, options?: RequestOptions): Promise<ImageGenerationTask> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
@@ -54,7 +80,11 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
     if (options?.signal?.aborted) throw new DOMException("\u8bf7\u6c42\u5df2\u53d6\u6d88", "AbortError");
     const response = await fetch("/api/image-tasks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+            "Content-Type": "application/json",
+            ...(options?.clientRequestId ? { "X-DQ-Client-Request-Id": options.clientRequestId } : {}),
+            ...(options?.attemptNo ? { "X-DQ-Attempt-No": String(options.attemptNo) } : {}),
+        },
         body: JSON.stringify({
             kind: references.length || mask ? "edit" : "generation",
             config: {
@@ -71,10 +101,26 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
         }),
         signal: options?.signal,
     });
+    throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
     if (!response.ok) throw new GenerationTaskRequestError(await readFetchError(response, "创建图片任务失败"), response.status);
     const payload = (await response.json()) as ImageTaskPayload;
     if (!payload.task?.id) throw new Error(payload.error || "创建图片任务失败");
+    return payload.task;
+}
+
+export async function cancelImageGenerationTask(task: Pick<ImageGenerationTask, "id">) {
+    const response = await fetch(`/api/image-tasks/${encodeURIComponent(task.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "cancelled" }),
+        cache: "no-store",
+    });
+    throwIfClientSessionExpired(response);
+    syncUserPointsFromHeaders(response.headers, "system");
+    const payload = (await response.json().catch(() => ({}))) as ImageTaskPayload & { error?: string };
+    if (!response.ok) throw new Error(payload.error || "图片任务取消失败");
+    if (payload.task?.status !== "cancelled") throw new Error(payload.error || "图片任务尚未取消");
     return payload.task;
 }
 
@@ -91,6 +137,8 @@ function taskContext(options?: RequestOptions) {
         parentTaskId: options.parentTaskId,
         attemptNo: options.attemptNo,
         clientRequestId: options.clientRequestId,
+        generationLogId: options.generationLogId,
+        generationSlotId: options.generationSlotId,
         sourceNodeId: options.sourceNodeId,
         targetNodeId: options.targetNodeId,
     };
@@ -102,17 +150,33 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
         if (options?.signal?.aborted) throw new DOMException("请求已取消", "AbortError");
         if (Date.now() - startedAt > IMAGE_TASK_TIMEOUT_MS) {
             await refreshUserPointsIfSystem(config.apiSource);
-            throw new Error("图片生成超时，请稍后重试");
+            throw new ImageGenerationTaskDeferredError();
         }
-        const response = await fetch(`/api/image-tasks/${encodeURIComponent(task.id)}`, { cache: "no-store", signal: options?.signal });
+        let response: Response;
+        try {
+            response = await fetch(`/api/image-tasks/${encodeURIComponent(task.id)}`, { cache: "no-store", signal: options?.signal });
+        } catch (error) {
+            if (options?.signal?.aborted) throw error;
+            await delay(IMAGE_TASK_POLL_INTERVAL_MS, options?.signal);
+            continue;
+        }
+        throwIfClientSessionExpired(response);
         syncUserPointsFromHeaders(response.headers, config.apiSource);
-        if (!response.ok) throw new Error(await readFetchError(response, "读取图片任务失败"));
+        if (!response.ok) {
+            const message = await readFetchError(response, "读取图片任务失败");
+            if (isDeferredPollStatus(response.status)) {
+                await delay(IMAGE_TASK_POLL_INTERVAL_MS, options?.signal);
+                continue;
+            }
+            throw new ImageGenerationTaskTerminalError(message, false);
+        }
         const payload = (await response.json()) as ImageTaskPayload;
         const current = payload.task;
-        if (!current) throw new Error(payload.error || "图片任务不存在");
+        if (!current) throw new ImageGenerationTaskTerminalError(payload.error || "图片任务不存在", false);
+        options?.onTaskState?.(current);
         if (current.needsReview) throw new GenerationTaskNeedsReviewError();
         if (current.status === "success") {
-            if (!current.result?.dataUrl) throw new Error("图片任务没有返回结果");
+            if (!current.result?.dataUrl) throw new ImageGenerationTaskTerminalError("图片任务没有返回结果", true);
             await refreshUserPointsIfSystem(config.apiSource);
             return {
                 id: nanoid(),
@@ -127,10 +191,23 @@ export async function waitForImageGenerationTask(config: AiConfig, task: ImageGe
         }
         if (current.status === "error") {
             await refreshUserPointsIfSystem(config.apiSource);
-            throw new Error(current.error || "图片生成失败");
+            throw new ImageGenerationTaskTerminalError(current.error || "图片生成失败", current.canRetry === true);
+        }
+        if (current.status === "cancelled") {
+            if (current.executionPhase === "cancel_requested" || current.executionPhase === "cancel_polling") {
+                await delay(IMAGE_TASK_POLL_INTERVAL_MS, options?.signal);
+                continue;
+            }
+            await refreshUserPointsIfSystem(config.apiSource);
+            if (current.message) throw new ImageGenerationTaskTerminalError(current.message, false);
+            throw new ImageGenerationTaskTerminalError(current.error || "图片任务已取消", false);
         }
         await delay(IMAGE_TASK_POLL_INTERVAL_MS, options?.signal);
     }
+}
+
+function isDeferredPollStatus(status: number) {
+    return status === 401 || status === 403 || [408, 425, 429].includes(status) || status >= 500;
 }
 
 async function referenceToTaskInput(reference: ReferenceImage) {
@@ -182,12 +259,12 @@ function delay(ms: number, signal?: AbortSignal) {
             reject(new DOMException("请求已取消", "AbortError"));
             return;
         }
-        const timer = window.setTimeout(() => {
+        const timer = globalThis.setTimeout(() => {
             signal?.removeEventListener("abort", abort);
             resolve();
         }, ms);
         const abort = () => {
-            window.clearTimeout(timer);
+            globalThis.clearTimeout(timer);
             reject(new DOMException("请求已取消", "AbortError"));
         };
         signal?.addEventListener("abort", abort, { once: true });

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { Alert, Button, Empty, Input, Modal, Pagination, Spin, Tag } from "antd";
 import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
-import { useAssetStore, type Asset } from "@/stores/use-asset-store";
+import type { Asset, AssetKind } from "@/lib/library-asset-contract";
+import { useAssetPage } from "@/app/(user)/assets/use-asset-page";
 import { useUserStore } from "@/stores/use-user-store";
 
 export type InsertAssetPayload =
@@ -56,7 +57,7 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
             onClick={onClick}
         >
             {cover ? (
-                <img src={imagePreviewUrl(cover, 480)} alt={title} className="aspect-[4/3] w-full object-cover" />
+                <img src={imagePreviewUrl(cover, 480)} alt={title} loading="lazy" decoding="async" className="aspect-[4/3] w-full object-cover" />
             ) : (
                 <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{title}</div>
             )}
@@ -73,34 +74,11 @@ function PickerCard({ title, kind, cover, onClick }: { title: string; kind: stri
 
 function MyAssetsTab({ open, onInsert }: { open: boolean; onInsert: (payload: InsertAssetPayload) => void }) {
     const userId = useUserStore((state) => state.user?.id || "");
-    const assets = useAssetStore((state) => state.assets);
-    const hydrated = useAssetStore((state) => state.hydrated);
-    const hydratedUserId = useAssetStore((state) => state.hydratedUserId);
-    const syncError = useAssetStore((state) => state.syncError);
-    const hydrate = useAssetStore((state) => state.hydrate);
     const [keyword, setKeyword] = useState("");
     const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);
-
-    const filtered = useMemo(() => {
-        const query = keyword.trim().toLowerCase();
-        return assets
-            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video" || a.kind === "audio")
-            .filter((a) => kindFilter === "all" || a.kind === kindFilter)
-            .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, keyword, kindFilter]);
-
-    const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
-    const ready = Boolean(userId && hydrated && hydratedUserId === userId);
-
-    useEffect(() => {
-        if (open && userId) void hydrate(true);
-    }, [hydrate, open, userId]);
-
-    useEffect(() => {
-        const maxPage = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-        setPage((v) => Math.min(v, maxPage));
-    }, [filtered.length]);
+    const { assets, total, loading, error: syncError, reload } = useAssetPage({ userId: open ? userId : "", page, pageSize: PAGE_SIZE, kind: (kindFilter || "all") as AssetKind | "all", keyword });
+    const ready = Boolean(userId && open && !loading && !syncError);
 
     const handleInsert = (asset: Asset) => {
         if (asset.kind === "text") {
@@ -156,14 +134,14 @@ function MyAssetsTab({ open, onInsert }: { open: boolean; onInsert: (payload: In
                     message="素材加载失败"
                     description={syncError}
                     action={
-                        <Button size="small" onClick={() => void hydrate(true)}>
+                        <Button size="small" onClick={reload}>
                             重试
                         </Button>
                     }
                 />
-            ) : visible.length ? (
+            ) : assets.length ? (
                 <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">
-                    {visible.map((asset) => (
+                    {assets.map((asset) => (
                         <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onClick={() => handleInsert(asset)} />
                     ))}
                 </div>
@@ -171,9 +149,9 @@ function MyAssetsTab({ open, onInsert }: { open: boolean; onInsert: (payload: In
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有素材" className="!my-6 sm:!my-8" />
             )}
 
-            {filtered.length > PAGE_SIZE && (
+            {total > PAGE_SIZE && (
                 <div className="flex justify-center">
-                    <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={filtered.length} onChange={setPage} showSizeChanger={false} />
+                    <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} showSizeChanger={false} />
                 </div>
             )}
         </div>

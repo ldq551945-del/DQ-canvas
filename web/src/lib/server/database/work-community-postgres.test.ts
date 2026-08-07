@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { withPostgresTransaction, type QueryExecutor } from "./postgres";
+import { initializePostgresSchema, withPostgresTransaction, type QueryExecutor } from "./postgres";
 import { WorkCommunityRepository } from "./work-community-repository";
 
 const describePostgres = process.env.RUN_WORK_COMMUNITY_POSTGRES_INTEGRATION === "1" ? describe : describe.skip;
 
 describePostgres("work community PostgreSQL integration", () => {
+    beforeAll(async () => {
+        await initializePostgresSchema();
+    });
     it("returns authoritative state for like and work-author follow toggles", async () => {
         const rollbackOnly = new Error("rollback integration fixture");
 

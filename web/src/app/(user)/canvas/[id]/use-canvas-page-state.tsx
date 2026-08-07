@@ -12,7 +12,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { App } from "antd";
 import { type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
-import { CANVAS_PERFORMANCE_STORAGE_KEY, normalizeCanvasPerformanceMode } from "../utils/canvas-performance-mode";
+import { CANVAS_PERFORMANCE_STORAGE_KEY, detectCanvasLowPerformanceDevice, normalizeCanvasPerformanceMode } from "../utils/canvas-performance-mode";
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { type CanvasAssistantSession, type CanvasConnection, type CanvasMediaPerformanceMode, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
 
@@ -125,6 +125,7 @@ export function useCanvasPageState() {
     const [openingBatchIds, setOpeningBatchIds] = useState<Set<string>>(new Set());
     const [isNodeDragging, setIsNodeDragging] = useState(false);
     const [performanceMode, setPerformanceModeState] = useState<CanvasMediaPerformanceMode>("auto");
+    const [lowPerformanceDevice, setLowPerformanceDevice] = useState(false);
     const [canvasTool, setCanvasTool] = useState<"move" | "box-select">("move");
 
     useEffect(() => {
@@ -133,6 +134,10 @@ export function useCanvasPageState() {
         } catch {
             setPerformanceModeState("auto");
         }
+    }, []);
+
+    useEffect(() => {
+        setLowPerformanceDevice(detectCanvasLowPerformanceDevice());
     }, []);
 
     const setPerformanceMode = (mode: CanvasMediaPerformanceMode) => {
@@ -304,6 +309,7 @@ export function useCanvasPageState() {
         isNodeDragging,
         setIsNodeDragging,
         performanceMode,
+        lowPerformanceDevice,
         setPerformanceMode,
         canvasTool,
         setCanvasTool,

@@ -8,6 +8,7 @@ import { Select } from "antd";
 import { PublicWorkPreviewModal } from "@/components/works/public-work-preview-modal";
 import { PublicWorkGalleryCard } from "@/components/works/public-work-gallery-card";
 import { PublicCreatorModal } from "@/components/works/public-creator-modal";
+import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { WORK_CATEGORY_OPTIONS } from "@/lib/work-publication-options";
 import { cn } from "@/lib/utils";
 import type { GalleryFilters, GalleryResult } from "./gallery-data";
@@ -94,11 +95,11 @@ export function GalleryView({ filters, gallery, basePath, embedded = false }: { 
                     </div>
                 </section>
             ) : gallery.items.length ? (
-                <section className="min-w-0 columns-2 gap-2 py-3 sm:columns-3 sm:gap-3 sm:py-4 md:columns-4 lg:columns-5 2xl:columns-6" aria-label="作品列表">
+                <ResponsiveMasonryGrid className="grid-cols-2 py-3 sm:grid-cols-3 sm:py-4 md:grid-cols-4 lg:grid-cols-5 2xl:grid-cols-6" ariaLabel="作品列表">
                     {gallery.items.map((item) => (
                         <PublicWorkGalleryCard key={item.slug} item={item} nextPath={basePath} onOpen={() => setPreviewSlug(item.slug)} onOpenAuthor={setCreatorUsername} />
                     ))}
-                </section>
+                </ResponsiveMasonryGrid>
             ) : (
                 <section className="flex min-h-64 flex-col items-center justify-center border-b border-dashed border-border px-4 py-10 text-center sm:min-h-80">
                     <span className="grid size-11 place-items-center rounded-lg bg-card text-muted-foreground ring-1 ring-border">

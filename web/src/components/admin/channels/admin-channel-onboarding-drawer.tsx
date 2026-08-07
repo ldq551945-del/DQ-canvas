@@ -11,10 +11,10 @@ import { channelHealthKinds } from "@/components/admin/admin-system-channel-edit
 import type { ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
 import { createSystemChannel } from "@/components/admin/admin-dashboard-elements";
 import type { LogicalModel, LogicalModelCapability, SystemChannelAuthMode, SystemChannelProtocol, SystemModelChannel } from "@/lib/auth/store";
-import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
+import { applyChannelProtocol, channelConnectionReady, channelProtocolDefinition, channelProtocolOptions, channelRequiresApiKey, emptyAdvancedConfig, resolveChannelAuthMode } from "@/lib/channel-protocol-registry";
 import { capabilityLabel, channelModelCapability } from "@/lib/model-routing-config";
 
-import { channelHealthEntries, defaultModelField, removeChannelFromWorkspace, switchChannelBindingUpstream, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
+import { channelHealthEntries, defaultModelField, removeChannelFromWorkspace, switchChannelBindingUpstream, updateChannelInWorkspace, validChannelBindingUpstream, type ChannelWorkspaceSettings } from "./admin-channel-workspace-model";
 
 type Props = {
     open: boolean;
@@ -56,13 +56,14 @@ export function AdminChannelOnboardingDrawer({ open, initialProtocol, settings, 
     }, [initialProtocol, open]);
 
     useEffect(() => {
-        if (!selectedUpstreamModel && channel?.models.length) setBindingDraft(switchChannelBindingUpstream(channel.models[0]));
+        const validModel = validChannelBindingUpstream(channel, selectedUpstreamModel);
+        if (validModel !== selectedUpstreamModel) setBindingDraft(switchChannelBindingUpstream(validModel));
     }, [channel?.models, selectedUpstreamModel]);
 
     const protocolOptions = useMemo(() => channelProtocolOptions().filter((item) => !["auto", "compatible"].includes(item.value)), []);
     const updateChannel = (patch: Partial<SystemModelChannel>) => {
         if (!draftId) return;
-        onChange({ ...settings, systemChannels: settings.systemChannels.map((item) => (item.id === draftId ? { ...item, ...patch } : item)) });
+        onChange(updateChannelInWorkspace(settings, draftId, patch));
     };
     const beginChannel = () => {
         const definition = channelProtocolDefinition(selectedProtocol);
@@ -361,16 +362,30 @@ function ProtocolLockedSummary({ channel }: { channel: SystemModelChannel }) {
 }
 
 function ModelStep({ channel, fetching, onChange, onFetch }: { channel: SystemModelChannel; fetching: boolean; onChange: (patch: Partial<SystemModelChannel>) => void; onFetch: () => void }) {
+    const advanced = channel.advancedConfig || emptyAdvancedConfig();
+    const capability = advanced.modelCatalogCapability;
     return (
         <div>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-3 dark:border-stone-800">
                 <div>
                     <div className="text-sm font-semibold text-stone-950 dark:text-stone-100">上游模型</div>
-                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">同步只会合并模型，不删除手工模型。</div>
+                    <div className="mt-1 text-xs text-stone-500 dark:text-stone-400">同一地址和密钥可重复接入；每条渠道只同步所选能力的模型。</div>
                 </div>
-                <Button icon={<RefreshCw className="size-4" />} loading={fetching} onClick={onFetch}>
-                    同步模型
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                    <Select<LogicalModelCapability>
+                        className="min-w-28"
+                        aria-label="模型拉取类型"
+                        value={capability}
+                        placeholder="选择类型"
+                        options={channelProtocolDefinition(advanced.protocol)
+                            .capabilities.filter((item) => item === "text" || item === "image" || item === "video")
+                            .map((item) => ({ label: capabilityLabel(item), value: item }))}
+                        onChange={(modelCatalogCapability) => onChange({ advancedConfig: { ...advanced, modelCatalogCapability } })}
+                    />
+                    <Button icon={<RefreshCw className="size-4" />} loading={fetching} disabled={!capability} onClick={onFetch}>
+                        拉取{capability ? capabilityLabel(capability) : "所选"}模型
+                    </Button>
+                </div>
             </div>
             <LabeledControl label="模型列表">
                 <Select mode="tags" className="w-full" maxTagCount="responsive" value={channel.models} placeholder="同步失败时可手动输入模型 ID" onChange={(models) => onChange({ models })} />

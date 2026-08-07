@@ -29,8 +29,10 @@ import {
     CreativeStoreConflict,
     getCreativeConversationContext,
     getCreativeRunByClientRequestId,
+    listCreativeAssetPage,
     listCreativeConversations,
     listCreativeMessages,
+    listRecentCreativeMediaAssetsForUser,
     listCreativeRunEvents,
     mutateCreativeRun,
     registerCreativeAssets,
@@ -99,6 +101,65 @@ describe("creative runtime file provider", () => {
 
         expect(second[0]).toMatchObject({ id: first[0].id, title: "更新标题" });
         expect((mocks.files.get("creative-runtime.json") as { assets: unknown[] }).assets).toHaveLength(1);
+    });
+
+    it("paginates assets for loaded message references and includes audio in the user overview", async () => {
+        await createBundle(run());
+        await registerCreativeAssets([
+            {
+                userId: "user",
+                conversationId: "conversation",
+                messageId: "assistant-message",
+                sourceRunId: "run-one",
+                sourceTaskId: "audio-task",
+                ordinal: 0,
+                type: "audio",
+                title: "旁白",
+                serverUrl: "/api/reference-assets/voice.mp3",
+                storageKind: "local",
+            },
+            {
+                userId: "user",
+                conversationId: "conversation",
+                messageId: "assistant-message",
+                sourceRunId: "run-one",
+                sourceTaskId: "image-task",
+                ordinal: 1,
+                type: "image",
+                title: "封面",
+                serverUrl: "/api/reference-assets/cover.png",
+                storageKind: "local",
+            },
+            {
+                userId: "other-user",
+                conversationId: "other-conversation",
+                sourceRunId: "other-run",
+                sourceTaskId: "other-audio",
+                ordinal: 0,
+                type: "audio",
+                title: "他人音频",
+                serverUrl: "/api/reference-assets/other.mp3",
+                storageKind: "local",
+            },
+        ]);
+
+        const first = await listCreativeAssetPage("conversation", "user", { runIds: ["run-one"], limit: 1 });
+        const second = await listCreativeAssetPage("conversation", "user", { runIds: ["run-one"], limit: 1, offset: 1 });
+        const recent = await listRecentCreativeMediaAssetsForUser("user", 10);
+
+        expect(first).toMatchObject({ hasMore: true, assets: [{ type: "image", sourceRunId: "run-one" }] });
+        expect(second).toMatchObject({ hasMore: false, assets: [{ type: "audio", sourceRunId: "run-one" }] });
+        expect(recent.map((asset) => asset.type).sort()).toEqual(["audio", "image"]);
+        expect(recent.some((asset) => asset.userId !== "user")).toBe(false);
+    });
+
+    it("applies the same scoped pagination filters to PostgreSQL", async () => {
+        mocks.databaseProvider = "postgres";
+        mocks.query.mockResolvedValue({ rows: [] });
+
+        await listCreativeAssetPage("conversation", "user", { ids: ["asset-one"], messageIds: ["message-one"], runIds: ["run-one"], limit: 25, offset: 50 });
+
+        expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("source_run_id = ANY"), ["conversation", "user", true, ["asset-one"], ["message-one"], ["run-one"], 26, 50]);
     });
 
     it("rejects foreign assets and immutable conversation scope changes", async () => {

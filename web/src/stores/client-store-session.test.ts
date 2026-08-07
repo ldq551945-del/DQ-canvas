@@ -118,6 +118,21 @@ describe("client store session isolation", () => {
         expect(useCanvasStore.getState().projects).toEqual([]);
     });
 
+    it("appends and de-duplicates the next Canvas summary page", async () => {
+        const first = summarizeCanvasProjectRecord(canvasProject("canvas-a", "画布 A"));
+        const second = summarizeCanvasProjectRecord(canvasProject("canvas-b", "画布 B"));
+        mocks.listCanvasProjectSummaries.mockResolvedValueOnce({ items: [first], total: 2, page: 1, pageSize: 1 }).mockResolvedValueOnce({ items: [first, second], total: 2, page: 2, pageSize: 1 });
+        useUserStore.getState().setUser(user("user-a"));
+
+        await useCanvasStore.getState().hydrate();
+        await useCanvasStore.getState().loadMore();
+
+        expect(mocks.listCanvasProjectSummaries).toHaveBeenNthCalledWith(1, { page: 1, pageSize: 12 });
+        expect(mocks.listCanvasProjectSummaries).toHaveBeenNthCalledWith(2, { page: 2, pageSize: 1 });
+        expect(useCanvasStore.getState().summaries).toEqual([first, second]);
+        expect(useCanvasStore.getState()).toMatchObject({ summaryTotal: 2, summaryPage: 2, summaryLoadingMore: false });
+    });
+
     it("loads only the requested Canvas detail and ignores a previous user's late response", async () => {
         const oldRequest = deferred<CanvasProject>();
         const freshProject = canvasProject("canvas-shared", "用户 B 画布");

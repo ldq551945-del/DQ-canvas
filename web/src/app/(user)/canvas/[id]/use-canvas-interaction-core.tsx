@@ -39,6 +39,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         viewport,
         setViewport,
         performanceMode,
+        lowPerformanceDevice,
         size,
         selectedNodeIds,
         setSelectedNodeIds,
@@ -300,7 +301,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
     );
 
     const visibleNodes = useMemo(() => {
-        const padding = shouldReduceCanvasEffects(performanceMode, nodes) ? 96 : 280;
+        const padding = shouldReduceCanvasEffects(performanceMode, nodes, lowPerformanceDevice) ? 96 : 280;
         const rect = containerRef.current?.getBoundingClientRect();
         const width = rect?.width || size.width;
         const height = rect?.height || size.height;
@@ -310,7 +311,7 @@ export function useCanvasInteractionCore({ state }: { state: CanvasPageState }) 
         const viewBottom = viewTop + height / viewport.k + padding * 2;
 
         return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
-    }, [collapsingBatchIds, nodes, performanceMode, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+    }, [collapsingBatchIds, lowPerformanceDevice, nodes, performanceMode, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;

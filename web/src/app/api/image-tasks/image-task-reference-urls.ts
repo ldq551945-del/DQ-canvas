@@ -2,6 +2,7 @@ import type { ImageTaskReference } from "@/lib/server/image-task-store";
 import { isRemoteMediaUrl } from "@/lib/browser-media-url";
 import { writeReferenceImageDataUrl } from "@/lib/server/reference-asset-store";
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
+import { normalizeHttpOrigin, requestPublicOrigin as resolveRequestPublicOrigin } from "@/lib/request-origin";
 
 export function referenceRequestUrl(reference: ImageTaskReference, origin = "") {
     return referenceRequestUrlCandidates(reference, origin)[0] || "";
@@ -60,24 +61,11 @@ export function normalizeReferenceRequestUrl(value: string, origin: string) {
 }
 
 export function requestPublicOrigin(request: Request) {
-    const configured = normalizePublicOrigin(process.env.NEXT_PUBLIC_SITE_URL || "");
-    if (configured) return configured;
-    const requestUrl = new URL(request.url);
-    const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
-    const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
-    const host = forwardedHost || request.headers.get("host") || requestUrl.host;
-    const proto = forwardedProto || requestUrl.protocol.replace(/:$/, "");
-    return normalizePublicOrigin(`${proto}://${host}`);
+    return resolveRequestPublicOrigin(request);
 }
 
 export function normalizePublicOrigin(value: string) {
-    try {
-        const url = new URL(value.trim().replace(/\/+$/, ""));
-        if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-        return url.origin;
-    } catch {
-        return "";
-    }
+    return normalizeHttpOrigin(value);
 }
 
 export function isExternalPublicOrigin(value: string) {

@@ -2,10 +2,12 @@ import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { audioTaskRefundIdempotencyKey } from "@/lib/server/audio-task-refund";
 import { getAudioTask, transitionAudioTask, updateAudioTask, type AudioTask } from "@/lib/server/audio-task-store";
-import { generationModelId } from "@/lib/server/generation-channel";
+import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
+import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { fetchInternalApi, isInternalApiBaseUrl } from "@/lib/server/internal-origin";
-import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
+import { workerHeaders } from "@/lib/server/maintenance-auth";
+import { detectSafeMediaBuffer, inspectSafeMediaBody } from "@/lib/server/media-content-validation";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderError, readProviderString, resolvedProviderCreatePaths } from "@/lib/server/provider-task-config";
 import { writePersistentMediaDataUrl } from "@/lib/server/reference-asset-store";
@@ -13,12 +15,15 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 
 export type AudioUpstreamStep =
     | { state: "pending"; status: string; upstreamTaskId: string; createPath: string; pointsCost?: number; pointsRecordId?: string }
     | { state: "result_ready"; status: string; resultUrl: string; pointsCost?: number; pointsRecordId?: string }
     | { state: "completed" }
     | { state: "failed"; status: string; error: string };
+
+const MAX_AUDIO_RESULT_BYTES = 30 * 1024 * 1024;
 
 export async function createAudioTaskUpstreamStep(task: AudioTask, origin: string, cookie = "", workerUserId = ""): Promise<AudioUpstreamStep> {
     const current = await getAudioTask(task.id);
@@ -60,7 +65,7 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
             if (billing.pointsRecordId) await updateAudioTask(task.id, { billing: { pointsCost: billing.pointsCost ?? 0, pointsRecordId: billing.pointsRecordId, refunded: false } });
             const contentType = response.headers.get("content-type")?.split(";")[0].toLowerCase() || "";
             if (!contentType.includes("json")) {
-                await persistAudioBytes(candidate, origin, Buffer.from(await response.arrayBuffer()), contentType);
+                await persistAudioResponse(candidate, origin, response);
                 await markAudioAttemptSucceeded(candidate, billing);
                 return { state: "completed" };
             }
@@ -115,6 +120,12 @@ export async function queryAudioTaskUpstreamStep(task: AudioTask, origin: string
     throw new Error(lastError || "音频任务查询失败");
 }
 
+export async function queryCancelledAudioTaskUpstreamStep(task: AudioTask, origin: string, cookie = "", workerUserId = "") {
+    if (!task.upstream?.id) return { state: "terminal" as const, status: "missing_upstream_id" };
+    const step = await queryAudioTaskUpstreamStep(task, origin, cookie, workerUserId);
+    return step.state === "pending" ? { state: "pending" as const, status: step.status } : { state: "terminal" as const, status: "status" in step ? step.status : "completed" };
+}
+
 export async function persistAudioTaskResult(task: AudioTask, origin: string, resultUrl: string, cookie = "", workerUserId = "") {
     if (/^data:audio\//i.test(resultUrl)) {
         const asset = await writePersistentMediaDataUrl(resultUrl, "audio", mediaContext(task));
@@ -123,7 +134,7 @@ export async function persistAudioTaskResult(task: AudioTask, origin: string, re
     const path = /^https?:\/\//i.test(resultUrl) ? `/_media?url=${encodeURIComponent(resultUrl)}` : `/${resultUrl.replace(/^\/+/, "")}`;
     const response = await providerFetch(task, origin, cookie, workerUserId, path, { signal: AbortSignal.timeout(resolveModelRequestTimeoutMs(task.config, "audio")) });
     if (!response.ok) throw new Error(readAudioError(await response.text(), response.status));
-    return persistAudioBytes(task, origin, Buffer.from(await response.arrayBuffer()), response.headers.get("content-type")?.split(";")[0] || "");
+    return persistAudioResponse(task, origin, response);
 }
 
 export async function markAudioTaskFailed(task: AudioTask, error: string) {
@@ -174,9 +185,50 @@ async function refundAudioCandidate(task: AudioTask) {
     await refundUserPoints(task.userId, generationModelId(task.config), billing.pointsCost, "audio", 1, audioTaskRefundIdempotencyKey({ id: task.id, attemptNo: task.attemptNo }), billing.pointsRecordId);
 }
 
-async function persistAudioBytes(task: AudioTask, origin: string, bytes: Buffer, responseMime: string) {
-    if (!bytes.length || bytes.length > 30 * 1024 * 1024) throw new Error("音频结果为空或超过 30MB 限制");
-    const mimeType = responseMime.startsWith("audio/") ? responseMime : mimeFromFormat(task.config.format || "mp3");
+async function persistAudioResponse(task: AudioTask, origin: string, response: Response) {
+    if (!response.body) throw new Error("音频结果为空");
+    const contentLength = Number(response.headers.get("content-length") || 0);
+    if (Number.isFinite(contentLength) && contentLength > MAX_AUDIO_RESULT_BYTES) {
+        await response.body.cancel("Audio result is too large").catch(() => undefined);
+        throw new Error("音频结果超过 30MB 限制");
+    }
+    const inspected = await inspectSafeMediaBody(response.body);
+    if (inspected.type !== "audio") {
+        await inspected.body.cancel("Unexpected audio result type").catch(() => undefined);
+        throw new Error("音频结果实际文件类型无效");
+    }
+    const bytes = await readLimitedAudioBytes(inspected.body);
+    return persistAudioBytes(task, origin, bytes);
+}
+
+async function readLimitedAudioBytes(body: ReadableStream<Uint8Array>) {
+    const reader = body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+        for (;;) {
+            const next = await reader.read();
+            if (next.done) break;
+            const chunk = Buffer.from(next.value);
+            total += chunk.length;
+            if (total > MAX_AUDIO_RESULT_BYTES) {
+                await reader.cancel("Audio result is too large").catch(() => undefined);
+                throw new Error("音频结果超过 30MB 限制");
+            }
+            chunks.push(chunk);
+        }
+    } catch (error) {
+        await reader.cancel(error).catch(() => undefined);
+        throw error;
+    }
+    return Buffer.concat(chunks, total);
+}
+
+async function persistAudioBytes(task: AudioTask, origin: string, bytes: Buffer) {
+    if (!bytes.length || bytes.length > MAX_AUDIO_RESULT_BYTES) throw new Error("音频结果为空或超过 30MB 限制");
+    const detected = await detectSafeMediaBuffer(bytes);
+    if (detected.type !== "audio") throw new Error("音频结果实际文件类型无效");
+    const mimeType = detected.mimeType;
     const asset = await writePersistentMediaDataUrl(`data:${mimeType};base64,${bytes.toString("base64")}`, "audio", mediaContext(task));
     return completeAudioTask(task, asset.url || `${origin}/api/reference-assets/${asset.token}`, mimeType);
 }
@@ -205,10 +257,24 @@ async function markAudioAttemptSucceeded(task: AudioTask, billing: { pointsCost?
 function providerFetch(task: AudioTask, origin: string, cookie: string, workerUserId: string, path: string, init: RequestInit) {
     const url = task.config.baseUrl.startsWith("/") ? `${origin}${task.config.baseUrl.replace(/\/+$/, "")}${path}` : `${task.config.baseUrl.replace(/\/+$/, "")}${path}`;
     const headers = new Headers(init.headers);
-    if (task.config.baseUrl.startsWith("/") && workerUserId) Object.entries(maintenanceWorkerHeaders(workerUserId)).forEach(([key, value]) => headers.set(key, value));
+    if (task.config.baseUrl.startsWith("/") && workerUserId) Object.entries(workerHeaders(workerUserId)).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
-    if (!task.config.baseUrl.startsWith("/")) headers.set(task.config.apiFormat === "gemini" ? "x-goog-api-key" : "authorization", task.config.apiFormat === "gemini" ? task.config.apiKey : `Bearer ${task.config.apiKey}`);
-    return (isInternalApiBaseUrl(task.config.baseUrl) ? fetchInternalApi : fetch)(url, { ...init, headers });
+    const internal = task.config.baseUrl.startsWith("/");
+    if (internal) Object.entries(systemAiBillingHeaders(generationModelId(task.config), undefined, task.config.model)).forEach(([key, value]) => headers.set(key, value));
+    const mediaUrl = internal ? mediaUrlFromProxyPath(path) : "";
+    const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
+    if (mediaUrl && channelId) Object.entries(generationMediaProxyHeaders({ userId: task.userId, taskType: "audio", taskId: task.id, channelId, upstreamModel: task.config.model, url: mediaUrl })).forEach(([key, value]) => headers.set(key, value));
+    if (!internal) headers.set(task.config.apiFormat === "gemini" ? "x-goog-api-key" : "authorization", task.config.apiFormat === "gemini" ? task.config.apiKey : `Bearer ${task.config.apiKey}`);
+    return isInternalApiBaseUrl(task.config.baseUrl) ? fetchInternalApi(url, { ...init, headers }) : fetchSafeOutboundUrl(url, { ...init, headers });
+}
+
+function mediaUrlFromProxyPath(path: string) {
+    try {
+        const parsed = new URL(path, "http://internal");
+        return parsed.pathname === "/_media" ? parsed.searchParams.get("url")?.trim() || "" : "";
+    } catch {
+        return "";
+    }
 }
 
 function readBilling(headers: Headers) {

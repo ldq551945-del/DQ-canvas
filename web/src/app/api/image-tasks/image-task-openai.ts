@@ -3,6 +3,7 @@ import { after, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { buildGrok2ApiImageRequest, grok2ApiImageResolution, isGrok2ApiImageModel } from "@/lib/grok2api";
 import { configureServerProxyDispatcher } from "@/lib/server/proxy-dispatcher";
 import { fetchInternalApi, isInternalApiBaseUrl, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveGeneratedMediaUrl } from "@/lib/media-url";
@@ -158,17 +159,26 @@ export async function runOpenAiImageTask(task: ImageTask, origin: string, public
         }
     } else {
         headers.set("content-type", "application/json");
+        const body = isGrok2ApiImageModel(config.model)
+            ? buildGrok2ApiImageRequest({
+                  model: config.model,
+                  prompt: withSystemPrompt(config, task.prompt),
+                  aspectRatio: imageRequestAspectRatio(config.size || ""),
+                  resolution: grok2ApiImageResolution(quality),
+                  responseFormat,
+              })
+            : {
+                  model: config.model,
+                  prompt: withSystemPrompt(config, task.prompt),
+                  n: 1,
+                  ...(quality ? { quality } : {}),
+                  ...(requestSize ? { size: requestSize } : {}),
+                  ...(allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
+              };
         response = await imageSubmissionFetch(config, url, {
             method: "POST",
             headers,
-            body: JSON.stringify({
-                model: config.model,
-                prompt: withSystemPrompt(config, task.prompt),
-                n: 1,
-                ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                ...(allowProtocolFallback ? { response_format: responseFormat, output_format: IMAGE_OUTPUT_FORMAT } : {}),
-            }),
+            body: JSON.stringify(body),
             cache: "no-store",
         });
         if (!response.ok) {
@@ -302,18 +312,27 @@ export async function runOpenAiImageTaskWithBase64Response(task: ImageTask, orig
     }
 
     headers.set("content-type", "application/json");
+    const body = isGrok2ApiImageModel(config.model)
+        ? buildGrok2ApiImageRequest({
+              model: config.model,
+              prompt: withSystemPrompt(config, task.prompt),
+              aspectRatio: imageRequestAspectRatio(config.size || ""),
+              resolution: grok2ApiImageResolution(quality),
+              responseFormat: "b64_json",
+          })
+        : {
+              model: config.model,
+              prompt: withSystemPrompt(config, task.prompt),
+              n: 1,
+              ...(quality ? { quality } : {}),
+              ...(requestSize ? { size: requestSize } : {}),
+              response_format: "b64_json" as const,
+              output_format: IMAGE_OUTPUT_FORMAT,
+          };
     const response = await imageSubmissionFetch(config, url, {
         method: "POST",
         headers,
-        body: JSON.stringify({
-            model: config.model,
-            prompt: withSystemPrompt(config, task.prompt),
-            n: 1,
-            ...(quality ? { quality } : {}),
-            ...(requestSize ? { size: requestSize } : {}),
-            response_format: "b64_json",
-            output_format: IMAGE_OUTPUT_FORMAT,
-        }),
+        body: JSON.stringify(body),
         cache: "no-store",
     });
     if (!response.ok) {
@@ -394,6 +413,18 @@ export async function buildJsonImageEditBodies(
     ).filter(Boolean);
     const mask = task.mask ? (publicUrlReferenceMode ? await publicImageReferenceRequestUrl(task.mask, origin, publicOrigin, referenceContext) : await inlineImageReference(task.mask, -1, origin, cookie, "mask.png")) : "";
     const prompt = imageUrlObjectOnlyMode ? buildSub2ApiImageEditPrompt(task.prompt, task.references) : buildImageReferencePromptText(task.prompt, task.references);
+    if (isGrok2ApiImageModel(task.config.model)) {
+        return [
+            buildGrok2ApiImageRequest({
+                model: task.config.model,
+                prompt: withSystemPrompt(task.config, prompt),
+                aspectRatio: imageRequestAspectRatio(task.config.size || ""),
+                resolution: grok2ApiImageResolution(quality),
+                responseFormat,
+                images,
+            }),
+        ];
+    }
     const base = {
         model: task.config.model,
         prompt: withSystemPrompt(task.config, prompt),

@@ -3,8 +3,9 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { validateComposeContracts, validateDocsComposeContracts } from "./compose-contract.mjs";
+import { validateContainerReleaseContracts } from "./container-release-contract.mjs";
 import { validateRenderBlueprint } from "./render-contract.mjs";
-import { prepareStandaloneAssets } from "./standalone-assets.mjs";
+import { prepareStandaloneAssets, validateStandaloneSharpRuntime } from "./standalone-assets.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(scriptDir, "..");
@@ -18,6 +19,8 @@ run("git", ["diff", "--check"], repoRoot, "检查空白和补丁格式");
 console.log("\n> Docker Compose 结构与部署边界检查");
 validateComposeContracts({ repoRoot });
 validateDocsComposeContracts({ repoRoot });
+console.log("\n> Container release supply-chain contract");
+validateContainerReleaseContracts({ repoRoot });
 console.log("\n> Render Blueprint 结构与运行边界检查");
 validateRenderBlueprint({ repoRoot });
 const trackedProtected = run("git", ["ls-files", ...protectedPaths], repoRoot, "检查数据库和构建产物未被跟踪", { capture: true });
@@ -40,6 +43,7 @@ run(pnpm, ["run", "build"], webRoot, "Next.js 低内存构建", {
 
 try {
     const artifacts = await prepareStandaloneAssets({ webRoot, distDir: buildDistDir });
+    validateStandaloneSharpRuntime(artifacts.serverEntry);
     console.log(`\n> Standalone 产物完整：${artifacts.staticFiles} 个静态文件，${artifacts.publicFiles} 个公开资源`);
 } catch (error) {
     fail(`Standalone 产物不完整：${error instanceof Error ? error.message : String(error)}`);

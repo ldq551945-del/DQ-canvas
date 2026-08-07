@@ -50,8 +50,13 @@ describe("audio task cancellation refund", () => {
         const response = await PATCH(new Request("http://localhost/api/audio-tasks/audio-one", { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) }), { params: Promise.resolve({ id: "audio-one" }) });
 
         expect(response.status).toBe(200);
-        expect(mocks.transitionAudioTask).toHaveBeenCalledWith(task, ["pending", "running"], expect.objectContaining({ status: "cancelled", billing: { pointsCost: 8, pointsRecordId: "points-one", refunded: false } }));
-        expect(mocks.refundAudioTask).toHaveBeenCalledWith(expect.objectContaining({ status: "cancelled", billing: { pointsCost: 8, pointsRecordId: "points-one", refunded: false } }));
-        expect((await response.json()).task.billing.refunded).toBe(true);
+        expect(mocks.transitionAudioTask).toHaveBeenCalledWith(
+            task,
+            ["pending", "running"],
+            expect.objectContaining({ status: "cancelled", billing: { pointsCost: 8, pointsRecordId: "points-one", refunded: false } }),
+            expect.objectContaining({ executionPhase: "cancel_requested" }),
+        );
+        expect(mocks.refundAudioTask).not.toHaveBeenCalled();
+        expect((await response.json()).task.billing.refunded).toBe(false);
     });
 });

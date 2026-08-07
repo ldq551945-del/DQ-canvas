@@ -1,6 +1,8 @@
 import sharp from "sharp";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutboundUrl: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
+
 import { createPublicPromptImage, normalizePublicPromptImagePath } from "./public-prompt-image";
 
 describe("public prompt images", () => {

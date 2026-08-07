@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GLOBAL_AIOPC_PRESETS } from "@/lib/globalaiopc-catalog";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
@@ -13,9 +13,15 @@ import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 describe("GlobalAiOpc media protocol matrix over TCP fixtures", () => {
     let close: (() => Promise<void>) | undefined;
 
+    beforeEach(() => {
+        vi.stubEnv("DQ_ALLOW_PRIVATE_UPSTREAMS", "1");
+        vi.stubEnv("DQ_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1");
+    });
+
     afterEach(async () => {
         await close?.();
         close = undefined;
+        vi.unstubAllEnvs();
     });
 
     it("creates and queries every registered image and video preset exactly once", async () => {

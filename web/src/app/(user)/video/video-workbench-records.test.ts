@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AiConfig } from "@/stores/use-config-store";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
-import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, normalizeVideoSeconds, resultsFromLog, snapshotFromLog } from "./video-workbench-records";
+import { buildLogFromVideoResults, buildVideoConfig, filterAudioReferencesByDuration, generatedVideoFallback, isVideoWorkbenchRecord, normalizeVideoSeconds, resultsFromLog, snapshotFromLog } from "./video-workbench-records";
 
 describe("video workbench records", () => {
     it("restores success, failure, and pending results from a log", () => {
@@ -78,6 +78,12 @@ describe("video workbench records", () => {
     it("prefers remote and server fallbacks over blob URLs", () => {
         expect(generatedVideoFallback({ url: "blob:local", remoteUrl: "https://cdn.example.com/video.mp4" })).toBe("https://cdn.example.com/video.mp4");
         expect(generatedVideoFallback({ url: "blob:local", serverUrl: "/api/generation-log-assets/video.mp4" })).toBe("/api/generation-log-assets/video.mp4");
+    });
+
+    it("restores both draft-backed and standalone server task records", () => {
+        expect(isVideoWorkbenchRecord({ id: "video-workbench:draft-1" })).toBe(true);
+        expect(isVideoWorkbenchRecord({ id: "video-task:task-1" })).toBe(true);
+        expect(isVideoWorkbenchRecord({ id: "image-task:task-1" })).toBe(false);
     });
 });
 

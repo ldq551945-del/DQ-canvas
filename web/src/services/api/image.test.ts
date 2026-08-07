@@ -1,29 +1,32 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: vi.fn(), syncUserPointsFromHeaders: vi.fn() }));
+vi.mock("@/services/api/points", () => ({ refreshUserPointsIfSystem: vi.fn(async () => undefined), syncUserPointsFromHeaders: vi.fn() }));
+vi.mock("@/services/image-storage", () => ({ imageToDataUrl: vi.fn() }));
 
 import { waitForImageGenerationTask } from "./image";
-import type { AiConfig } from "@/stores/use-config-store";
 
-describe("图片任务轮询", () => {
+describe("image API cancellation", () => {
     afterEach(() => {
+        vi.useRealTimers();
         vi.unstubAllGlobals();
     });
 
-    it("uses the server error message when a restored task has expired", async () => {
-        vi.stubGlobal(
-            "fetch",
-            vi.fn(async () => Response.json({ error: "图片任务不存在" }, { status: 404 })),
-        );
-
-        await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "expired-task", kind: "generation", model: "image-model" })).rejects.toThrow("图片任务不存在");
-    });
-
-    it("stops polling when the upstream submission needs manual review", async () => {
-        const fetchMock = vi.fn(async () => Response.json({ task: { id: "review-task", kind: "generation", model: "image-model", status: "running", needsReview: true } }));
+    it("continues polling after cancellation is requested and only settles on the confirmed terminal state", async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi
+            .fn()
+            .mockResolvedValueOnce(json({ task: { id: "image-cancelled", status: "cancelled", executionPhase: "cancel_requested", message: "已提交取消，正在确认上游状态" } }))
+            .mockResolvedValueOnce(json({ task: { id: "image-cancelled", status: "cancelled", executionPhase: "completed", message: "任务已取消" } }));
         vi.stubGlobal("fetch", fetchMock);
 
-        await expect(waitForImageGenerationTask({ apiSource: "system" } as AiConfig, { id: "review-task", kind: "generation", model: "image-model" })).rejects.toThrow("上游创建状态待确认");
-        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const promise = waitForImageGenerationTask({ apiSource: "custom" } as never, { id: "image-cancelled", kind: "generation", model: "image-v1" });
+        const rejection = expect(promise).rejects.toThrow();
+        await vi.advanceTimersByTimeAsync(1800);
+        await rejection;
+        expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 });
+
+function json(value: unknown) {
+    return new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
+}

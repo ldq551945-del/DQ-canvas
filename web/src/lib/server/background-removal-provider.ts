@@ -3,6 +3,7 @@ import sharp from "sharp";
 import { normalizeBackgroundRemovalOptions, type BackgroundRemovalOptionsV1 } from "@/lib/background-removal-options";
 import { prepareBackgroundRemovalImage } from "@/lib/server/background-removal-image-preprocessor";
 import { BACKGROUND_REMOVAL_MAX_BYTES, BACKGROUND_REMOVAL_MAX_PIXELS } from "@/lib/server/registered-media-reader";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 
 export class BackgroundRemovalProviderError extends Error {
     constructor(
@@ -44,18 +45,22 @@ export async function removeBackgroundWithRembg(input: { taskId: string; bytes: 
     const abort = () => controller.abort();
     input.signal?.addEventListener("abort", abort, { once: true });
     try {
-        const response = await fetch(`${baseUrl}/v1/remove`, {
-            method: "POST",
-            headers: {
-                "content-type": prepared.mimeType,
-                "x-dq-rembg-task-id": taskId,
-                "x-dq-rembg-options": JSON.stringify(options),
-                ...(process.env.DQ_REMBG_INTERNAL_TOKEN?.trim() ? { authorization: `Bearer ${process.env.DQ_REMBG_INTERNAL_TOKEN.trim()}` } : {}),
+        const response = await fetchSafeOutboundUrl(
+            `${baseUrl}/v1/remove`,
+            {
+                method: "POST",
+                headers: {
+                    "content-type": prepared.mimeType,
+                    "x-dq-rembg-task-id": taskId,
+                    "x-dq-rembg-options": JSON.stringify(options),
+                    ...(process.env.DQ_REMBG_INTERNAL_TOKEN?.trim() ? { authorization: `Bearer ${process.env.DQ_REMBG_INTERNAL_TOKEN.trim()}` } : {}),
+                },
+                body: prepared.bytes as unknown as BodyInit,
+                signal: controller.signal,
+                cache: "no-store",
             },
-            body: prepared.bytes as unknown as BodyInit,
-            signal: controller.signal,
-            cache: "no-store",
-        }).catch((error) => {
+            rembgOutboundOptions(baseUrl),
+        ).catch((error) => {
             console.warn("Background removal provider request failed", {
                 baseUrl,
                 error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
@@ -99,12 +104,16 @@ export async function cancelBackgroundRemovalWithRembg(taskId: string) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), configuredCancellationTimeoutMs());
     try {
-        const response = await fetch(`${baseUrl}/v1/tasks/${encodeURIComponent(normalizedTaskId)}`, {
-            method: "DELETE",
-            headers: process.env.DQ_REMBG_INTERNAL_TOKEN?.trim() ? { authorization: `Bearer ${process.env.DQ_REMBG_INTERNAL_TOKEN.trim()}` } : undefined,
-            signal: controller.signal,
-            cache: "no-store",
-        }).catch((error) => {
+        const response = await fetchSafeOutboundUrl(
+            `${baseUrl}/v1/tasks/${encodeURIComponent(normalizedTaskId)}`,
+            {
+                method: "DELETE",
+                headers: process.env.DQ_REMBG_INTERNAL_TOKEN?.trim() ? { authorization: `Bearer ${process.env.DQ_REMBG_INTERNAL_TOKEN.trim()}` } : undefined,
+                signal: controller.signal,
+                cache: "no-store",
+            },
+            rembgOutboundOptions(baseUrl),
+        ).catch((error) => {
             console.warn("Background removal cancellation request failed", {
                 taskId: normalizedTaskId,
                 error: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
@@ -135,6 +144,10 @@ function rembgBaseUrl() {
     }
 }
 
+function rembgOutboundOptions(baseUrl: string) {
+    return { allowPrivateUpstreams: false, privateHostnames: [new URL(baseUrl).hostname] };
+}
+
 function configuredTimeoutMs() {
     const explicit = Number(process.env.DQ_REMBG_TIMEOUT_MS);
     if (Number.isFinite(explicit) && explicit > 0) return Math.min(5 * 60_000, Math.max(5_000, Math.floor(explicit)));
@@ -151,7 +164,10 @@ function configuredCancellationTimeoutMs() {
 
 async function readResponseBytes(response: Response, maxBytes: number) {
     const declaredLength = Number(response.headers.get("content-length") || 0);
-    if (declaredLength > maxBytes) throw new BackgroundRemovalProviderError("抠图输出超过大小限制", 502, false);
+    if (declaredLength > maxBytes) {
+        await response.body?.cancel("Background removal output is too large").catch(() => undefined);
+        throw new BackgroundRemovalProviderError("抠图输出超过大小限制", 502, false);
+    }
     if (!response.body) {
         const bytes = Buffer.from(await response.arrayBuffer());
         if (bytes.length > maxBytes) throw new BackgroundRemovalProviderError("抠图输出超过大小限制", 502, false);

@@ -46,6 +46,7 @@ type ModelsPayload = {
     globalAiOpcPresets?: unknown;
     createPath?: unknown;
     modelCatalogPaths?: unknown;
+    modelCatalogCapability?: unknown;
     configuredModels?: unknown;
     modelCapabilities?: unknown;
     modelConfigs?: unknown;
@@ -87,6 +88,7 @@ export async function POST(request: Request) {
     const configuredCatalog = configuredModelCatalog(configuredModels, configuredCapabilities);
     const configuredConfigs = normalizeModelConfigs(body.modelConfigs !== undefined ? body.modelConfigs : savedChannel?.advancedConfig?.modelConfigs);
     const operationConfigs = body.operationConfigs !== undefined ? body.operationConfigs : savedChannel?.advancedConfig?.operationConfigs;
+    const modelCatalogCapability = readModelCatalogCapability(body.modelCatalogCapability ?? savedChannel?.advancedConfig?.modelCatalogCapability);
     const protocol = (typeof body.protocol === "string" ? body.protocol : advancedConfig.protocol || "auto") as SystemChannelProtocol;
     const protocolDefinition = channelProtocolDefinition(protocol);
     advancedConfig.protocol = protocolDefinition.id;
@@ -103,12 +105,7 @@ export async function POST(request: Request) {
             }),
         );
         const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs), builtInConfigs);
-        return NextResponse.json({
-            models: merged.map((entry) => entry.id),
-            modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
-            modelConfigs,
-            discoveredCount: builtInCatalog.length,
-            totalCount: merged.length,
+        return modelCatalogResponse(merged, modelConfigs, builtInCatalog, modelCatalogCapability, {
             catalogSupported: false,
             provider: protocol,
         });
@@ -116,16 +113,12 @@ export async function POST(request: Request) {
 
     const globalAiOpcPresets = resolveGlobalAiOpcCatalogPresets(baseUrl, advancedConfig);
     if (globalAiOpcPresets.length) {
-        const selection = buildGlobalAiOpcSelection(globalAiOpcPresets.map((preset) => preset.id));
+        const selectedPresets = modelCatalogCapability ? globalAiOpcPresets.filter((preset) => preset.capability === modelCatalogCapability) : globalAiOpcPresets;
+        const selection = buildGlobalAiOpcSelection(selectedPresets.map((preset) => preset.id));
         const discovered = selection.models.map((id) => ({ id, capability: getGlobalAiOpcPresetForModel(id)?.capability || inferModelCapability(id), source: "official" as const }));
         const merged = mergeModelCatalogEntries(configuredCatalog, discovered);
         const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs));
-        return NextResponse.json({
-            models: merged.map((entry) => entry.id),
-            modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
-            modelConfigs,
-            discoveredCount: discovered.length,
-            totalCount: merged.length,
+        return modelCatalogResponse(merged, modelConfigs, discovered, modelCatalogCapability, {
             globalAiOpcPresets: selection.presetIds,
         });
     }
@@ -134,7 +127,8 @@ export async function POST(request: Request) {
     const modelCatalogUrls = buildModelCatalogUrls(baseUrl, apiFormat, body.modelCatalogPaths ?? savedChannel?.advancedConfig?.modelCatalogPaths ?? protocolDefinition.modelCatalogPaths);
     if (!modelCatalogUrls.length || !(await Promise.all(modelCatalogUrls.map((url) => isSafeOutboundUrl(url)))).every(Boolean)) return NextResponse.json({ error: "模型目录地址不允许访问内网、保留地址或其他域名" }, { status: 400 });
 
-    const cooldownKey = `${currentUser.id}:${baseUrl.toLowerCase()}`;
+    const channelScope = typeof body.channelId === "string" ? body.channelId.trim().slice(0, 160) : "";
+    const cooldownKey = `${currentUser.id}:${channelScope || baseUrl.toLowerCase()}:${modelCatalogCapability || "all"}`;
     const waitMs = (modelFetchCooldowns.get(cooldownKey) || 0) - Date.now();
     if (waitMs > 0) return NextResponse.json({ error: `拉取模型过于频繁，请 ${Math.ceil(waitMs / 1000)} 秒后再试` }, { status: 429 });
     modelFetchCooldowns.set(cooldownKey, Date.now() + MODEL_FETCH_COOLDOWN_MS);
@@ -162,9 +156,9 @@ export async function POST(request: Request) {
                     return NextResponse.json({ error: sanitizeProviderMessage(readProviderError(payload) || payload.msg || payload.error?.message || `拉取模型失败：${response.status}`, [apiKey]) }, { status: 502 });
                 }
                 catalogSucceeded = true;
-                const pageCatalog = parseModelCatalog(payload);
+                const pageCatalog = parseModelCatalog(payload, "provider", protocol);
                 providerCatalog.splice(0, providerCatalog.length, ...mergeModelCatalogEntries(providerCatalog, pageCatalog));
-                providerConfigs = { ...providerConfigs, ...parseModelConfigs(payload) };
+                providerConfigs = { ...providerConfigs, ...parseModelConfigs(payload, protocol) };
                 nextUrl = nextModelsPageUrl(nextUrl, payload, apiFormat, pageCatalog.at(-1)?.id || providerCatalog.at(-1)?.id || "");
             }
         }
@@ -182,19 +176,17 @@ export async function POST(request: Request) {
         const strictConfigs = Object.fromEntries(
             merged.flatMap((entry) => {
                 if (!protocolDefinition.strict) return [];
-                const configuredProtocol = configuredConfigs[normalizeModelId(entry.id)]?.protocol;
+                const modelKey = normalizeModelId(entry.id);
+                const configuredProtocol = configuredConfigs[modelKey]?.protocol;
+                const providerProtocol = providerConfigs[modelKey]?.protocol;
                 if (configuredProtocol && configuredProtocol !== protocol) return [];
+                if (providerProtocol && providerProtocol !== protocol) return [];
                 const config = protocolModelConfig(protocol, entry.capability);
-                return config ? [[normalizeModelId(entry.id), config] as const] : [];
+                return config ? [[modelKey, config] as const] : [];
             }),
         );
         const modelConfigs = mergeModelConfigs(merged, configuredConfigs, modelConfigsFromOperations(merged, operationConfigs), providerConfigs, officialModelConfigs(baseUrl), strictConfigs);
-        return NextResponse.json({
-            models: merged.map((entry) => entry.id),
-            modelCapabilities: modelCapabilitiesRecord(merged, modelConfigs),
-            modelConfigs,
-            discoveredCount: discovered.length,
-            totalCount: merged.length,
+        return modelCatalogResponse(merged, modelConfigs, discovered, modelCatalogCapability, {
             catalogSupported: catalogSucceeded,
             ...(!catalogSucceeded ? { warning: "上游未公开模型目录，已保留现有手工模型。" } : {}),
             ...(agnes ? { provider: "agnes", recommendedConfig: AGNES_RECOMMENDED_CONFIG } : {}),
@@ -204,4 +196,34 @@ export async function POST(request: Request) {
         console.error("Admin model fetch failed", sanitizeProviderMessage(error, [apiKey]));
         return NextResponse.json({ error: isProviderTimeoutError(error) ? "拉取模型超时，请稍后重试" : "拉取模型失败，请检查接口地址和网络" }, { status: 502 });
     }
+}
+
+function modelCatalogResponse(
+    catalog: ReturnType<typeof parseModelCatalog>,
+    modelConfigs: ReturnType<typeof normalizeModelConfigs>,
+    discovered: ReturnType<typeof parseModelCatalog>,
+    capability: ReturnType<typeof readModelCatalogCapability>,
+    extra: Record<string, unknown>,
+) {
+    const filteredCatalog = capability ? catalog.filter((entry) => entry.capability === capability) : catalog;
+    const filteredDiscovered = capability ? discovered.filter((entry) => entry.capability === capability) : discovered;
+    if (capability && !filteredCatalog.length) return NextResponse.json({ error: `上游目录中没有识别到${modelCapabilityLabel(capability)}模型` }, { status: 422 });
+    const modelKeys = new Set(filteredCatalog.map((entry) => normalizeModelId(entry.id)));
+    const filteredConfigs = Object.fromEntries(Object.entries(modelConfigs).filter(([model]) => modelKeys.has(normalizeModelId(model))));
+    return NextResponse.json({
+        models: filteredCatalog.map((entry) => entry.id),
+        modelCapabilities: modelCapabilitiesRecord(filteredCatalog, filteredConfigs),
+        modelConfigs: filteredConfigs,
+        discoveredCount: filteredDiscovered.length,
+        totalCount: filteredCatalog.length,
+        ...extra,
+    });
+}
+
+function readModelCatalogCapability(value: unknown) {
+    return value === "text" || value === "image" || value === "video" || value === "audio" ? value : undefined;
+}
+
+function modelCapabilityLabel(capability: NonNullable<ReturnType<typeof readModelCatalogCapability>>) {
+    return capability === "text" ? "文本" : capability === "image" ? "图片" : capability === "video" ? "视频" : "音频";
 }

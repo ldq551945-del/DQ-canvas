@@ -27,7 +27,8 @@ function rewriteInternalAbsoluteMediaUrl(mediaUrl: string, baseUrl?: string | nu
         const parsed = new URL(mediaUrl);
         if (!isInternalMediaHost(parsed.hostname)) return mediaUrl;
         parsed.protocol = base.protocol;
-        parsed.host = base.host;
+        parsed.hostname = base.hostname;
+        parsed.port = base.port;
         return parsed.toString();
     } catch {
         return mediaUrl;
@@ -36,7 +37,7 @@ function rewriteInternalAbsoluteMediaUrl(mediaUrl: string, baseUrl?: string | nu
 
 function isInternalMediaHost(hostname: string) {
     const host = hostname.toLowerCase();
-    return !host || !host.includes(".") || host.endsWith(".internal") || host.endsWith(".local");
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || !host || !host.includes(".") || host.endsWith(".internal") || host.endsWith(".local");
 }
 
 function parseBaseUrl(baseUrl?: string | null) {

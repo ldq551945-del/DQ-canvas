@@ -1,13 +1,13 @@
 "use client";
 
 import { App, Button, Empty, Popover, QRCode, Spin, Tag } from "antd";
-import { ArrowLeft, Check, CheckCircle2, ChevronDown, Copy, CreditCard, ExternalLink, FileText, Landmark, LockKeyhole, Minus, Plus, QrCode, ReceiptText, RefreshCw, ShieldCheck, TicketPercent, WalletCards } from "lucide-react";
+import { ArrowLeft, Check, CheckCircle2, ChevronDown, CircleAlert, Copy, CreditCard, ExternalLink, FileText, Landmark, LockKeyhole, Minus, Plus, QrCode, ReceiptText, RefreshCw, ShieldCheck, TicketPercent, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CreditSymbol, formatCreditAmount } from "@/constant/credits";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { createBillingOrder, createPaymentCheckout, listBillingCoupons, listBillingProducts, quoteBillingOrder, type BillingProduct, type BillingQuote, type PaymentCheckout, type UserCoupon } from "@/services/api/billing";
+import { createBillingOrder, createPaymentCheckout, listBillingCoupons, listBillingProducts, quoteBillingOrder, type BillingOrder, type BillingProduct, type BillingQuote, type PaymentCheckout, type UserCoupon } from "@/services/api/billing";
 import { openPaymentCheckoutWindow } from "./payment-checkout-window";
 
 const providers = [
@@ -36,6 +36,9 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [checkout, setCheckout] = useState<PaymentCheckout | null>(null);
+    const [createdOrder, setCreatedOrder] = useState<BillingOrder | null>(null);
+    const [checkoutError, setCheckoutError] = useState("");
+    const submitLock = useRef(false);
     const quoteRequest = useRef(0);
     const availableProviders = useMemo(() => providers.filter((item) => paymentProviders.includes(item.value)), [paymentProviders]);
     const selectedCoupon = useMemo(() => coupons.find((coupon) => coupon.id === selectedCouponId), [coupons, selectedCouponId]);
@@ -111,16 +114,28 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
     };
 
     const submit = async () => {
-        if (!product || !provider) return;
+        if (!product || !provider || submitLock.current) return;
+        submitLock.current = true;
         setSubmitting(true);
+        setCheckoutError("");
+        let order = createdOrder;
         try {
-            const order = await createBillingOrder({ productId: product.id, provider, quantity, userCouponId: selectedCouponId || undefined });
-            const result = await createPaymentCheckout(order.order.id, { provider });
+            if (!order) {
+                const created = await createBillingOrder({ productId: product.id, provider, quantity, userCouponId: selectedCouponId || undefined });
+                order = created.order;
+                setCreatedOrder(order);
+            }
+            const result = await createPaymentCheckout(order.id, { provider: order.provider });
             setCheckout(result.checkout);
         } catch (error) {
-            message.error(error instanceof Error ? error.message : "创建支付订单失败");
-            await loadCoupons();
+            const messageText = error instanceof Error ? error.message : "创建支付订单失败";
+            if (order) setCheckoutError(messageText);
+            else {
+                message.error(messageText);
+                await loadCoupons();
+            }
         } finally {
+            submitLock.current = false;
             setSubmitting(false);
         }
     };
@@ -238,7 +253,7 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
                                 <div className="mt-0.5 text-xl font-semibold tabular-nums text-stone-950 dark:text-white">¥ {formatYuan(pricing.payableAmountCents)}</div>
                             </div>
                         </div>
-                        {!checkout ? (
+                        {!createdOrder && !checkout ? (
                             <>
                                 <div>
                                     <div className="text-[11px] font-semibold tracking-[0.18em] text-stone-400 dark:text-stone-500">PAYMENT</div>
@@ -363,31 +378,68 @@ export function BillingCheckoutPage({ productId }: { productId: string }) {
                                     <div className="mt-4 border-t border-dashed border-stone-200 pt-4 sm:mt-7 sm:pt-6 dark:border-stone-800">
                                         <Button block type="primary" size="large" className="profile-primary-button !h-10 sm:!h-12" loading={submitting} disabled={!provider || quoteLoading || Boolean(quoteError)} onClick={() => void submit()}>
                                             <span className="inline-flex items-center gap-2">
-                                                <LockKeyhole className="size-4" /> 确认订单并继续支付
+                                                <LockKeyhole className="size-4" /> {submitting ? "正在创建订单..." : "确认订单并继续支付"}
                                             </span>
                                         </Button>
                                         <p className="mt-3 text-center text-xs leading-5 text-stone-500 dark:text-stone-400">仅创建支付订单，支付成功后才会开通权益。</p>
                                     </div>
                                 </div>
                             </>
-                        ) : (
+                        ) : checkout ? (
                             <div className="flex min-h-36 flex-col items-center justify-center text-center sm:min-h-[30rem]">
                                 <span className="grid size-16 place-items-center rounded-2xl bg-[#eef2f7] text-[#52627a] dark:bg-[#66758e]/15 dark:text-[#d8dee8]">
                                     <CheckCircle2 className="size-8" />
                                 </span>
-                                <h2 className="mt-5 text-2xl font-semibold">支付订单已创建</h2>
+                                <h2 className="mt-5 text-2xl font-semibold">{checkout.kind === "manual" ? "等待人工确认" : "等待支付"}</h2>
                                 <p className="mt-2 text-sm text-stone-500 dark:text-stone-400">订单号 {checkout.orderNo}</p>
                                 {checkout.qrContent ? <QRCode className="mt-6" value={checkout.qrContent} size={190} /> : null}
+                                <p className="mt-3 max-w-md text-xs leading-5 text-stone-500 dark:text-stone-400">
+                                    {checkout.kind === "manual" ? "管理员确认到账后，套餐权益和积分会自动更新。" : checkout.qrContent ? "请使用对应支付应用扫码完成支付。" : "完成支付后返回此页面查询订单状态。"}
+                                </p>
                                 <div className="mt-7 grid w-full max-w-md gap-3 sm:grid-cols-2">
                                     <Button icon={<Copy className="size-4" />} onClick={() => copyText(checkout.qrContent || checkout.url || checkout.orderNo, "支付信息已复制")}>
                                         复制支付信息
                                     </Button>
-                                    <Button type="primary" className="profile-primary-button" icon={<ExternalLink className="size-4" />} onClick={openCheckout}>
-                                        {checkout.kind === "manual" ? "查看订单说明" : "前往支付"}
+                                    {checkout.kind === "manual" ? (
+                                        <Link href={`/billing/success?orderId=${encodeURIComponent(checkout.orderId)}`} className="block">
+                                            <Button block type="primary" className="profile-primary-button" icon={<ReceiptText className="size-4" />}>
+                                                查看确认状态
+                                            </Button>
+                                        </Link>
+                                    ) : (
+                                        <Button type="primary" className="profile-primary-button" icon={<ExternalLink className="size-4" />} onClick={openCheckout}>
+                                            前往支付
+                                        </Button>
+                                    )}
+                                </div>
+                                <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm font-medium">
+                                    <Link href={`/billing/success?orderId=${encodeURIComponent(checkout.orderId)}`} className="text-stone-500 hover:text-stone-950 dark:text-stone-400 dark:hover:text-white">
+                                        查询支付状态
+                                    </Link>
+                                    <Link href="/profile?section=orders" className="text-stone-500 hover:text-stone-950 dark:text-stone-400 dark:hover:text-white">
+                                        查看订单记录
+                                    </Link>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex min-h-36 flex-col items-center justify-center text-center sm:min-h-[30rem]">
+                                <span className={`grid size-16 place-items-center rounded-2xl ${checkoutError ? "bg-rose-50 text-rose-600 dark:bg-rose-400/10 dark:text-rose-300" : "bg-amber-50 text-amber-600 dark:bg-amber-400/10 dark:text-amber-300"}`}>
+                                    {checkoutError ? <CircleAlert className="size-8" /> : <Spin />}
+                                </span>
+                                <h2 className="mt-5 text-2xl font-semibold">{checkoutError ? "支付参数创建失败" : "正在准备支付"}</h2>
+                                <p className="mt-2 max-w-md text-sm leading-6 text-stone-500 dark:text-stone-400">{checkoutError || "订单已创建，正在取得支付渠道信息，请稍候。"}</p>
+                                <div className="mt-7 grid w-full max-w-md gap-3 sm:grid-cols-2">
+                                    <Button type="primary" className="profile-primary-button" loading={submitting} icon={<RefreshCw className="size-4" />} onClick={() => void submit()}>
+                                        {checkoutError ? "重试支付准备" : "继续等待"}
                                     </Button>
+                                    <Link href={`/billing/cancel?orderId=${encodeURIComponent(createdOrder!.id)}`} className="block">
+                                        <Button block icon={<ArrowLeft className="size-4" />}>
+                                            取消订单
+                                        </Button>
+                                    </Link>
                                 </div>
                                 <Link href="/profile?section=orders" className="mt-5 text-sm font-medium text-stone-500 hover:text-stone-950 dark:text-stone-400 dark:hover:text-white">
-                                    返回个人中心查看订单
+                                    查看订单记录
                                 </Link>
                             </div>
                         )}

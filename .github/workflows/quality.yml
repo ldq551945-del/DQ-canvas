@@ -6,6 +6,7 @@ on:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
@@ -13,18 +14,32 @@ permissions:
 jobs:
   web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.6-alpine@sha256:1d04b9ba1d4996401f2552b51beda8187f175c0645c091e4781134fc9c9a3eef
+        env:
+          POSTGRES_DB: dq_e2e
+          POSTGRES_USER: dq
+          POSTGRES_PASSWORD: dq-e2e-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dq -d dq_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     defaults:
       run:
         working-directory: web
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 10.34.5
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -33,16 +48,40 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Dependency audit
         run: pnpm audit --audit-level moderate
+      - name: ESLint
+        run: pnpm run lint
       - name: Type check
         run: pnpm run typecheck
       - name: Unit tests
         run: pnpm test
+      - name: PostgreSQL integration
+        run: pnpm exec vitest run src/lib/server/database/work-community-postgres.test.ts
+        env:
+          DQ_DATABASE_PROVIDER: postgres
+          DATABASE_URL: postgres://dq:dq-e2e-password@127.0.0.1:5432/dq_e2e
+          RUN_WORK_COMMUNITY_POSTGRES_INTEGRATION: "1"
       - name: Format check
         run: pnpm run format:check
       - name: Production build
         run: pnpm run build
         env:
           NEXT_SKIP_BUILD_TYPECHECK: "1"
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser E2E
+        run: pnpm run e2e
+        env:
+          DQ_E2E_DATABASE_URL: postgres://dq:dq-e2e-password@127.0.0.1:5432/dq_e2e
+      - name: Upload browser artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: web-playwright-report
+          path: |
+            web/playwright-report
+            web/.e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
 
   docs:
     runs-on: ubuntu-latest
@@ -51,13 +90,13 @@ jobs:
         working-directory: docs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 10.34.5
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -70,3 +109,24 @@ jobs:
         run: pnpm run types:check
       - name: Production build
         run: pnpm run build
+
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Scan committed secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87 # v3
+        with:
+          languages: javascript-typescript
+      - name: Analyze JavaScript and TypeScript
+        uses: github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87 # v3

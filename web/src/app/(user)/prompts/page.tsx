@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderPlus, RotateCcw, Search } from "lucide-react";
+import { ArrowRight, FolderPlus, RotateCcw, Search } from "lucide-react";
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { App, Button, Input, Pagination, Select, Spin } from "antd";
 
@@ -144,7 +144,33 @@ export default function PromptsPage() {
                                 ))}
                             </div>
                         ) : null}
-                        {!query.isLoading && promptItems.length === 0 ? <CompactEmptyState title="没有找到匹配的提示词" description="尝试清除搜索词，或切换分类和标签。" /> : null}
+                        {!query.isLoading && query.isError ? (
+                            <CompactEmptyState
+                                title="提示词加载失败"
+                                description={query.error instanceof Error ? query.error.message : "暂时无法获取公共提示词。"}
+                                action={
+                                    <Button size="small" type="primary" icon={<RotateCcw className="size-3.5" />} loading={query.isFetching} onClick={() => void query.refetch()}>
+                                        重新加载
+                                    </Button>
+                                }
+                            />
+                        ) : !query.isLoading && promptItems.length === 0 ? (
+                            <CompactEmptyState
+                                title={hasFilters ? "没有找到匹配的提示词" : "暂无公共提示词"}
+                                description={hasFilters ? "尝试清除搜索词，或切换分类和标签。" : "先从创作 Agent 开始，也可以在这里保存公共提示词。"}
+                                action={
+                                    hasFilters ? (
+                                        <Button size="small" type="primary" icon={<RotateCcw className="size-3.5" />} onClick={clearFilters}>
+                                            清除筛选
+                                        </Button>
+                                    ) : (
+                                        <Button type="primary" size="small" href="/create" icon={<ArrowRight className="size-3.5" />}>
+                                            开始创作
+                                        </Button>
+                                    )
+                                }
+                            />
+                        ) : null}
                         {totalPrompts > PAGE_SIZE ? (
                             <div className="flex justify-center py-5 sm:py-8">
                                 <Pagination current={page} pageSize={PAGE_SIZE} total={totalPrompts} showSizeChanger={false} showLessItems responsive onChange={changePage} />

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { PublicWorkGalleryCard } from "@/components/works/public-work-gallery-card";
+import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { userAvatarFallback } from "@/lib/user-avatar";
 import { getPublicCreatorPage, setPublicCreatorFollow, type PublicCreatorPage } from "@/services/api/work-community";
 import { useUserStore } from "@/stores/use-user-store";
@@ -106,11 +107,11 @@ export function PublicCreatorProfile({
                         <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-foreground" />
                     </h2>
                 </div>
-                <div className={`mt-4 min-w-0 columns-2 gap-2 sm:columns-3 sm:gap-3 ${compact ? "md:columns-4 xl:columns-5" : "md:columns-4 xl:columns-5 2xl:columns-6"}`}>
+                <ResponsiveMasonryGrid className={`mt-4 grid-cols-2 sm:grid-cols-3 ${compact ? "md:grid-cols-4 xl:grid-cols-5" : "md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"}`} ariaLabel="创作者作品列表">
                     {items.map((item) => (
                         <PublicWorkGalleryCard key={item.slug} item={item} nextPath={nextPath} onOpen={() => onOpenWork(item.slug)} onOpenAuthor={onOpenAuthor} />
                     ))}
-                </div>
+                </ResponsiveMasonryGrid>
                 {cursor ? (
                     <div className="flex justify-center pt-3 sm:pt-5">
                         <Button className="min-w-28" loading={loadingMore} disabled={loadingMore} onClick={() => void loadMore()}>

@@ -48,7 +48,7 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
         };
     }, [category, reloadToken]);
 
-    const useImage = async (item: PublicGalleryItem) => {
+    const importImage = async (item: PublicGalleryItem) => {
         setImportingSlug(item.slug);
         try {
             await onUseImage(item);
@@ -101,7 +101,7 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
             ) : items.length ? (
                 <div className="min-w-0 columns-2 gap-2 pt-3 sm:columns-3 sm:gap-3 md:columns-4 lg:columns-5 xl:columns-6" aria-label="灵感作品列表">
                     {items.map((item) => (
-                        <InspirationCard key={item.slug} item={item} importing={importingSlug === item.slug} onOpen={() => setPreviewSlug(item.slug)} onOpenAuthor={setCreatorUsername} onUsePrompt={onUsePrompt} onUseImage={() => void useImage(item)} />
+                        <InspirationCard key={item.slug} item={item} importing={importingSlug === item.slug} onOpen={() => setPreviewSlug(item.slug)} onOpenAuthor={setCreatorUsername} onUsePrompt={onUsePrompt} onUseImage={() => void importImage(item)} />
                     ))}
                 </div>
             ) : (
@@ -119,7 +119,7 @@ export function CreateInspirationGallery({ onUsePrompt, onUseImage }: { onUsePro
                 onUseImage={
                     previewItem?.preview?.mediaType === "image"
                         ? async () => {
-                              await useImage(previewItem);
+                              await importImage(previewItem);
                               setPreviewSlug("");
                           }
                         : undefined

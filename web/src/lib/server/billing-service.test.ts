@@ -10,11 +10,18 @@ const mocks = vi.hoisted(() => ({
     payments: [] as PaymentTransactionRecord[],
     getOrderById: vi.fn(),
     upsertPayment: vi.fn(),
+    updatePaymentState: vi.fn(),
+    lockPaymentIdentity: vi.fn(),
+    getPaymentByProviderIdentifiers: vi.fn(),
     updateOrder: vi.fn(),
     listPayments: vi.fn(),
     listPlanAssignments: vi.fn(),
     updatePlanAssignment: vi.fn(),
     getActivePlanAssignment: vi.fn(),
+    getRefundJobByOrderId: vi.fn(),
+    upsertRefundJob: vi.fn(),
+    releaseRefundJob: vi.fn(),
+    checkpointRefundJob: vi.fn(),
     getSettings: vi.fn(),
     getUserById: vi.fn(),
     updateUser: vi.fn(),
@@ -31,11 +38,18 @@ vi.mock("@/lib/server/database", () => ({
         billing: {
             getOrderById: mocks.getOrderById,
             upsertPayment: mocks.upsertPayment,
+            updatePaymentState: mocks.updatePaymentState,
+            lockPaymentIdentity: mocks.lockPaymentIdentity,
+            getPaymentByProviderIdentifiers: mocks.getPaymentByProviderIdentifiers,
             updateOrder: mocks.updateOrder,
             listPayments: mocks.listPayments,
             listPlanAssignments: mocks.listPlanAssignments,
             updatePlanAssignment: mocks.updatePlanAssignment,
             getActivePlanAssignment: mocks.getActivePlanAssignment,
+            getRefundJobByOrderId: mocks.getRefundJobByOrderId,
+            upsertRefundJob: mocks.upsertRefundJob,
+            releaseRefundJob: mocks.releaseRefundJob,
+            checkpointRefundJob: mocks.checkpointRefundJob,
         },
         users: {
             getById: mocks.getUserById,
@@ -108,6 +122,18 @@ describe("billing payment completion", () => {
             mocks.payments = [...mocks.payments.filter((item) => item.id !== payment.id), payment];
             return payment;
         });
+        mocks.updatePaymentState.mockImplementation(async (payment: PaymentTransactionRecord) => {
+            mocks.payments = mocks.payments.map((item) => (item.id === payment.id ? payment : item));
+            return payment;
+        });
+        mocks.lockPaymentIdentity.mockResolvedValue(undefined);
+        mocks.getPaymentByProviderIdentifiers.mockImplementation(
+            async (_provider: string, identifiers: string[]) => mocks.payments.find((item) => identifiers.includes(item.providerTradeId || "") || identifiers.includes(item.providerPaymentId || "")) || null,
+        );
+        mocks.getRefundJobByOrderId.mockResolvedValue(null);
+        mocks.upsertRefundJob.mockImplementation(async (job: unknown) => job);
+        mocks.releaseRefundJob.mockResolvedValue(null);
+        mocks.checkpointRefundJob.mockResolvedValue(null);
         mocks.listPayments.mockImplementation(async () => ({ items: mocks.payments }));
         mocks.listPlanAssignments.mockResolvedValue({ items: [] });
         mocks.updateOrder.mockImplementation(async (_id: string, patch: Partial<BillingOrderRecord>) => {
@@ -161,6 +187,39 @@ describe("billing payment completion", () => {
         });
         expect(mocks.adjustPoints).toHaveBeenCalledTimes(1);
         expect(mocks.upsertPayment).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects a provider transaction that is already bound to another order", async () => {
+        mocks.payments = [
+            {
+                id: "payment-other-order",
+                orderId: "order-other",
+                userId: "user-other",
+                provider: "stripe",
+                channel: "webhook",
+                status: "succeeded",
+                amountCents: pointsOrder.amountCents,
+                currency: pointsOrder.currency,
+                providerTradeId: "trade-shared",
+                providerPaymentId: "payment-shared",
+                createdAt: now,
+                updatedAt: now,
+            },
+        ];
+
+        await expect(
+            completeBillingOrderPayment({
+                orderId: pointsOrder.id,
+                provider: "stripe",
+                providerTradeId: "trade-shared",
+                providerPaymentId: "payment-shared",
+                amountCents: pointsOrder.amountCents,
+                currency: pointsOrder.currency,
+                verificationSource: "provider",
+            }),
+        ).rejects.toMatchObject({ message: "该支付交易已绑定其他订单，禁止重复发放权益", status: 409 });
+        expect(mocks.upsertPayment).not.toHaveBeenCalled();
+        expect(mocks.adjustPoints).not.toHaveBeenCalled();
     });
 
     it("still applies plan products to the user and creates an assignment", async () => {

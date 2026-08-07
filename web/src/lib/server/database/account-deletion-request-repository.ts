@@ -168,32 +168,54 @@ export async function writeAccountDeletionRequestBackup(data: AccountDeletionReq
         if (!executor) await ensurePostgresSchema();
         const query = executor ? executor.query.bind(executor) : postgresQuery;
         await query("DELETE FROM account_deletion_requests");
-        for (const request of normalized.requests) {
-            await query(
-                `INSERT INTO account_deletion_requests (
-                    id, user_id, username_snapshot, display_name_snapshot, email_snapshot, status, request_note,
-                    review_note, reviewed_by_user_id, reviewed_by_username, requested_at, updated_at, handled_at
-                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-                [
-                    request.id,
-                    request.userId,
-                    request.username,
-                    request.displayName,
-                    request.email || null,
-                    request.status,
-                    request.note,
-                    request.reviewNote,
-                    request.reviewedByUserId || null,
-                    request.reviewedByUsername || null,
-                    request.requestedAt,
-                    request.updatedAt,
-                    request.handledAt || null,
-                ],
-            );
-        }
+        await upsertPostgresAccountDeletionRequests(query, normalized.requests);
         return;
     }
     await writeJsonDataFile(FILE_NAME, normalized);
+}
+
+export async function upsertAccountDeletionRequestBackup(data: AccountDeletionRequestDatabase, executor: QueryExecutor) {
+    const requests = Array.isArray(data.requests) ? data.requests.map(normalizeRequest) : [];
+    await upsertPostgresAccountDeletionRequests(executor.query.bind(executor), requests);
+}
+
+async function upsertPostgresAccountDeletionRequests(query: QueryExecutor["query"], requests: StoredAccountDeletionRequest[]) {
+    for (const request of requests) {
+        await query(
+            `INSERT INTO account_deletion_requests (
+                id, user_id, username_snapshot, display_name_snapshot, email_snapshot, status, request_note,
+                review_note, reviewed_by_user_id, reviewed_by_username, requested_at, updated_at, handled_at
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             ON CONFLICT (id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                username_snapshot = EXCLUDED.username_snapshot,
+                display_name_snapshot = EXCLUDED.display_name_snapshot,
+                email_snapshot = EXCLUDED.email_snapshot,
+                status = EXCLUDED.status,
+                request_note = EXCLUDED.request_note,
+                review_note = EXCLUDED.review_note,
+                reviewed_by_user_id = EXCLUDED.reviewed_by_user_id,
+                reviewed_by_username = EXCLUDED.reviewed_by_username,
+                requested_at = EXCLUDED.requested_at,
+                updated_at = EXCLUDED.updated_at,
+                handled_at = EXCLUDED.handled_at`,
+            [
+                request.id,
+                request.userId,
+                request.username,
+                request.displayName,
+                request.email || null,
+                request.status,
+                request.note,
+                request.reviewNote,
+                request.reviewedByUserId || null,
+                request.reviewedByUsername || null,
+                request.requestedAt,
+                request.updatedAt,
+                request.handledAt || null,
+            ],
+        );
+    }
 }
 
 async function readFileDatabase(): Promise<RequestDatabase> {

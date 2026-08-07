@@ -4,6 +4,7 @@ import { Eye, GalleryVerticalEnd, Star, Video } from "lucide-react";
 import Link from "next/link";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { userAvatarFallback } from "@/lib/user-avatar";
 import type { PublicGalleryItem } from "@/services/api/work-governance";
@@ -22,13 +23,13 @@ export function PublicWorkGalleryCard({ item, nextPath, onOpen, onOpenAuthor }: 
     );
 
     return (
-        <article className="group mb-2 inline-block w-full min-w-0 break-inside-avoid overflow-hidden text-left text-foreground sm:mb-3">
+        <article className="group w-full min-w-0 overflow-hidden text-left text-foreground">
             <button type="button" className="relative block w-full overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" onClick={onOpen} aria-label={`查看作品：${item.title}`} aria-haspopup="dialog">
                 {item.preview?.mediaType === "image" ? (
                     <LazyMediaImage src={imagePreviewUrl(item.preview.url, 640)} alt={item.title} containerClassName="w-full rounded-lg" imageClassName="block h-auto w-full group-hover:scale-[1.015]" />
                 ) : item.preview?.mediaType === "video" ? (
                     <>
-                        <video src={item.preview.url} muted playsInline preload="metadata" className="aspect-video w-full object-cover transition duration-300 group-hover:scale-[1.015]" />
+                        <LazyMediaVideo src={item.preview.url} label={item.title} containerClassName="aspect-video w-full" videoClassName="size-full object-cover transition duration-300 group-hover:scale-[1.015]" />
                         <span className="absolute right-2 top-2 grid size-7 place-items-center rounded bg-black/65 text-white" title="视频作品">
                             <Video className="size-3.5" />
                         </span>

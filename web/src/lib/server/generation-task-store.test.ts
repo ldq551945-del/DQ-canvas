@@ -20,6 +20,7 @@ import {
     createStoredGenerationTask,
     getActiveStoredGenerationTaskBySourceNode,
     getStoredGenerationTask,
+    getStoredGenerationTaskByUpstream,
     listStoredGenerationTaskRecords,
     mutateStoredGenerationTask,
     summarizeStoredGenerationTaskCosts,
@@ -34,6 +35,49 @@ type TestTask = {
     createdAt: number;
     updatedAt: number;
 };
+
+describe("getStoredGenerationTaskByUpstream", () => {
+    beforeEach(() => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("file");
+        vi.mocked(postgresQuery).mockReset();
+        const now = Date.now();
+        const record = (id: string, userId: string, type: string, channelId: string, upstreamTaskId: string, updatedAt: number) => ({
+            id,
+            userId,
+            type,
+            channelId,
+            upstreamTaskId,
+            status: "running",
+            payload: { id, config: { model: "vendor-video" } },
+            createdAt: now,
+            updatedAt,
+            expiresAt: now + 60_000,
+        });
+        mocks.records = [
+            record("owned-latest", "user", "video", "channel", "upstream", now + 1),
+            record("owned-old", "user", "video", "channel", "upstream", now),
+            record("other-user", "other", "video", "channel", "upstream", now + 2),
+            record("other-channel", "user", "video", "other", "upstream", now + 3),
+        ];
+    });
+
+    it("matches owner, type, channel and upstream id exactly in the file provider", async () => {
+        await expect(getStoredGenerationTaskByUpstream("video", "user", "channel", "upstream")).resolves.toMatchObject({ id: "owned-latest" });
+        await expect(getStoredGenerationTaskByUpstream("image", "user", "channel", "upstream")).resolves.toBeNull();
+        await expect(getStoredGenerationTaskByUpstream("video", "other", "channel", "missing")).resolves.toBeNull();
+    });
+
+    it("uses all four ownership fields in PostgreSQL", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        vi.mocked(postgresQuery).mockResolvedValue({ rows: [] } as never);
+
+        await expect(getStoredGenerationTaskByUpstream("video", "user", "channel", "upstream")).resolves.toBeNull();
+
+        const [query, values] = vi.mocked(postgresQuery).mock.calls[0] || [];
+        expect(String(query)).toMatch(/user_id = \$1[\s\S]*task_type = \$2[\s\S]*channel_id = \$3[\s\S]*upstream_task_id = \$4/);
+        expect(values).toEqual(["user", "video", "channel", "upstream"]);
+    });
+});
 
 describe("mutateStoredGenerationTask", () => {
     beforeEach(() => {

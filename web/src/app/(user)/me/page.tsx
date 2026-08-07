@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { ProfileAvatarUploader } from "@/components/profile/profile-avatar-uploader";
 import { PublicWorkGalleryCard } from "@/components/works/public-work-gallery-card";
+import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { PublicWorkPreviewModal } from "@/components/works/public-work-preview-modal";
 import { PublicCreatorModal } from "@/components/works/public-creator-modal";
 import { useCopyText } from "@/hooks/use-copy-text";
@@ -360,10 +361,10 @@ function WorkCollection({
         );
     }
     return (
-        <div className="mt-4 min-w-0 columns-2 gap-2 sm:columns-3 sm:gap-3 md:columns-4 xl:columns-5 2xl:columns-6">
+        <ResponsiveMasonryGrid className="mt-4 grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6" ariaLabel="个人作品列表">
             {items.map((item) => (
                 <PublicWorkGalleryCard key={item.slug} item={item} nextPath="/me" onOpen={() => onOpen(item.slug)} onOpenAuthor={onOpenAuthor} />
             ))}
-        </div>
+        </ResponsiveMasonryGrid>
     );
 }

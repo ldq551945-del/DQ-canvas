@@ -15,9 +15,10 @@ DATABASE_URL=postgres://dq:change-me@localhost:5432/dq
 DQ_DATABASE_POOL_MAX=10
 DQ_DATABASE_SSL=0
 DQ_ENCRYPTION_KEY=64位十六进制或32字节Base64密钥
+DQ_INSTALL_TOKEN=至少32字符的一次性安装令牌
 ```
 
-首次部署后访问 `/install`。状态 GET 只读检查 `DATABASE_URL`、PostgreSQL 连接、表结构和管理员数量，不执行 DDL；表结构由安装页 POST 初始化操作显式创建。有效的 32 字节加密密钥是初始化和创建首个管理员的前置条件。
+首次部署后访问 `/install`。状态 GET 只读检查 `DATABASE_URL`、PostgreSQL 连接、表结构和管理员数量，不执行 DDL；表结构由安装页 POST 在校验 `DQ_INSTALL_TOKEN` 后显式创建。有效的 32 字节加密密钥和一次性安装令牌是初始化及创建首个管理员的前置条件。管理员创建完成后可删除安装令牌并重启。
 
 如果只需要本地文件存储体验，可显式配置：
 
@@ -59,11 +60,12 @@ DQ-绘图 的 PostgreSQL 真实表名统一使用项目名前缀 `dq_`。业务�
 - `dq_referral_relationships`：单层邀请关系和归因摘要，受邀用户唯一；保存 HMAC 网络/支付身份风险信号、人工风险状态和处置证据，禁止自邀、重复绑定和两层循环邀请。
 - `dq_referral_rewards`：首笔有效实付订单生成的邀请人/新用户奖励记录，保存待结算、已发放、已撤销、已拒绝和撤销待复核状态，并关联积分流水、优惠券和触发订单。
 - `dq_billing_orders`：商业订单主表，记录订单号、商品快照、套餐、支付商单号、支付状态和生效信息；日常总价、活动优惠、券优惠、实付金额、活动/用户券关联及 `pricing_snapshot` 均作为权威价格快照保存，支付、退款和对账只读取实付快照。状态包括 `pending/paid/closed/canceled/refunding/refunded`，退款外部调用期间使用 `refunding` 认领状态。过期待支付订单由原子批处理更新为 `closed` 并记录 `close.source=expiration-job`，多实例使用 `FOR UPDATE SKIP LOCKED` 并发执行不会重复关闭或遗留券锁。独立 `created_at` 索引用于后台财务日期窗口聚合；财务摘要的对账子查询复用同一日期窗口内的支付流水，不重新扫描窗口外流水。
-- `dq_payment_transactions`：支付流水，记录支付商交易号、支付渠道、金额、状态和原始回调摘要；独立 `created_at` 索引用于支付金额和状态的日期窗口聚合。
+- `dq_payment_transactions`：支付流水，记录支付商交易号、支付渠道、金额、状态和支付商查询摘要；支付商交易号与支付流水号均按渠道唯一，记录首次写入后订单、用户、金额、币种和交易身份不可被回调覆盖，退款只更新状态字段。独立 `created_at` 索引用于支付金额和状态的日期窗口聚合。
+- `dq_billing_refund_jobs`：退款任务与补偿 checkpoint。记录支付商退款单号、重试次数、下次执行时间、Worker 租约和已确认的支付商结果；支付商退款成功而本地权益回收失败时只重试本地补偿，不重复发起退款。
 - `dq_billing_reconciliation_runs`：支付商账单导入对账批次，保存渠道、来源、导入人、文件名、行数、匹配数、异常数和金额差额摘要。
 - `dq_billing_reconciliation_rows`：支付商账单对账明细，保存规范化后的订单号、支付商流水号、金额、币种、状态、本地匹配订单和差异代码；不保存整份原始 CSV。
 - `dq_user_plan_assignments`：用户套餐生效记录，用于保存由订单、CDK、管理员或系统发放产生的套餐权益周期。
-- `dq_payment_provider_events`：支付回调事件，用于保存支付商事件 ID、签名校验结果、原始 payload、`processing_at` 认领时间和处理状态，支持重复回调、超时接管和失败释放。
+- `dq_payment_provider_events`：支付回调事件，用于保存支付商事件 ID、签名校验结果、原始 payload、`processing_at` 认领时间和处理状态，支持重复回调、超时接管和失败释放；同一渠道事件 ID 的载荷不可覆盖，不同载荷会标记冲突并停止发放权益。
 - `dq_cdk_codes` / `dq_cdk_redemptions`：CDK 和兑换记录。PostgreSQL 后台 CDK 列表使用数据库侧的关键词、状态筛选、聚合统计和分页，只读取当前页兑换明细；文件 Provider 保持兼容的内存筛选行为。
 - `dq_announcements`：站内公告。
 - `dq_prompts` / `dq_prompt_seed_sources`：公共提示词、用户提示词和种子来源。
@@ -193,6 +195,16 @@ DQ_PAYPLY_QR_FIELD=data.qrContent
 DQ_PAYPLY_FORM_FIELD=data.formHtml
 DQ_PAYPLY_PROVIDER_ORDER_ID_FIELD=data.tradeId
 DQ_PAYPLY_PROVIDER_PAYMENT_ID_FIELD=data.paymentId
+DQ_PAYPLY_QUERY_URL=
+DQ_PAYPLY_QUERY_STATUS_FIELD=data.status
+DQ_PAYPLY_QUERY_ORDER_ID_FIELD=data.orderId
+DQ_PAYPLY_QUERY_ORDER_NO_FIELD=data.orderNo
+DQ_PAYPLY_QUERY_TRADE_ID_FIELD=data.tradeId
+DQ_PAYPLY_QUERY_PAYMENT_ID_FIELD=data.paymentId
+DQ_PAYPLY_QUERY_AMOUNT_CENTS_FIELD=data.amountCents
+DQ_PAYPLY_QUERY_AMOUNT_FIELD=data.amount
+DQ_PAYPLY_QUERY_CURRENCY_FIELD=data.currency
+DQ_PAYPLY_QUERY_PAID_AT_FIELD=data.paidAt
 DQ_PAYPLY_WEBHOOK_SECRET=
 DQ_PAYPLY_WEBHOOK_SIGNATURE_HEADER=x-signature
 DQ_PAYPLY_WEBHOOK_ORDER_ID_FIELD=data.orderId
@@ -203,11 +215,21 @@ DQ_PAYPLY_WEBHOOK_AMOUNT_CENTS_FIELD=data.amountCents
 DQ_PAYPLY_WEBHOOK_AMOUNT_YUAN_FIELD=data.amount
 DQ_PAYPLY_WEBHOOK_CURRENCY_FIELD=data.currency
 DQ_PAYPLY_WEBHOOK_PAID_AT_FIELD=data.paidAt
+DQ_PAYPLY_REFUND_URL=
+DQ_PAYPLY_REFUND_QUERY_URL=
+DQ_PAYPLY_REFUND_QUERY_STATUS_FIELD=data.status
+DQ_PAYPLY_REFUND_QUERY_ID_FIELD=data.refundId
+
+DQ_BILLING_REFUND_WORKER_INTERVAL_MS=15000
 ```
 
 PayPly 下单由服务端向 `DQ_PAYPLY_CHECKOUT_URL` 发起请求，密钥只读取服务器环境变量或后台加密配置，不会返回给浏览器。默认使用 `POST + application/json`，也可通过 `DQ_PAYPLY_REQUEST_METHOD`、`DQ_PAYPLY_CONTENT_TYPE`、`DQ_PAYPLY_EXTRA_HEADERS` 和 `DQ_PAYPLY_REQUEST_TEMPLATE` 适配 GET、表单提交、额外请求头和自定义请求体模板。返回字段可通过 `DQ_PAYPLY_URL_FIELD`、`DQ_PAYPLY_QR_FIELD`、`DQ_PAYPLY_FORM_FIELD` 等点路径配置；例如网关返回 `{ "data": { "payUrl": "..." } }` 时可填写 `data.payUrl`。
 
-支付回调入口为 `/api/billing/webhooks/{provider}`。`stripe` 校验 `Stripe-Signature`，支付宝校验异步通知 RSA2 签名，微信支付校验 `Wechatpay-*` 回调头后使用 API v3 key 解密资源；PayPly 使用 `DQ_PAYPLY_WEBHOOK_SECRET` 或通用 `DQ_PAYMENT_WEBHOOK_SECRET` 做 HMAC-SHA256 验签，并可通过 `DQ_PAYPLY_WEBHOOK_*_FIELD` 配置回调字段路径。通过校验且状态为支付成功的回调会进入订单开通服务。
+支付回调入口为 `/api/billing/webhooks/{provider}`。`stripe` 校验 `Stripe-Signature`，支付宝校验异步通知 RSA2 签名，微信支付校验 `Wechatpay-*` 回调头后使用 API v3 key 解密资源；PayPly 使用 `DQ_PAYPLY_WEBHOOK_SECRET` 或通用 `DQ_PAYMENT_WEBHOOK_SECRET` 做 HMAC-SHA256 验签，并可通过 `DQ_PAYPLY_WEBHOOK_*_FIELD` 配置回调字段路径。
+
+所有在线支付渠道即使回调签名正确，也必须由服务端再查询支付商交易状态，并以查询结果中的订单身份、交易号、金额和币种作为支付事实源；字段缺失、金额或币种不一致、交易未成功时不会发放套餐或积分。Stripe、支付宝和微信使用各自官方查询接口；PayPly 必须配置 `DQ_PAYPLY_QUERY_URL` 及对应字段映射，未配置查询接口时成功回调只会保持待核验状态。
+
+自动退款使用持久化退款任务和独立 Worker 循环。支付商已确认退款后会保存 checkpoint，本地权益回收失败只重试本地补偿，不会再次请求支付商。Stripe、微信和配置了 `DQ_PAYPLY_REFUND_QUERY_URL` 的 PayPly 会先查询已有退款；超过最大重试次数的任务转人工处理。微信交易查询、退款创建和退款查询的成功响应均校验平台签名。
 
 支付宝 `official` 与 `face_to_face` 共用 `/api/billing/webhooks/alipay`、支付宝公钥验签和 `alipay.trade.refund` 整单退款。切换模式只影响后续新建 Checkout；已经创建且尚未过期的订单继续使用订单元数据中的原支付表单或二维码。生产启用当面付前仍需使用真实支付宝沙箱/商户能力验证预下单、扫码、异步通知、迟到通知、退款和账单对账。
 

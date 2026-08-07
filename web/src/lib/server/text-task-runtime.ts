@@ -10,9 +10,10 @@ import type { AiTextMessage } from "@/types/ai";
 import { hasSystemAiCharge, readSystemAiBilling, systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { buildProviderRequest, isProviderBusinessError, providerQueryPaths, readProviderError, readProviderString } from "@/lib/server/provider-task-config";
-import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { workerContextHeaders } from "@/lib/server/maintenance-auth";
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError, generationSubmissionResponseError, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { resolveTextProtocol, type ResolvedTextProtocol } from "@/lib/server/text-protocol-resolver";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 
 configureServerProxyDispatcher();
 
@@ -189,6 +190,28 @@ async function queryCustomTextTaskStep(task: TextTask, origin: string, cookie: s
         if (FAILED_TASK_STATUSES.has(status)) return failTextTask(task, readProviderError(data) || "自定义文本任务执行失败", task.attempts || []);
         if (PENDING_TASK_STATUSES.has(status)) return { state: "pending", status: status || "processing", upstreamTaskId: upstream.id, createPath: upstream.createPath };
         return failTextTask(task, "自定义文本任务已结束但没有返回内容", task.attempts || []);
+    }
+    throw new Error(lastError || "自定义文本任务查询失败");
+}
+
+export async function queryCancelledTextTaskUpstreamStep(task: TextTask, origin: string, cookie: string) {
+    const config = task.config;
+    const upstream = task.upstream;
+    if (!upstream?.id) return { state: "terminal" as const, status: "missing_upstream_id" };
+    let lastError = "";
+    for (const path of providerQueryPaths(config.advancedConfig, upstream.id, [])) {
+        const response = await taskFetch(config, taskUrl(config, path, origin), { headers: taskHeaders(config, cookie), cache: "no-store" });
+        if (!response.ok) {
+            lastError = await readFetchError(response, "自定义文本任务查询失败");
+            continue;
+        }
+        const data = (await response.json().catch(() => null)) as unknown;
+        if (!data || isProviderBusinessError(data)) return { state: "terminal" as const, status: "failed" };
+        if (readProviderString(data, config.advancedConfig?.resultField, TEXT_RESULT_KEYS)) return { state: "terminal" as const, status: "completed" };
+        const status = readProviderString(data, config.advancedConfig?.statusField, TASK_STATUS_KEYS).toLowerCase();
+        if (FAILED_TASK_STATUSES.has(status)) return { state: "terminal" as const, status };
+        if (PENDING_TASK_STATUSES.has(status)) return { state: "pending" as const, status: status || "processing" };
+        return { state: "terminal" as const, status: status || "completed" };
     }
     throw new Error(lastError || "自定义文本任务查询失败");
 }
@@ -478,7 +501,7 @@ function isInternalSystemProxyBase(value: string) {
 export function taskHeaders(config: TextTaskConfig, cookie: string, pointsIdempotencyKey?: string) {
     const headers = new Headers();
     const internal = config.baseUrl.startsWith("/");
-    const workerHeaders = maintenanceWorkerContextHeaders(cookie);
+    const workerHeaders = workerContextHeaders(cookie);
     if (internal && workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (internal && cookie) headers.set("cookie", cookie);
     if (internal) {
@@ -494,7 +517,7 @@ function taskFetch(config: TextTaskConfig, url: string, init: RequestInit) {
         ...init,
         signal: init.signal || AbortSignal.timeout(resolveModelRequestTimeoutMs(config, "text")),
     };
-    return isInternalApiBaseUrl(config.baseUrl) ? fetchInternalApi(url, nextInit) : fetch(url, nextInit);
+    return isInternalApiBaseUrl(config.baseUrl) ? fetchInternalApi(url, nextInit) : fetchSafeOutboundUrl(url, nextInit);
 }
 
 async function submissionFetch(config: TextTaskConfig, url: string, init: RequestInit) {

@@ -3,6 +3,8 @@ import type { ChannelHealthKind as SharedChannelHealthKind, ChannelHealthResult 
 import { channelProtocolDefinition, protocolAuthHeaders, protocolModelConfig } from "@/lib/channel-protocol-registry";
 import { normalizeModelId } from "@/lib/model-capability";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
+import { buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
+import { buildGrok2ApiVideoRequest } from "@/lib/grok2api";
 import { normalizeModelConfigs } from "@/lib/server/admin-model-catalog";
 import { sanitizeProviderMessage } from "@/lib/server/admin-channel-config";
 import { buildProviderRequest, isProviderBusinessError, readProviderString } from "@/lib/server/provider-task-config";
@@ -47,8 +49,16 @@ export async function testDeclarativeChannelProtocol(baseUrl: string, apiKey: st
         references: [] as Array<{ type: string; url: string }>,
         content: [{ type: "text", text: prompt }],
     };
-    const payload = protocol === "seedance-special" ? buildSeedanceSpecialRequest({ model, prompt, ratio: "16:9", duration: 4, generateAudio: false }) : buildProviderRequest(requestTemplate, values, values);
-    const response = await fetchSafeOutboundUrl(literalChannelHealthUrl(baseUrl, createPath), {
+    const payload =
+        protocol === "grok2api" && kind === "video"
+            ? buildGrok2ApiVideoRequest({ model, prompt, duration: 4, aspectRatio: "16:9", resolution: "720p" })
+            : protocol === "seedance-special"
+              ? buildSeedanceSpecialRequest({ model, prompt, ratio: "16:9", duration: 4, generateAudio: false })
+              : protocol === "vozeb-recommended" && kind === "video"
+                ? buildVozebRecommendedVideoRequest({ model, prompt, duration: 5, aspectRatio: "16:9", resolution: "720p", generateAudio: false, images: [], videos: [], audios: [] })
+                : buildProviderRequest(requestTemplate, values, values);
+    const requestUrl = protocol === "vozeb-recommended" || protocol === "grok2api" ? literalChannelHealthUrl(baseUrl.replace(/\/v1\/?$/i, ""), createPath) : literalChannelHealthUrl(baseUrl, createPath);
+    const response = await fetchSafeOutboundUrl(requestUrl, {
         method: "POST",
         headers: { ...protocolAuthHeaders(apiKey, advanced), "content-type": "application/json" },
         body: JSON.stringify(payload),
@@ -74,7 +84,7 @@ export function channelHealthModelConfig(value: unknown): SystemChannelModelConf
 }
 
 export function isDeclarativeHealthProtocol(protocol: SystemChannelProtocol) {
-    return protocol === "seedance" || protocol === "stable-diffusion" || protocol === "volcengine-video" || protocol === "seedance-special" || protocol === "custom";
+    return protocol === "grok2api" || protocol === "seedance" || protocol === "stable-diffusion" || protocol === "volcengine-video" || protocol === "seedance-special" || protocol === "vozeb-recommended" || protocol === "custom";
 }
 
 export function literalChannelHealthUrl(baseUrl: string, path: string) {

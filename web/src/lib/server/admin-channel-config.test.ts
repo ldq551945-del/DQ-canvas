@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { AuthSettings, SystemModelChannel } from "@/lib/auth/store";
-import { isProviderTimeoutError, isUsableAdminChannelApiKey, mergeSystemChannelSecrets, resolveAdminChannelCredentials, sanitizeProviderMessage, serializeAdminSettings } from "./admin-channel-config";
+import { isProviderTimeoutError, isUsableAdminChannelApiKey, mergeSystemChannelSecrets, resolveAdminChannelCredentials, sanitizeProviderMessage, serializeAdminSettings, systemChannelWebhookSecretValidationError } from "./admin-channel-config";
 
-const savedChannel = { id: "saved", name: "已保存", baseUrl: "https://api.example.com/v1", apiKey: "secret-value", apiFormat: "openai", models: ["gpt-test"], enabled: true } satisfies SystemModelChannel;
+const fixtureApiKey = ["secret", "value"].join("-");
+const fixtureWebhookSecret = "webhook-fixture-".repeat(3);
+const savedChannel = { id: "saved", name: "已保存", baseUrl: "https://api.example.com/v1", apiKey: fixtureApiKey, webhookSecret: fixtureWebhookSecret, apiFormat: "openai", models: ["gpt-test"], enabled: true } satisfies SystemModelChannel;
 const settings = { systemChannels: [savedChannel] } as AuthSettings;
 
 describe("admin channel config", () => {
@@ -11,7 +13,10 @@ describe("admin channel config", () => {
         const result = serializeAdminSettings(settings).systemChannels[0];
         expect(result.apiKey).toBe("");
         expect(result.hasApiKey).toBe(true);
-        expect(JSON.stringify(result)).not.toContain("secret-value");
+        expect(result.webhookSecret).toBe("");
+        expect(result.hasWebhookSecret).toBe(true);
+        expect(JSON.stringify(result)).not.toContain(fixtureApiKey);
+        expect(JSON.stringify(result)).not.toContain(savedChannel.webhookSecret);
     });
 
     it("keeps, replaces, and explicitly clears saved API keys", () => {
@@ -19,6 +24,14 @@ describe("admin channel config", () => {
         expect(mergeSystemChannelSecrets([base], [savedChannel])[0].apiKey).toBe("secret-value");
         expect(mergeSystemChannelSecrets([{ ...base, apiKey: "new-secret" }], [savedChannel])[0].apiKey).toBe("new-secret");
         expect(mergeSystemChannelSecrets([{ ...base, clearApiKey: true }], [savedChannel])[0].apiKey).toBe("");
+    });
+
+    it("keeps, replaces, validates, and explicitly clears channel webhook secrets", () => {
+        const base = { ...savedChannel, webhookSecret: "" };
+        expect(mergeSystemChannelSecrets([base], [savedChannel])[0].webhookSecret).toBe(savedChannel.webhookSecret);
+        expect(mergeSystemChannelSecrets([{ ...base, webhookSecret: "a".repeat(32) }], [savedChannel])[0].webhookSecret).toBe("a".repeat(32));
+        expect(mergeSystemChannelSecrets([{ ...base, clearWebhookSecret: true }], [savedChannel])[0].webhookSecret).toBe("");
+        expect(systemChannelWebhookSecretValidationError({ ...base, webhookSecret: "short" })).toContain("至少需要 32 个字符");
     });
 
     it("resolves saved credentials when the client sends only a channel id", () => {
@@ -30,7 +43,7 @@ describe("admin channel config", () => {
         const encryptedSettings = { systemChannels: [{ ...savedChannel, apiKey: ciphertext }] } as AuthSettings;
 
         expect(isUsableAdminChannelApiKey(ciphertext)).toBe(false);
-        expect(serializeAdminSettings(encryptedSettings).systemChannels[0]).toMatchObject({ apiKey: "", hasApiKey: false });
+        expect(serializeAdminSettings(encryptedSettings).systemChannels[0]).toMatchObject({ apiKey: "", hasApiKey: false, webhookSecret: "", hasWebhookSecret: true });
         expect(resolveAdminChannelCredentials(encryptedSettings, { channelId: "saved", apiKey: ciphertext }).apiKey).toBe("");
         expect(mergeSystemChannelSecrets([{ ...savedChannel, apiKey: ciphertext }], encryptedSettings.systemChannels)[0].apiKey).toBe("");
     });

@@ -196,6 +196,31 @@ CREATE INDEX IF NOT EXISTS payment_transactions_order_idx ON payment_transaction
 CREATE INDEX IF NOT EXISTS payment_transactions_user_idx ON payment_transactions (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS payment_transactions_created_idx ON payment_transactions (created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_provider_trade_idx ON payment_transactions (provider, provider_trade_id) WHERE provider_trade_id IS NOT NULL AND provider_trade_id <> '';
+CREATE UNIQUE INDEX IF NOT EXISTS payment_transactions_provider_payment_idx ON payment_transactions (provider, provider_payment_id) WHERE provider_payment_id IS NOT NULL AND provider_payment_id <> '';
+
+CREATE TABLE IF NOT EXISTS billing_refund_jobs (
+    id text PRIMARY KEY,
+    order_id text NOT NULL UNIQUE REFERENCES billing_orders(id) ON DELETE CASCADE,
+    payment_id text REFERENCES payment_transactions(id) ON DELETE SET NULL,
+    provider text NOT NULL,
+    status text NOT NULL DEFAULT 'pending',
+    provider_refund_id text,
+    attempts integer NOT NULL DEFAULT 0,
+    max_attempts integer NOT NULL DEFAULT 8,
+    next_attempt_at timestamptz,
+    last_error text,
+    raw_payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+    worker_id text,
+    lease_until timestamptz,
+    completed_at timestamptz,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT billing_refund_jobs_status CHECK (status IN ('pending', 'processing', 'compensating', 'completed', 'manual', 'failed')),
+    CONSTRAINT billing_refund_jobs_attempts CHECK (attempts >= 0 AND max_attempts > 0)
+);
+
+CREATE INDEX IF NOT EXISTS billing_refund_jobs_due_idx ON billing_refund_jobs (next_attempt_at, lease_until, id) WHERE status IN ('pending', 'processing', 'compensating');
+CREATE UNIQUE INDEX IF NOT EXISTS billing_refund_jobs_provider_refund_idx ON billing_refund_jobs (provider, provider_refund_id) WHERE provider_refund_id IS NOT NULL AND provider_refund_id <> '';
 
 CREATE TABLE IF NOT EXISTS referral_programs (
     id text PRIMARY KEY DEFAULT 'default',

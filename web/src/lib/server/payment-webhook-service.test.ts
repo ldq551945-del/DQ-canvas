@@ -6,9 +6,12 @@ const mocks = vi.hoisted(() => ({
     upsertEvent: vi.fn(),
     claimEvent: vi.fn(),
     markProcessed: vi.fn(),
+    markConflict: vi.fn(),
     releaseEvent: vi.fn(),
     getOrderByOrderNo: vi.fn(),
+    getOrderById: vi.fn(),
     getPaymentConfig: vi.fn(),
+    verifyPayment: vi.fn(),
     completePayment: vi.fn(),
 }));
 
@@ -18,8 +21,10 @@ vi.mock("@/lib/server/database", () => ({
             upsertProviderEvent: mocks.upsertEvent,
             claimProviderEvent: mocks.claimEvent,
             markProviderEventProcessed: mocks.markProcessed,
+            markProviderEventConflict: mocks.markConflict,
             releaseProviderEvent: mocks.releaseEvent,
             getOrderByOrderNo: mocks.getOrderByOrderNo,
+            getOrderById: mocks.getOrderById,
         },
     }),
     ensurePostgresSchema: mocks.ensureSchema,
@@ -31,6 +36,7 @@ vi.mock("@/lib/server/payment-config-store", () => ({
     getPaymentRuntimeValue: (config: PaymentConfig, ...names: string[]) => names.map((name) => config.valuesByEnvName[name]?.trim() || "").find(Boolean) || "",
 }));
 vi.mock("@/lib/server/billing-service", () => ({ completeBillingOrderPayment: mocks.completePayment }));
+vi.mock("@/lib/server/payment-transaction-verification", () => ({ verifyPaymentTransaction: mocks.verifyPayment }));
 
 import { processPaymentWebhook } from "./payment-webhook-service";
 
@@ -61,8 +67,13 @@ describe("payment webhook processing", () => {
             providers: { payply: { enabled: true, saved: true } },
             valuesByEnvName: { DQ_PAYPLY_WEBHOOK_SECRET: webhookSecret },
         } satisfies PaymentConfig);
-        mocks.upsertEvent.mockResolvedValue({ id: "provider-event-one" });
+        mocks.upsertEvent.mockResolvedValue({ event: { id: "provider-event-one" }, conflict: false });
         mocks.claimEvent.mockResolvedValue({ id: "provider-event-one" });
+        mocks.getOrderById.mockResolvedValue({ id: "order-one", orderNo: "DQ001", amountCents: 1299, currency: "CNY" });
+        mocks.verifyPayment.mockResolvedValue({
+            verified: true,
+            payment: { providerTradeId: "trade-one", providerPaymentId: "payment-one", amountCents: 1299, currency: "CNY", paidAt: "2026-07-30T08:00:00.000Z", rawPayload: { source: "provider-query" } },
+        });
         mocks.completePayment.mockResolvedValue({ order: { orderNo: "DQ001", status: "paid" }, pointsGranted: 500 });
         mocks.markProcessed.mockResolvedValue(undefined);
         mocks.releaseEvent.mockResolvedValue(undefined);
@@ -90,14 +101,15 @@ describe("payment webhook processing", () => {
             amountCents: 1299,
             currency: "CNY",
             paidAt: "2026-07-30T08:00:00.000Z",
-            rawPayload: JSON.parse(rawBody),
+            rawPayload: { source: "provider-query" },
+            verificationSource: "provider",
         });
         expect(mocks.markProcessed).toHaveBeenCalledWith("provider-event-one", undefined);
         expect(mocks.releaseEvent).not.toHaveBeenCalled();
     });
 
     it("returns an already processed callback as a duplicate", async () => {
-        mocks.upsertEvent.mockResolvedValue({ id: "provider-event-one", processedAt: "2026-07-30T08:01:00.000Z" });
+        mocks.upsertEvent.mockResolvedValue({ event: { id: "provider-event-one", processedAt: "2026-07-30T08:01:00.000Z" }, conflict: false });
 
         await expect(processPaymentWebhook({ provider: "payply", rawBody, headers: signedHeaders(rawBody) })).resolves.toMatchObject({ duplicate: true, eventId: "event-one", orderId: "order-one" });
         expect(mocks.claimEvent).not.toHaveBeenCalled();
@@ -117,6 +129,23 @@ describe("payment webhook processing", () => {
 
         await expect(processPaymentWebhook({ provider: "payply", rawBody, headers })).rejects.toMatchObject({ message: "支付回调签名无效", status: 401 });
         expect(mocks.upsertEvent).toHaveBeenCalledWith(expect.objectContaining({ provider: "payply", eventId: expect.stringContaining("event-one:invalid:"), signatureValid: false, error: "signature invalid" }));
+        expect(mocks.claimEvent).not.toHaveBeenCalled();
+        expect(mocks.completePayment).not.toHaveBeenCalled();
+    });
+
+    it("keeps the event retryable until the provider transaction is verified", async () => {
+        mocks.verifyPayment.mockResolvedValue({ verified: false, reason: "支付商交易详情仍缺少金额、币种或交易号" });
+
+        await expect(processPaymentWebhook({ provider: "payply", rawBody, headers: signedHeaders(rawBody) })).resolves.toMatchObject({ pendingVerification: true, orderNo: "DQ001" });
+        expect(mocks.releaseEvent).toHaveBeenCalledWith("provider-event-one", "pending_verification: 支付商交易详情仍缺少金额、币种或交易号");
+        expect(mocks.completePayment).not.toHaveBeenCalled();
+    });
+
+    it("rejects a repeated event identifier carrying a different payload", async () => {
+        mocks.upsertEvent.mockResolvedValue({ event: { id: "provider-event-one" }, conflict: true });
+
+        await expect(processPaymentWebhook({ provider: "payply", rawBody, headers: signedHeaders(rawBody) })).rejects.toMatchObject({ message: "支付回调事件编号已对应不同载荷", status: 409 });
+        expect(mocks.markConflict).toHaveBeenCalledWith("provider-event-one");
         expect(mocks.claimEvent).not.toHaveBeenCalled();
         expect(mocks.completePayment).not.toHaveBeenCalled();
     });

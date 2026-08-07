@@ -1,6 +1,7 @@
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeConversation, type CreativeConversationSource, type CreativeMessage, type CreativeProjectHandoff, type CreativeRunRequest } from "@/lib/creative-runtime-contract";
 import type { CreativeWorkbenchSessionDetail, CreativeWorkbenchSessionSummary, WorkbenchWorkspace } from "@/lib/workbench-session-contract";
 import { refreshUserPointsIfSystem } from "@/services/api/points";
+import { stopIfClientSessionExpired, throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
 export type CreativeAgentRun = {
     id: string;
@@ -38,14 +39,22 @@ export function getCreativeConversation(conversationId: string) {
     return request<{ conversation: CreativeConversation }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}`).then((data) => data.conversation);
 }
 
-export function listCreativeMessages(conversationId: string, beforeSequence?: number) {
-    const query = new URLSearchParams({ limit: "200" });
+export function listCreativeMessages(conversationId: string, beforeSequence?: number, limit = 40) {
+    const query = new URLSearchParams({ limit: String(limit) });
     if (beforeSequence) query.set("beforeSequence", String(beforeSequence));
     return request<{ messages: CreativeMessage[] }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}/messages?${query}`).then((data) => data.messages);
 }
 
 export function listCreativeAssets(conversationId: string) {
-    return request<{ assets: CreativeAsset[] }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}/assets`).then((data) => data.assets);
+    return listCreativeAssetPage(conversationId).then((data) => data.assets);
+}
+
+export function listCreativeAssetPage(conversationId: string, input: { ids?: string[]; messageIds?: string[]; runIds?: string[]; limit?: number; offset?: number } = {}) {
+    return request<{ assets: CreativeAsset[]; hasMore: boolean; nextOffset?: number }>(`/api/creative/conversations/${encodeURIComponent(conversationId)}/assets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...input, limit: input.limit || 100, offset: input.offset || 0 }),
+    });
 }
 
 export function createCreativeConversation(input: { surface: "chat" | "canvas" | "drama"; source?: CreativeConversation["source"]; projectId?: string; title?: string }) {
@@ -180,6 +189,12 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
     };
     source.onerror = () => {
         if (settled) return;
+        void stopIfClientSessionExpired().then((expired) => {
+            if (!expired || settled) return;
+            settled = true;
+            source.close();
+            handlers.onConnectionError("登录状态已失效，请重新登录");
+        });
         connectionErrors += 1;
         if (connectionErrors >= 5) {
             settled = true;
@@ -197,6 +212,7 @@ export function watchCreativeAgentRun(runId: string, handlers: CreativeRunHandle
 
 async function request<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, { ...init, cache: "no-store" });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null;
     if (!response.ok || !payload || payload.code !== 0) throw new Error(payload?.msg || "请求失败");
     return payload.data;

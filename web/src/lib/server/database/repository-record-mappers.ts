@@ -241,6 +241,7 @@ export function mapGenerationLogAsset(row: Record<string, unknown>): GenerationL
         mimeType: optionalString(row.mime_type),
         width: optionalNumber(row.width),
         height: optionalNumber(row.height),
+        durationMs: optionalNumber(row.duration_ms),
         bytes: optionalNumber(row.bytes),
     };
 }

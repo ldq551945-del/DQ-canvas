@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutboundUrl: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
+vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-dq-media-authorization": "signed" })) }));
+
 const mocks = vi.hoisted(() => ({
     getTask: vi.fn(),
     updateTask: vi.fn(),
@@ -7,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     schedule: vi.fn(),
     register: vi.fn(),
     writeMedia: vi.fn(),
+    internalFetch: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: vi.fn(), refundUserPoints: vi.fn() }));
@@ -18,12 +22,15 @@ vi.mock("@/lib/server/audio-task-store", () => ({
 vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
 vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writeMedia }));
+vi.mock("@/lib/server/internal-origin", () => ({ fetchInternalApi: mocks.internalFetch, isInternalApiBaseUrl: (baseUrl: string) => baseUrl.startsWith("/") }));
 
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
 import { GenerationSubmissionUncertainError } from "./generation-submission-error";
-import { createAudioTaskUpstreamStep } from "./audio-task-runtime";
+import { createAudioTaskUpstreamStep, persistAudioTaskResult } from "./audio-task-runtime";
 import type { AudioTask } from "./audio-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
+
+const WAV_BYTES = Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0x24, 0, 0, 0, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20, 0x10, 0, 0, 0, 1, 0, 1, 0, 0x40, 0x1f, 0, 0, 0x80, 0x3e, 0, 0, 2, 0, 0x10, 0, 0x64, 0x61, 0x74, 0x61, 0, 0, 0, 0]);
 
 describe("audio task runtime submission safety", () => {
     let state: AudioTask;
@@ -43,6 +50,7 @@ describe("audio task runtime submission safety", () => {
         });
         mocks.writeMedia.mockResolvedValue({ token: "fixture-audio", url: "/api/reference-assets/fixture-audio.wav" });
         mocks.register.mockResolvedValue(undefined);
+        mocks.internalFetch.mockReset();
     });
 
     afterEach(() => {
@@ -149,6 +157,48 @@ describe("audio task runtime submission safety", () => {
 
         await expect(createAudioTaskUpstreamStep(state, "http://internal")).rejects.toBeInstanceOf(GenerationSubmissionUncertainError);
         expect(state.config.channelId).toBe("channel-one");
+    });
+
+    it("adds model identity and a task-bound capability when downloading proxied audio", async () => {
+        state = audioTask();
+        state.status = "running";
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", channelId: "channel-one", logicalModel: "audio-logical" };
+        mocks.internalFetch.mockResolvedValue(new Response(WAV_BYTES, { headers: { "content-type": "audio/mpeg" } }));
+
+        await persistAudioTaskResult(state, "http://internal", "https://cdn.example.com/result.mp3");
+
+        const [, init] = mocks.internalFetch.mock.calls[0] || [];
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-dq-logical-model")).toBe("audio-logical");
+        expect(headers.get("x-dq-upstream-model")).toBe("audio-one");
+        expect(headers.get("x-dq-media-authorization")).toBe("signed");
+    });
+
+    it("rejects executable bytes that forge an audio response type", async () => {
+        state = { ...audioTask(), status: "running" };
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", channelId: "channel-one" };
+        mocks.internalFetch.mockResolvedValue(new Response("<html><script>alert(1)</script></html>", { headers: { "content-type": "audio/mpeg" } }));
+
+        await expect(persistAudioTaskResult(state, "http://internal", "/api/audio/result")).rejects.toThrow("Unsupported media content");
+        expect(mocks.writeMedia).not.toHaveBeenCalled();
+        expect(state.status).toBe("running");
+    });
+
+    it("rejects oversized audio responses before buffering their body", async () => {
+        state = { ...audioTask(), status: "running" };
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", channelId: "channel-one" };
+        const cancel = vi.fn();
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                controller.enqueue(WAV_BYTES);
+            },
+            cancel,
+        });
+        mocks.internalFetch.mockResolvedValue(new Response(body, { headers: { "content-type": "audio/wav", "content-length": String(30 * 1024 * 1024 + 1) } }));
+
+        await expect(persistAudioTaskResult(state, "http://internal", "/api/audio/result")).rejects.toThrow("超过 30MB");
+        expect(cancel).toHaveBeenCalled();
+        expect(mocks.writeMedia).not.toHaveBeenCalled();
     });
 });
 

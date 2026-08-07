@@ -16,7 +16,7 @@ import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-d
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
-import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
+import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder, WorkbenchGenerationStatus } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
 import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
@@ -27,11 +27,12 @@ import { useWorkbenchAgentSessions } from "@/hooks/use-workbench-agent-sessions"
 import { useWorkbenchCreativeReview } from "@/hooks/use-workbench-creative-review";
 import { cn } from "@/lib/utils";
 import { imageAssetData, referenceImageFromAsset } from "@/lib/workbench-asset-reference";
-import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
+import type { GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { createImageGenerationTask, waitForImageGenerationTask } from "@/services/api/image";
 import { resolveImageGenerationCount } from "@/lib/server/image-task-config";
 import { deleteGenerationLogs as deleteServerGenerationLogs } from "@/services/api/generation-logs";
@@ -44,7 +45,6 @@ import {
     deleteServerImageTaskLogsForResults,
     imageServerLogIds,
     normalizeGeneratedImage,
-    readStoredLogs,
     removeStoredImageLogs,
     resultsFromLog,
     saveStoredImageLog,
@@ -61,7 +61,19 @@ import {
 
 export type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
-export function GenerationSettings({ config, model, updateConfig, openConfigDialog, hideModel = false }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; hideModel?: boolean }) {
+export function GenerationSettings({
+    config,
+    model,
+    updateConfig,
+    openConfigDialog,
+    hideModel = false,
+}: {
+    config: AiConfig;
+    model: string;
+    updateConfig: UpdateAiConfig;
+    openConfigDialog: (shouldPromptContinue?: boolean, capability?: ModelCapability) => void;
+    hideModel?: boolean;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     return (
@@ -69,7 +81,7 @@ export function GenerationSettings({ config, model, updateConfig, openConfigDial
             {!hideModel ? (
                 <label className="col-span-2 block min-w-0 sm:col-span-1">
                     <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
-                    <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(true)} />
+                    <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(true, "image")} />
                 </label>
             ) : null}
             <div className="col-span-2">
@@ -158,22 +170,44 @@ export function resultImageCardWidth(width: number, height: number, large = fals
     return Math.max(120, Math.round(Math.min(maxWidth, ratio * maxHeight)));
 }
 
-export function PendingImageCard({ large }: { large?: boolean }) {
-    return <WorkbenchGenerationPlaceholder kind="image" className={large ? "h-[156px] w-full max-w-[320px] sm:h-[240px]" : "h-[136px] w-full sm:h-[220px]"} />;
+export function PendingImageCard({ large, state }: { large?: boolean; state?: GenerationTaskExecutionState }) {
+    return (
+        <div className={cn("relative", large && "w-full max-w-[320px]")}>
+            <WorkbenchGenerationPlaceholder kind="image" className={large ? "h-[156px] w-full sm:h-[240px]" : "h-[136px] w-full sm:h-[220px]"} />
+            <WorkbenchGenerationStatus state={state} />
+        </div>
+    );
 }
 
-export function FailedImageCard({ error, large, selected, onSelectedChange, onRetry }: { error: string; large?: boolean; selected?: boolean; onSelectedChange?: (checked: boolean) => void; onRetry: () => void }) {
+export function FailedImageCard({
+    error,
+    retryable,
+    state,
+    large,
+    selected,
+    onSelectedChange,
+    onRetry,
+}: {
+    error: string;
+    retryable?: boolean;
+    state?: GenerationTaskExecutionState;
+    large?: boolean;
+    selected?: boolean;
+    onSelectedChange?: (checked: boolean) => void;
+    onRetry: () => void;
+}) {
+    const title = state?.publicStatus === "needs_review" ? "待确认" : state?.publicStatus === "cancelled" ? "已取消" : retryable ? "生成失败，可重试" : "生成失败";
     return (
-        <div className={cn("relative w-full overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20", large && "max-w-[320px]")}>
+        <div data-testid="image-failed-card" className={cn("relative w-full overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20", large && "max-w-[320px]")}>
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
             <div className={`flex flex-col items-center justify-center gap-2 p-3 text-center sm:gap-3 sm:p-5 ${large ? "h-[156px] sm:h-[240px]" : "h-[136px] sm:h-[220px]"}`}>
-                <div className="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>
+                <div className="text-sm font-medium text-red-600 dark:text-red-300">{title}</div>
                 <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
                     {error}
                 </Typography.Paragraph>
             </div>
             <div className="flex justify-end border-t border-red-200 p-2 sm:p-3 dark:border-red-950">
-                <Button size="small" danger onClick={onRetry}>
+                <Button size="small" danger aria-label="重试" disabled={!retryable} onClick={onRetry}>
                     重试
                 </Button>
             </div>
@@ -190,6 +224,10 @@ export function LogPanel({
     onDeleteSelected,
     onPreviewLog,
     onRenameLog,
+    historyTotal,
+    historyHasMore,
+    historyLoadingMore,
+    onLoadMore,
     compact = false,
 }: {
     logs: GenerationLog[];
@@ -200,6 +238,10 @@ export function LogPanel({
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
     onRenameLog: (log: GenerationLog, title: string) => void;
+    historyTotal?: number;
+    historyHasMore?: boolean;
+    historyLoadingMore?: boolean;
+    onLoadMore?: () => void;
     compact?: boolean;
 }) {
     return (
@@ -212,13 +254,17 @@ export function LogPanel({
             onDeleteSelected={onDeleteSelected}
             onPreviewLog={onPreviewLog}
             onRenameLog={onRenameLog}
+            total={historyTotal}
+            hasMore={historyHasMore}
+            loadingMore={historyLoadingMore}
+            onLoadMore={onLoadMore}
             compact={compact}
             renderPreview={(log) => {
                 const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
                 return thumbnails.length ? (
                     <div className="mt-2 flex gap-1 overflow-hidden">
                         {thumbnails.map((image, index) => (
-                            <img key={`${log.id}-${index}`} src={imagePreviewUrl(image, 96)} alt="" className="size-8 shrink-0 rounded-md object-cover" />
+                            <img key={`${log.id}-${index}`} src={imagePreviewUrl(image, 96)} alt="" loading="lazy" decoding="async" className="size-8 shrink-0 rounded-md object-cover" />
                         ))}
                     </div>
                 ) : null;

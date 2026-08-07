@@ -27,7 +27,7 @@ export function ResultSelectCheckbox({ selected, onSelectedChange }: { selected?
             aria-label="选择生成结果"
             aria-pressed={Boolean(selected)}
             className={
-                "absolute left-2 top-2 z-10 inline-flex size-6 items-center justify-center rounded-lg border shadow-sm backdrop-blur transition " +
+                "absolute left-2 top-2 z-10 inline-flex size-8 items-center justify-center rounded-lg border shadow-sm backdrop-blur transition sm:size-6 " +
                 (selected
                     ? "border-stone-400 bg-white text-stone-950 shadow-stone-950/15 dark:border-white/70 dark:bg-black/45 dark:text-white dark:shadow-black/45"
                     : "border-stone-300 bg-white/70 hover:border-stone-500 dark:border-white/55 dark:bg-black/45 dark:hover:border-white")

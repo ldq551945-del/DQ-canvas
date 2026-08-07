@@ -71,7 +71,7 @@ docker compose ps
 http://服务器IP:3000/install
 ```
 
-安装向导会先只读检查 PostgreSQL。连接与加密密钥就绪后，点击“初始化表结构”创建 `dq_` 前缀表，再创建第一个管理员账号。
+安装向导会先只读检查 PostgreSQL。连接、加密密钥和一次性 `DQ_INSTALL_TOKEN` 就绪后，点击“初始化表结构”创建 `dq_` 前缀表，再用同一安装令牌创建第一个管理员账号。完成后删除 App 的安装令牌并重启。
 
 已使用宝塔安装 PostgreSQL 时，在 `.env` 中把 `DATABASE_URL` Host 设为 `127.0.0.1`，并仅启动应用：
 

@@ -67,29 +67,14 @@ import {
 } from "lucide-react";
 import dayjs from "dayjs";
 import { nanoid } from "nanoid";
-import { applyChannelProtocol, channelProtocolDefinition, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
+import { applyChannelProtocol, channelProtocolDefinition } from "@/lib/channel-protocol-registry";
 
 import { formatCreditAmount } from "@/constant/credits";
 import { AdminAccountId } from "@/components/admin/admin-user-identity";
 import { channelModelCapability, normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
 import { normalizeModelId } from "@/lib/model-capability";
 import { resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import type {
-    AgentSkill,
-    AuthSettings,
-    CreatedCdkCode,
-    PublicAnnouncement,
-    PublicCdkCode,
-    PublicUser,
-    SiteFriendLink,
-    SiteShowcaseItem,
-    SiteSocialKey,
-    SystemChannelAdvancedConfig,
-    SystemChannelModelConfig,
-    SystemModelChannel,
-    UserRole,
-    UserStatus,
-} from "@/lib/auth/store";
+import type { AgentSkill, AuthSettings, CreatedCdkCode, PublicAnnouncement, PublicCdkCode, PublicUser, SiteFriendLink, SiteShowcaseItem, SiteSocialKey, SystemChannelAdvancedConfig, SystemModelChannel, UserRole, UserStatus } from "@/lib/auth/store";
 import type { GenerationAssetStats, StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { PaymentConfigSummary } from "@/lib/payment-config-types";
@@ -168,67 +153,7 @@ export function suggestedChannelModels(channel: Pick<SystemModelChannel, "baseUr
     return [];
 }
 
-export function buildAdvancedConfigFromHealth(channel: SystemModelChannel, results: ChannelHealthResult[]): SystemChannelAdvancedConfig {
-    const current = channel.advancedConfig || createDefaultChannelAdvancedConfig();
-    const text = firstOkResult(results, "text");
-    const image = firstOkResult(results, "image");
-    const video = firstOkResult(results, "video");
-    const protocol = video?.protocolKey || image?.protocolKey || text?.protocolKey || current.protocol || "auto";
-    const modelCapabilities = { ...(current.modelCapabilities || {}) };
-    const modelConfigs = { ...(current.modelConfigs || {}) };
-    results.forEach((result) => {
-        if (!result.ok || !result.model) return;
-        const key = normalizeModelId(result.model);
-        modelCapabilities[key] = result.kind;
-        modelConfigs[key] = normalizeStrictProtocolModelConfig(healthModelConfig(result, modelConfigs[key]), protocol);
-    });
-    return {
-        ...current,
-        protocol,
-        textModel: text?.model || current.textModel,
-        imageModel: image?.model || current.imageModel,
-        videoModel: video?.model || current.videoModel,
-        createPath: video?.createPath || image?.createPath || text?.createPath || current.createPath,
-        editPath: image?.editPath || current.editPath,
-        imageToVideoPath: video?.imageToVideoPath || current.imageToVideoPath,
-        queryPath: video?.queryPath || current.queryPath,
-        cancelPath: video?.cancelPath || current.cancelPath,
-        cancelMethod: video?.cancelMethod || current.cancelMethod,
-        requestTemplate: video?.requestTemplate || image?.requestTemplate || text?.requestTemplate || current.requestTemplate,
-        resultField: video?.resultField || image?.resultField || text?.resultField || current.resultField,
-        statusField: video?.statusField || current.statusField,
-        durationRange: video?.durationRange || current.durationRange,
-        referenceRule: video?.referenceRule || video?.referenceHint || image?.referenceRule || image?.referenceHint || current.referenceRule,
-        supportsReferenceImage: Boolean(video?.supportsReferenceImage || image?.supportsReferenceImage || current.supportsReferenceImage),
-        supportsReferenceVideo: Boolean(video?.supportsReferenceVideo || current.supportsReferenceVideo),
-        supportsReferenceAudio: Boolean(video?.supportsReferenceAudio || current.supportsReferenceAudio),
-        modelCapabilities,
-        modelConfigs,
-    };
-}
-
-function healthModelConfig(result: ChannelHealthResult, current?: SystemChannelModelConfig): SystemChannelModelConfig {
-    return {
-        ...(current || {}),
-        capability: result.kind,
-        source: "health",
-        ...(result.protocolKey ? { protocol: result.protocolKey } : {}),
-        ...(result.createPath ? { createPath: result.createPath } : {}),
-        ...(result.editPath ? { editPath: result.editPath } : {}),
-        ...(result.imageToVideoPath ? { imageToVideoPath: result.imageToVideoPath } : {}),
-        ...(result.queryPath ? { queryPath: result.queryPath } : {}),
-        ...(result.cancelPath ? { cancelPath: result.cancelPath } : {}),
-        ...(result.cancelMethod ? { cancelMethod: result.cancelMethod } : {}),
-        ...(result.requestTemplate ? { requestTemplate: result.requestTemplate } : {}),
-        ...(result.resultField ? { resultField: result.resultField } : {}),
-        ...(result.statusField ? { statusField: result.statusField } : {}),
-        ...(result.durationRange ? { durationRange: result.durationRange } : {}),
-        ...(result.referenceRule || result.referenceHint ? { referenceRule: result.referenceRule || result.referenceHint } : {}),
-        ...(typeof result.supportsReferenceImage === "boolean" ? { supportsReferenceImage: result.supportsReferenceImage } : {}),
-        ...(typeof result.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: result.supportsReferenceVideo } : {}),
-        ...(typeof result.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: result.supportsReferenceAudio } : {}),
-    };
-}
+export { buildAdvancedConfigFromHealth } from "./admin-channel-health-config";
 
 export function firstOkResult(results: ChannelHealthResult[], kind: ChannelHealthKind) {
     return results.find((result) => result.kind === kind && result.ok);
@@ -263,6 +188,7 @@ export async function requestAdminModels(channel: SystemModelChannel): Promise<A
             globalAiOpcPresets: advanced?.globalAiOpcPresets,
             createPath: advanced?.createPath,
             modelCatalogPaths: advanced?.modelCatalogPaths,
+            modelCatalogCapability: advanced?.modelCatalogCapability,
             configuredModels: channel.models,
             modelCapabilities: advanced?.modelCapabilities,
             modelConfigs: advanced?.modelConfigs,

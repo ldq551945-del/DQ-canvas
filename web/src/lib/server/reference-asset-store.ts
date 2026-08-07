@@ -4,6 +4,7 @@ import { basename, dirname, resolve, sep } from "node:path";
 import { CANVAS_IMAGE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { cleanupExpiredLocalMediaAssets, createDatedMediaPath, REFERENCE_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
+import { detectSafeMediaBuffer, detectSafeMediaFile } from "@/lib/server/media-content-validation";
 import { persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
 
 const REFERENCE_ASSET_TTL_MS = 24 * 60 * 60 * 1000;
@@ -72,10 +73,14 @@ async function writeMediaDataUrl(dataUrl: string, expectedType: "image" | "video
     if (!parsed || !parsed.mimeType.startsWith(`${expectedType}/`)) throw new Error("参考素材格式不正确");
     if (parsed.bytes.length > referenceMediaMaxBytes(expectedType, context.maxBytes)) throw new Error(`参考${expectedType === "image" ? "图" : expectedType === "video" ? "视频" : "音频"}文件过大`);
 
-    const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(parsed.mimeType));
-    const registration = referenceRegistration(token, persistent, expectedType, parsed.mimeType, parsed.bytes.length, context);
+    const detected = await detectSafeMediaBuffer(parsed.bytes).catch(() => null);
+    if (!detected || detected.type !== expectedType) throw new Error("参考素材实际文件类型不正确");
+    const mimeType = detected.mimeType;
+
+    const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(mimeType));
+    const registration = referenceRegistration(token, persistent, expectedType, mimeType, parsed.bytes.length, context);
     const external = await persistExternalMediaIfEnabled({ registration, bytes: parsed.bytes });
-    if (external) return { token, bytes: parsed.bytes.length, mimeType: parsed.mimeType, storage: "object" };
+    if (external) return { token, bytes: parsed.bytes.length, mimeType, storage: "object" };
     const filePath = resolve(REFERENCE_MEDIA_ROOT, token);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, parsed.bytes);
@@ -85,7 +90,7 @@ async function writeMediaDataUrl(dataUrl: string, expectedType: "image" | "video
         await unlink(filePath).catch(() => undefined);
         throw error;
     }
-    return { token, bytes: parsed.bytes.length, mimeType: parsed.mimeType, storage: "local" };
+    return { token, bytes: parsed.bytes.length, mimeType, storage: "local" };
 }
 
 export async function writeReferenceMediaFile(sourcePath: string, expectedType: "video" | "audio", mimeType: string, persistent: boolean, context: ReferenceMediaWriteContext): Promise<StoredReferenceAsset> {
@@ -94,10 +99,13 @@ export async function writeReferenceMediaFile(sourcePath: string, expectedType: 
     const sourceStat = await stat(sourcePath);
     if (!sourceStat.isFile() || sourceStat.size <= 0 || sourceStat.size > Math.min(context.maxBytes || MAX_REFERENCE_BYTES[expectedType], MAX_REFERENCE_BYTES[expectedType]))
         throw new Error(`生成${expectedType === "video" ? "视频" : "音频"}文件为空或过大`);
-    const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(mimeType));
-    const registration = referenceRegistration(token, persistent, expectedType, mimeType, sourceStat.size, context);
+    const detected = await detectSafeMediaFile(sourcePath).catch(() => null);
+    if (!detected || detected.type !== expectedType) throw new Error("媒体文件实际类型与声明不一致");
+    const detectedMimeType = detected.mimeType;
+    const token = createDatedMediaPath(persistent ? "permanent" : "temporary", expectedType, extensionFromMime(detectedMimeType));
+    const registration = referenceRegistration(token, persistent, expectedType, detectedMimeType, sourceStat.size, context);
     const external = await persistExternalMediaIfEnabled({ registration, filePath: sourcePath });
-    if (external) return { token, bytes: sourceStat.size, mimeType, storage: "object" };
+    if (external) return { token, bytes: sourceStat.size, mimeType: detectedMimeType, storage: "object" };
     const filePath = resolve(REFERENCE_MEDIA_ROOT, token);
     await mkdir(dirname(filePath), { recursive: true });
     await copyFile(sourcePath, filePath);
@@ -107,7 +115,7 @@ export async function writeReferenceMediaFile(sourcePath: string, expectedType: 
         await unlink(filePath).catch(() => undefined);
         throw error;
     }
-    return { token, bytes: sourceStat.size, mimeType, storage: "local" };
+    return { token, bytes: sourceStat.size, mimeType: detectedMimeType, storage: "local" };
 }
 
 export async function readReferenceAsset(token: string) {

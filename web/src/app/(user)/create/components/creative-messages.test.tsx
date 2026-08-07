@@ -74,6 +74,7 @@ describe("CreativeMessages", () => {
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
+                    canConfigureModels={false}
                 />
             </App>,
         );
@@ -126,6 +127,7 @@ describe("CreativeMessages", () => {
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
+                    canConfigureModels={false}
                 />
             </App>,
         );
@@ -179,6 +181,7 @@ describe("CreativeMessages", () => {
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
+                    canConfigureModels={false}
                 />
             </App>,
         );
@@ -228,12 +231,64 @@ describe("CreativeMessages", () => {
                     onEditMessage={vi.fn()}
                     selectedAssetIds={[]}
                     onToggleAsset={vi.fn()}
+                    canConfigureModels={false}
                 />
             </App>,
         );
 
         expect(markup).toContain('aria-label="重新分析本次请求"');
         expect(markup).toContain("仅在你确认后重新请求");
+    });
+
+    it("sends administrators to model configuration when planning fails because no model is configured", () => {
+        const message: CreativeMessage = {
+            id: "assistant-message",
+            conversationId: "conversation-one",
+            runId: "run-one",
+            sequence: 2,
+            role: "assistant",
+            status: "failed",
+            content: "后台尚未配置可用的默认文本模型",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const markup = renderToStaticMarkup(
+            <App>
+                <CreativeMessages
+                    messages={[message]}
+                    assets={[]}
+                    loading={false}
+                    projectLinks={{}}
+                    projectErrors={{}}
+                    runDetails={{
+                        "run-one": {
+                            id: "run-one",
+                            conversationId: "conversation-one",
+                            inputMessageId: "user-message",
+                            assistantMessageId: message.id,
+                            status: "failed",
+                            assetIds: [],
+                            tasks: [],
+                        },
+                    }}
+                    onMaterializeProject={async () => {
+                        throw new Error("not used");
+                    }}
+                    onRetryTask={vi.fn()}
+                    onRetryRun={vi.fn()}
+                    onRetrySubmission={vi.fn()}
+                    onEditMessage={vi.fn()}
+                    selectedAssetIds={[]}
+                    onToggleAsset={vi.fn()}
+                    canConfigureModels
+                />
+            </App>,
+        );
+
+        expect(markup).toContain('href="/admin?section=channels"');
+        expect(markup).toContain('aria-label="打开模型配置"');
+        expect(markup).toContain("配置完成后返回并重新分析");
     });
 });
 
@@ -256,6 +311,7 @@ function renderMessages(message: CreativeMessage) {
                 onEditMessage={vi.fn()}
                 selectedAssetIds={[]}
                 onToggleAsset={vi.fn()}
+                canConfigureModels={false}
             />
         </App>,
     );

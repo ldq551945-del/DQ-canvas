@@ -1,4 +1,5 @@
 import { getAuthSettings, refundUserPoints } from "@/lib/auth/store";
+import { parseFragment } from "parse5";
 import { parseDeterministicProtocolDraft, protocolDraftFromUnknown, redactProtocolSecrets, type ChannelProtocolDraft } from "@/lib/channel-protocol-draft";
 import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
 import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router";
@@ -102,13 +103,23 @@ async function fetchProtocolDocument(url: string) {
         if (length > MAX_DOCUMENT_BYTES) throw new ProtocolDraftError("文档超过 512KB 限制", 413);
         const bytes = Buffer.from(await response.arrayBuffer());
         if (bytes.length > MAX_DOCUMENT_BYTES) throw new ProtocolDraftError("文档超过 512KB 限制", 413);
-        return bytes
-            .toString("utf8")
-            .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
-            .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
-            .replace(/<[^>]+>/g, " ");
+        const source = bytes.toString("utf8");
+        return response.headers.get("content-type")?.toLowerCase().includes("text/html") ? htmlDocumentText(source) : source;
     }
     return "";
+}
+
+type HtmlDocumentNode = { nodeName?: string; tagName?: string; value?: string; childNodes?: HtmlDocumentNode[] };
+
+export function htmlDocumentText(source: string) {
+    const values: string[] = [];
+    const visit = (node: HtmlDocumentNode) => {
+        if (node.tagName && ["script", "style", "template"].includes(node.tagName.toLowerCase())) return;
+        if (node.nodeName === "#text" && node.value) values.push(node.value);
+        node.childNodes?.forEach(visit);
+    };
+    visit(parseFragment(source) as unknown as HtmlDocumentNode);
+    return values.join(" ").replace(/\s+/g, " ").trim();
 }
 
 function protocolAssistantPrompt(source: string, fallback?: ChannelProtocolDraft | null) {

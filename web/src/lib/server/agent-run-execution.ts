@@ -15,7 +15,7 @@ import { getCreativeAssetsByIds } from "@/lib/server/creative-runtime-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { linkStoredGenerationTask } from "@/lib/server/generation-task-store";
-import { maintenanceWorkerContextHeaders } from "@/lib/server/maintenance-auth";
+import { workerContextHeaders } from "@/lib/server/maintenance-auth";
 import type { AgentFunctionCallResult } from "./agent-function-call";
 import { agentSurfaceImageSize, canvasSnapshotNodes, isMediaReferenceType, resolveAgentTaskRatio, resolveCanvasTaskTargetNodeId } from "./agent-run-task-input";
 import { planToOps, taskResultOps } from "./agent-run-canvas-ops";
@@ -810,7 +810,7 @@ export async function patchTask(runId: string, taskId: string, patch: Partial<Ag
 
 function runtimeRequestHeaders(cookie: string, initial?: HeadersInit) {
     const headers = new Headers(initial);
-    const workerHeaders = maintenanceWorkerContextHeaders(cookie);
+    const workerHeaders = workerContextHeaders(cookie);
     if (workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
     return headers;

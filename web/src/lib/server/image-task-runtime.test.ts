@@ -14,6 +14,9 @@ const mocks = vi.hoisted(() => ({
     inlineResult: vi.fn(),
     getSettings: vi.fn(),
     refund: vi.fn(),
+    resolveProxy: vi.fn(),
+    normalizeResultUrl: vi.fn(),
+    register: vi.fn(),
 }));
 
 vi.mock("@/app/api/image-tasks/image-task-custom", () => ({ runCustomImageTask: mocks.runCustom, pollCustomImageTask: mocks.pollCustom }));
@@ -24,22 +27,25 @@ vi.mock("@/app/api/image-tasks/image-task-support", () => ({
     imageUnits: vi.fn(() => 1),
     ImageUpstreamTerminalError: class extends Error {},
     inlineRemoteImageResult: mocks.inlineResult,
+    normalizeImageResultUrlForPersistence: mocks.normalizeResultUrl,
     pollOpenAiImageTask: mocks.pollOpenAi,
+    resolveProxiedMediaSource: mocks.resolveProxy,
 }));
 vi.mock("@/app/api/image-tasks/image-task-runner", () => ({ stableMediaUrl: vi.fn((value: string) => (value && !value.startsWith("data:") ? value : "")), writeImageGenerationLog: mocks.writeLog }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getSettings, refundUserPoints: mocks.refund }));
-vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: vi.fn() }));
+vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
 vi.mock("@/lib/server/image-task-store", () => ({
     getImageTask: mocks.getTask,
     updateImageTask: mocks.updateTask,
     transitionImageTask: mocks.transitionTask,
 }));
-vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn(() => "worker-context") }));
+vi.mock("@/lib/server/maintenance-auth", () => ({ workerContext: vi.fn(() => "worker-context") }));
+vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-dq-media-authorization": "signed" })) }));
 
 import { GenerationSubmissionSafeFailure, GenerationSubmissionUncertainError } from "./generation-submission-error";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
-import { createImageTaskUpstreamStep } from "./image-task-runtime";
+import { createImageTaskUpstreamStep, persistImageTaskResult } from "./image-task-runtime";
 import type { ImageTask } from "./image-task-store";
 
 describe("image task runtime submission safety", () => {
@@ -60,6 +66,9 @@ describe("image task runtime submission safety", () => {
         });
         mocks.getSettings.mockResolvedValue({ generationPointMultipliers: { imageQuality: {} } });
         mocks.inlineResult.mockImplementation(async (dataUrl: string) => ({ dataUrl }));
+        mocks.normalizeResultUrl.mockImplementation(async (_config: unknown, value: string) => value);
+        mocks.resolveProxy.mockReturnValue({});
+        mocks.register.mockResolvedValue(undefined);
     });
 
     it("switches candidates only after an explicit safe rejection", async () => {
@@ -127,6 +136,38 @@ describe("image task runtime submission safety", () => {
             "worker-context",
             true,
         );
+    });
+
+    it("adds a task-bound capability when persisting a proxied image result", async () => {
+        state = imageTask();
+        state.status = "running";
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", channelId: "channel-one" };
+        const proxyUrl = "/api/ai/system/channel-one/_media?url=https%3A%2F%2Fcdn.example.com%2Fresult.png";
+        mocks.resolveProxy.mockReturnValue({ proxyUrl, remoteUrl: "https://cdn.example.com/result.png" });
+        mocks.inlineResult.mockResolvedValue({ dataUrl: "data:image/png;base64,c2FmZQ==", remoteUrl: "https://cdn.example.com/result.png" });
+        mocks.writeLog.mockResolvedValue({});
+
+        await persistImageTaskResult(state, "http://internal", proxyUrl);
+
+        expect(mocks.inlineResult).toHaveBeenCalledWith(proxyUrl, "http://internal", "worker-context", undefined, { "x-dq-media-authorization": "signed" });
+    });
+
+    it("normalizes an old Grok loopback result before persistence", async () => {
+        state = imageTask();
+        state.status = "running";
+        state.config = { ...state.config, baseUrl: "/api/ai/system/channel-one", channelId: "channel-one", model: "grok-imagine-image" };
+        const loopbackUrl = "http://127.0.0.1:8000/v1/media/images/image-one";
+        const proxyUrl = "/api/ai/system/channel-one/_media?url=https%3A%2F%2Fgrok.example%2Fv1%2Fmedia%2Fimages%2Fimage-one";
+        const config = state.config;
+        mocks.normalizeResultUrl.mockResolvedValue(proxyUrl);
+        mocks.resolveProxy.mockReturnValue({ proxyUrl, remoteUrl: "https://grok.example/v1/media/images/image-one" });
+        mocks.inlineResult.mockResolvedValue({ dataUrl: "data:image/png;base64,c2FmZQ==", remoteUrl: "https://grok.example/v1/media/images/image-one" });
+        mocks.writeLog.mockResolvedValue({});
+
+        await persistImageTaskResult(state, "http://internal", loopbackUrl);
+
+        expect(mocks.normalizeResultUrl).toHaveBeenCalledWith(config, loopbackUrl, "http://internal");
+        expect(mocks.inlineResult).toHaveBeenCalledWith(proxyUrl, "http://internal", "worker-context", undefined, { "x-dq-media-authorization": "signed" });
     });
 });
 

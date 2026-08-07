@@ -35,6 +35,114 @@ describe("admin models route", () => {
         expect(fetchMock).toHaveBeenCalledWith("https://sd.example.com/sdapi/v1/sd-models", expect.objectContaining({ headers: {} }));
     });
 
+    it("classifies opaque models from the selected protocol catalog", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ data: [{ id: "opaque-seedance-model", object: "model" }] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ baseUrl: "https://video.example.com", apiKey: "secret", protocol: "seedance" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            models: ["opaque-seedance-model"],
+            modelCapabilities: { "opaque-seedance-model": "video" },
+            modelConfigs: { "opaque-seedance-model": { capability: "video", protocol: "seedance", createPath: "/contents/generations/tasks" } },
+        });
+    });
+
+    it("keeps a Grok2API video override inside an OpenAI-compatible catalog", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    data: [
+                        { id: "grok-chat", capability: "text", owned_by: "grok2api" },
+                        { id: "grok-imagine-image", capability: "image", owned_by: "grok2api" },
+                        { id: "grok-imagine-video", capability: "video", owned_by: "grok2api" },
+                    ],
+                }),
+            ),
+        );
+
+        const response = await POST(request({ channelId: "saved", protocol: "openai" }));
+
+        expect(await response.json()).toMatchObject({
+            modelConfigs: {
+                "grok-chat": { capability: "text", protocol: "openai", createPath: "/chat/completions" },
+                "grok-imagine-image": { capability: "image", protocol: "openai", createPath: "/images/generations" },
+                "grok-imagine-video": { capability: "video", protocol: "grok2api", createPath: "/v1/videos/generations", queryPath: "/v1/videos/:task_id" },
+            },
+        });
+    });
+
+    it("returns only the requested model capability and its route metadata", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    data: [
+                        { id: "grok-chat", owned_by: "grok2api" },
+                        { id: "grok-imagine-image", owned_by: "grok2api" },
+                        { id: "grok-imagine-video", owned_by: "grok2api" },
+                    ],
+                }),
+            ),
+        );
+
+        const response = await POST(request({ channelId: "saved", protocol: "grok2api", modelCatalogCapability: "video" }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+            models: ["grok-imagine-video"],
+            modelCapabilities: { "grok-imagine-video": "video" },
+            modelConfigs: { "grok-imagine-video": { capability: "video", protocol: "grok2api" } },
+            discoveredCount: 1,
+            totalCount: 1,
+        });
+    });
+
+    it("allows text, image and video pulls for the same provider without sharing cooldown", async () => {
+        vi.stubGlobal(
+            "fetch",
+            vi.fn(async () =>
+                Response.json({
+                    data: [
+                        { id: "grok-chat", owned_by: "grok2api" },
+                        { id: "grok-imagine-image", owned_by: "grok2api" },
+                        { id: "grok-imagine-video", owned_by: "grok2api" },
+                    ],
+                }),
+            ),
+        );
+
+        const textResponse = await POST(request({ channelId: "saved", protocol: "openai", modelCatalogCapability: "text" }));
+        const imageResponse = await POST(request({ channelId: "saved", protocol: "openai", modelCatalogCapability: "image" }));
+        const videoResponse = await POST(request({ channelId: "saved", protocol: "openai", modelCatalogCapability: "video" }));
+
+        expect(textResponse.status).toBe(200);
+        expect(imageResponse.status).toBe(200);
+        expect(videoResponse.status).toBe(200);
+        expect(await textResponse.json()).toMatchObject({ models: ["grok-chat"] });
+        expect(await imageResponse.json()).toMatchObject({ models: ["grok-imagine-image"] });
+        expect(await videoResponse.json()).toMatchObject({
+            models: ["grok-imagine-video"],
+            modelCapabilities: { "grok-imagine-video": "video" },
+            modelConfigs: { "grok-imagine-video": { capability: "video", protocol: "grok2api" } },
+        });
+    });
+
+    it("keeps same-key channels independent when they pull the same capability", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ data: [{ id: "grok-chat", owned_by: "grok2api" }] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const credentials = { baseUrl: savedChannel.baseUrl, apiKey: savedChannel.apiKey, protocol: "openai", modelCatalogCapability: "text" };
+        const firstResponse = await POST(request({ ...credentials, channelId: "grok-text-primary" }));
+        const secondResponse = await POST(request({ ...credentials, channelId: "grok-text-backup" }));
+
+        expect(firstResponse.status).toBe(200);
+        expect(secondResponse.status).toBe(200);
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
     it("loads every paginated provider model page and returns capability metadata", async () => {
         const fetchMock = vi
             .fn()
@@ -94,6 +202,28 @@ describe("admin models route", () => {
             modelCapabilities: { "openai-text": "text", "sd2.0": "video" },
             modelConfigs: { "sd2.0": { capability: "video", createPath: "/videos", queryPath: "/videos/:task_id" } },
         });
+    });
+
+    it("loads an explicitly configured same-origin model catalog", async () => {
+        const fetchMock = vi.fn(async () => Response.json({ data: [{ id: "same-origin-model" }] }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved", modelCatalogPaths: ["/v1/models"] }));
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ models: ["same-origin-model"] });
+        expect(fetchMock).toHaveBeenCalledWith("https://api.example.com/v1/models", expect.any(Object));
+    });
+
+    it("rejects a model catalog configured on another origin", async () => {
+        const fetchMock = vi.fn();
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(request({ channelId: "saved", modelCatalogPaths: ["https://other.example.com/v1/models"] }));
+
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ error: expect.any(String) });
+        expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("applies capability-level custom protocol operations to newly discovered models", async () => {

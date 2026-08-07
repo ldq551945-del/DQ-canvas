@@ -1,15 +1,17 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { generationRuntimeEnvironment, superviseGenerationRuntime } from "./generation-runtime.mjs";
-import { prepareStandaloneAssets } from "./standalone-assets.mjs";
+import { prepareStandaloneAssets, validateStandaloneSharpRuntime } from "./standalone-assets.mjs";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const httpObservabilityScript = path.join(webRoot, "scripts", "http-observability.mjs");
 const distDir = process.env.NEXT_DIST_DIR?.trim() || ".next";
 const buildRoot = path.join(webRoot, distDir);
 const standaloneRoot = path.join(buildRoot, "standalone");
 
-await prepareStandaloneAssets({ webRoot, distDir });
+const artifacts = await prepareStandaloneAssets({ webRoot, distDir });
+validateStandaloneSharpRuntime(artifacts.serverEntry);
 
 const runtime = generationRuntimeEnvironment({
     environment: {
@@ -21,7 +23,8 @@ const runtime = generationRuntimeEnvironment({
     },
 });
 process.exitCode = await superviseGenerationRuntime({
-    app: { command: process.execPath, args: ["server.js"], cwd: standaloneRoot },
+    app: { command: process.execPath, args: ["--import", pathToFileURL(httpObservabilityScript).href, "server.js"], cwd: standaloneRoot },
     workerScript: path.join(webRoot, "scripts", "generation-worker.mjs"),
-    environment: runtime.environment,
+    appEnvironment: runtime.appEnvironment,
+    workerEnvironment: runtime.workerEnvironment,
 });

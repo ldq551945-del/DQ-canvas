@@ -2,6 +2,7 @@ import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, nor
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { readStoredMediaFile, uploadGeneratedMediaFile, type UploadedFile } from "@/services/file-storage";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 type RequestOptions = {
@@ -55,6 +56,7 @@ export async function createAudioGenerationTask(config: AiConfig, prompt: string
         }),
         signal: options?.signal,
     });
+    throwIfClientSessionExpired(response);
     syncUserPointsFromHeaders(response.headers, requestConfig.apiSource);
     if (!response.ok) throw new Error(await readFetchError(response, "创建音频任务失败"));
     const payload = (await response.json()) as AudioTaskPayload;
@@ -71,6 +73,7 @@ export async function waitForAudioGenerationTask(config: AiConfig, task: AudioGe
             if (options?.signal?.aborted) throw new DOMException("请求已取消", "AbortError");
             if (Date.now() - startedAt > AUDIO_TASK_TIMEOUT_MS) throw new Error("音频生成超时，请稍后重试");
             const taskResponse = await fetch(`/api/audio-tasks/${encodeURIComponent(task.id)}`, { cache: "no-store", signal: options?.signal });
+            throwIfClientSessionExpired(taskResponse);
             syncUserPointsFromHeaders(taskResponse.headers, requestConfig.apiSource);
             if (!taskResponse.ok) throw new Error(await readFetchError(taskResponse, "读取音频任务失败"));
             const taskPayload = (await taskResponse.json()) as AudioTaskPayload;

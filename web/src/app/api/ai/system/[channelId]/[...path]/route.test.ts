@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
     refundUserPoints: vi.fn(),
     safeUrl: vi.fn(),
     safeFetch: vi.fn(),
+    mediaAccess: vi.fn(),
+    taskAccess: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: vi.fn(async () => ({ id: "user-one" })) }));
@@ -17,6 +19,8 @@ vi.mock("@/lib/auth/store", () => ({
     refundUserPoints: mocks.refundUserPoints,
 }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
+vi.mock("@/lib/server/generation-media-access", () => ({ authorizeGenerationMediaProxyRequest: mocks.mediaAccess }));
+vi.mock("@/lib/server/generation-task-authorization", () => ({ userOwnsGenerationUpstreamTask: mocks.taskAccess }));
 vi.mock("@/lib/server/security", () => ({
     checkMediaProxyRateLimit: mocks.checkMediaProxyRateLimit,
     fetchSafeOutboundUrl: mocks.safeFetch,
@@ -35,6 +39,7 @@ describe("system media proxy", () => {
         mocks.checkMediaProxyRateLimit.mockResolvedValue({ allowed: true, remaining: 119, resetAt: Date.now() + 60_000 });
         mocks.safeUrl.mockResolvedValue(true);
         mocks.safeFetch.mockImplementation((url: string | URL, init?: RequestInit) => fetch(url, init));
+        mocks.mediaAccess.mockReset().mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "secret", apiFormat: "openai", models: [] }],
         });
@@ -48,6 +53,16 @@ describe("system media proxy", () => {
 
         expect(response.status).toBe(429);
         expect(response.headers.get("retry-after")).toBe("60");
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects media urls that were not authorized by a server-owned generation task", async () => {
+        mocks.mediaAccess.mockResolvedValue(false);
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+
+        const response = await GET(request(), context);
+
+        expect(response.status).toBe(403);
         expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -110,9 +125,10 @@ describe("GlobalAiOpc native text proxy", () => {
         mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("gemini-text", "text", "gemini-3.1-pro-preview")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -197,7 +213,7 @@ describe("GlobalAiOpc native text proxy", () => {
     it("routes GlobalAiOpc media models from one catalog channel to the matching service endpoint", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("videos", "video", "videos_stable")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -221,7 +237,7 @@ describe("GlobalAiOpc native text proxy", () => {
     it("keeps the GlobalAiOpc service prefix and v1 version when polling a video task", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("videos", "video", "videos_stable")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -236,7 +252,9 @@ describe("GlobalAiOpc native text proxy", () => {
         });
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ id: "video-one", status: "processing" }), { headers: { "content-type": "application/json" } }));
 
-        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/result/video-one"), { params: Promise.resolve({ channelId: "channel-one", path: ["result", "video-one"] }) });
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/result/video-one", { headers: systemModelHeaders("videos", "videos_stable") }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["result", "video-one"] }),
+        });
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v1/result/video-one");
@@ -245,7 +263,7 @@ describe("GlobalAiOpc native text proxy", () => {
     it("maps internal Chat calls to Claude Messages and leaves Responses for Chat fallback", async () => {
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("claude-text", "text", "claude-opus-4-6")],
             systemChannels: [
                 {
                     id: "channel-one",
@@ -281,9 +299,10 @@ describe("Agnes video polling proxy", () => {
         mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
         mocks.refundUserPoints.mockReset();
         mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
         mocks.getAuthSettings.mockResolvedValue({
             generationPointMultipliers: {},
-            logicalModels: [],
+            logicalModels: [logicalModel("agnes-video", "video", "agnes-video-v2.0")],
             systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://apihub.agnes-ai.com/v1", apiKey: "secret", apiFormat: "openai", models: ["agnes-video-v2.0"] }],
         });
     });
@@ -291,12 +310,35 @@ describe("Agnes video polling proxy", () => {
     it("queries the documented root agnesapi endpoint instead of nesting it under v1", async () => {
         const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ id: "video-one", status: "processing" }));
 
-        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=video-one"), {
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=video-one", { headers: systemModelHeaders("agnes-video", "agnes-video-v2.0") }), {
             params: Promise.resolve({ channelId: "channel-one", path: ["agnesapi"] }),
         });
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://apihub.agnes-ai.com/agnesapi?video_id=video-one");
+        expect(mocks.taskAccess).toHaveBeenCalledWith({ userId: "user-one", capability: "video", channelId: "channel-one", upstreamModel: "agnes-video-v2.0", upstreamTaskId: "video-one", operation: "query" });
+    });
+
+    it("does not forward another user's upstream task", async () => {
+        mocks.taskAccess.mockResolvedValue(false);
+        const fetchMock = vi.spyOn(globalThis, "fetch");
+        const response = await GET(new Request("http://localhost/api/ai/system/channel-one/agnesapi?video_id=other", { headers: systemModelHeaders("agnes-video", "agnes-video-v2.0") }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["agnesapi"] }),
+        });
+
+        expect(response.status).toBe(404);
+        expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("authorizes cancellation only after resolving the owned upstream task", async () => {
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ status: "cancelled" }));
+        const response = await POST(new Request("http://localhost/api/ai/system/channel-one/videos/video-one/cancel", { method: "POST", headers: systemModelHeaders("agnes-video", "agnes-video-v2.0") }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["videos", "video-one", "cancel"] }),
+        });
+
+        expect(response.status).toBe(200);
+        expect(mocks.taskAccess).toHaveBeenCalledWith({ userId: "user-one", capability: "video", channelId: "channel-one", upstreamModel: "agnes-video-v2.0", upstreamTaskId: "video-one", operation: "cancel" });
+        expect(fetchMock.mock.calls[0]?.[0]).toBe("https://apihub.agnes-ai.com/v1/videos/video-one/cancel");
     });
 });
 
@@ -349,6 +391,68 @@ describe("Stable Diffusion proxy", () => {
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://sd.example.com/sdapi/v1/txt2img");
         expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
+    });
+});
+
+describe("VOZEB recommended video proxy", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        mocks.consumeUserPoints.mockReset().mockResolvedValue(undefined);
+        mocks.refundUserPoints.mockReset();
+        mocks.safeUrl.mockResolvedValue(true);
+        mocks.taskAccess.mockReset().mockResolvedValue(true);
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("vozeb-video", "video", "Seedance 2.0-fast-720p")],
+            systemChannels: [
+                {
+                    id: "channel-one",
+                    enabled: true,
+                    baseUrl: "https://new.aiym.ink/v1",
+                    apiKey: "secret",
+                    apiFormat: "openai",
+                    models: ["Seedance 2.0-fast-720p"],
+                    advancedConfig: {
+                        protocol: "vozeb-recommended",
+                        createPath: "/v1/videos/generations",
+                        imageToVideoPath: "/v1/videos/generations",
+                        queryPath: "/v1/videos/generations/:task_id",
+                        modelConfigs: {
+                            "seedance 2.0-fast-720p": {
+                                capability: "video",
+                                protocol: "vozeb-recommended",
+                                createPath: "/v1/videos/generations",
+                                queryPath: "/v1/videos/generations/:task_id",
+                            },
+                        },
+                    },
+                },
+            ],
+        });
+    });
+
+    it("keeps one v1 prefix for JSON creation and polling", async () => {
+        const fetchMock = vi
+            .spyOn(globalThis, "fetch")
+            .mockResolvedValueOnce(Response.json({ id: "video-one", task_id: "video-one", status: "queued" }))
+            .mockResolvedValueOnce(Response.json({ id: "video-one", status: "completed", metadata: { url: "https://new.aiym.ink/v1/video-media/video-one.mp4" } }));
+        const headers = { "content-type": "application/json", ...systemModelHeaders("vozeb-video", "Seedance 2.0-fast-720p") };
+        const createResponse = await POST(
+            new Request("http://localhost/api/ai/system/channel-one/v1/videos/generations", {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ model: "Seedance 2.0-fast-720p", prompt: "test", duration: 5, generate_audio: false }),
+            }),
+            { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations"] }) },
+        );
+        const queryResponse = await GET(new Request("http://localhost/api/ai/system/channel-one/v1/videos/generations/video-one", { headers }), {
+            params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "generations", "video-one"] }),
+        });
+
+        expect(createResponse.status).toBe(200);
+        expect(queryResponse.status).toBe(200);
+        expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["https://new.aiym.ink/v1/videos/generations", "https://new.aiym.ink/v1/videos/generations/video-one"]);
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("content-type")).toBe("application/json");
     });
 });
 
@@ -456,4 +560,12 @@ function textContext() {
 
 function chatRequest(body: unknown) {
     return new Request("http://localhost/api/ai/system/channel-one/chat/completions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+}
+
+function logicalModel(id: string, capability: "text" | "image" | "video" | "audio", upstreamModel: string) {
+    return { id, name: id, capability, enabled: true, bindings: [{ id: `${id}-binding`, channelId: "channel-one", upstreamModel, enabled: true, priority: 1 }] };
+}
+
+function systemModelHeaders(logicalModelId: string, upstreamModel: string) {
+    return { "x-dq-logical-model": logicalModelId, "x-dq-upstream-model": upstreamModel };
 }

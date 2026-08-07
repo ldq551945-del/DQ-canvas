@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { lookup } from "node:dns/promises";
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 
@@ -8,10 +7,12 @@ import type { GenerationLogReferenceSnapshot, GenerationLogRequestSnapshot, Gene
 import { ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
 import { normalizeGeneratedImageBytes } from "@/lib/server/generated-image-normalizer";
+import { detectSafeMediaBuffer, inspectSafeMediaBody } from "@/lib/server/media-content-validation";
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
 import { deleteExternalMediaObject, persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
-import { isPublicIpAddress } from "@/lib/server/security";
+import { isSafeOutboundUrl } from "@/lib/server/outbound-url-security";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 import type { GenerationLogAsset, GenerationLogDatabase, GenerationLogKind, GenerationLogSource, GenerationLogStatus, StoredGenerationLog } from "./generation-log-types";
 
 const LOG_DATA_FILE = "generation-logs.json";
@@ -84,6 +85,7 @@ export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> 
             mimeType: normalizeOptionalText(stored?.mimeType || asset.mimeType, undefined, 120),
             width: toOptionalNumber(stored?.width || asset.width),
             height: toOptionalNumber(stored?.height || asset.height),
+            durationMs: toOptionalNumber(stored?.durationMs || asset.durationMs),
             bytes: toOptionalNumber(stored?.bytes || asset.bytes),
         });
     }
@@ -93,28 +95,30 @@ export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> 
 export async function writeDataUrlAsset(dataUrl: string, type: GenerationLogKind, context: GenerationAssetContext): Promise<GenerationLogAsset | null> {
     const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
     if (!match) return null;
-    const mimeType = match[1] || (type === "video" ? "video/mp4" : "image/png");
-    if (!mimeType.startsWith(`${type}/`)) return null;
     const bytes = Buffer.from(match[2], "base64");
     if (bytes.length > maxServerAssetBytes(type)) return null;
-    return writeAssetBytes(bytes, mimeType, type, context);
+    return writeAssetBytes(bytes, match[1] || "application/octet-stream", type, context);
 }
 
 export async function writeRemoteAsset(url: string, type: GenerationLogKind, context: GenerationAssetContext): Promise<GenerationLogAsset | null> {
-    if (!(await isSafeRemoteAssetUrl(url))) return null;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SERVER_ASSET_DOWNLOAD_TIMEOUT_MS);
     try {
-        const response = await fetch(url, { cache: "no-store", redirect: "manual", signal: controller.signal });
+        const response = await fetchSafeOutboundUrl(url, { cache: "no-store", signal: controller.signal }, { allowPrivateUpstreams: false });
         if (!response.ok || !response.body) return null;
         const contentLength = Number(response.headers.get("content-length") || 0);
         const maxBytes = maxServerAssetBytes(type);
-        if (contentLength > maxBytes) return null;
-        const bytes = Buffer.from(await response.arrayBuffer());
-        if (bytes.length > maxBytes) return null;
-        const mimeType = response.headers.get("content-type")?.split(";", 1)[0] || (type === "video" ? "video/mp4" : "image/png");
-        if (!mimeType.startsWith(`${type}/`)) return null;
-        return writeAssetBytes(bytes, mimeType, type, context);
+        if (contentLength > maxBytes) {
+            await response.body.cancel("Generation media is too large").catch(() => undefined);
+            return null;
+        }
+        const inspected = await inspectSafeMediaBody(response.body);
+        if (inspected.type !== type) {
+            await inspected.body.cancel("Unexpected generation media type").catch(() => undefined);
+            return null;
+        }
+        const bytes = await readLimitedMediaBytes(inspected.body, maxBytes);
+        return writeAssetBytes(bytes, inspected.mimeType, type, context);
     } catch {
         return null;
     } finally {
@@ -123,18 +127,13 @@ export async function writeRemoteAsset(url: string, type: GenerationLogKind, con
 }
 
 export async function isSafeRemoteAssetUrl(value: string) {
-    try {
-        const url = new URL(value);
-        if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-        if (url.username || url.password) return false;
-        const addresses = await lookup(url.hostname, { all: true, verbatim: true });
-        return addresses.length > 0 && addresses.every((item) => isPublicIpAddress(item.address));
-    } catch {
-        return false;
-    }
+    return isSafeOutboundUrl(value, { allowCredentials: false, allowPrivateUpstreams: false });
 }
 
 export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: GenerationLogKind, context: GenerationAssetContext): Promise<GenerationLogAsset> {
+    const detected = await detectSafeMediaBuffer(bytes);
+    if (detected.type !== type) throw new Error("生成媒体文件类型无效");
+    mimeType = detected.mimeType;
     const normalized: { bytes: Buffer; mimeType: string; width?: number; height?: number } = type === "image" ? await normalizeGeneratedImageBytes(bytes, mimeType, context.targetSize) : { bytes, mimeType };
     bytes = normalized.bytes;
     mimeType = normalized.mimeType;
@@ -166,6 +165,29 @@ export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: Gen
         throw error;
     }
     return { type, url: serverUrl, serverUrl, mimeType, bytes: bytes.length, width: normalized.width, height: normalized.height };
+}
+
+async function readLimitedMediaBytes(body: ReadableStream<Uint8Array>, maxBytes: number) {
+    const reader = body.getReader();
+    const chunks: Buffer[] = [];
+    let total = 0;
+    try {
+        for (;;) {
+            const next = await reader.read();
+            if (next.done) break;
+            const chunk = Buffer.from(next.value);
+            total += chunk.length;
+            if (total > maxBytes) {
+                await reader.cancel("Generation media is too large").catch(() => undefined);
+                throw new Error("生成媒体文件超过大小限制");
+            }
+            chunks.push(chunk);
+        }
+    } finally {
+        reader.releaseLock();
+    }
+    if (!total) throw new Error("生成媒体文件为空");
+    return Buffer.concat(chunks, total);
 }
 
 export function maxServerAssetBytes(type: GenerationLogKind) {
@@ -326,6 +348,16 @@ export async function writePostgresGenerationLogDbWithExecutor(db: GenerationLog
     await insertPostgresGenerationLogs(client, logs);
 }
 
+export async function upsertPostgresGenerationLogDbWithExecutor(db: GenerationLogDatabase, client: QueryExecutor) {
+    const normalized = normalizeDb(db);
+    const userResult = await client.query("SELECT id FROM users");
+    const userIds = new Set(userResult.rows.map((row) => dbText(row.id)));
+    await insertPostgresGenerationLogs(
+        client,
+        normalized.logs.filter((log) => userIds.has(log.userId)),
+    );
+}
+
 export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: StoredGenerationLog[]) {
     for (const log of logs) {
         await db.query(
@@ -335,6 +367,28 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
                 duration_ms, count, success_count, fail_count, request_snapshot, task_id, error, created_at, updated_at, completed_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22)
+            ON CONFLICT (id) DO UPDATE SET
+                user_id = EXCLUDED.user_id,
+                conversation_id = EXCLUDED.conversation_id,
+                username = EXCLUDED.username,
+                display_name = EXCLUDED.display_name,
+                kind = EXCLUDED.kind,
+                source = EXCLUDED.source,
+                status = EXCLUDED.status,
+                title = EXCLUDED.title,
+                prompt = EXCLUDED.prompt,
+                model = EXCLUDED.model,
+                summary = EXCLUDED.summary,
+                duration_ms = EXCLUDED.duration_ms,
+                count = EXCLUDED.count,
+                success_count = EXCLUDED.success_count,
+                fail_count = EXCLUDED.fail_count,
+                request_snapshot = EXCLUDED.request_snapshot,
+                task_id = EXCLUDED.task_id,
+                error = EXCLUDED.error,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at,
+                completed_at = EXCLUDED.completed_at
             `,
             [
                 log.id,
@@ -361,6 +415,7 @@ export async function insertPostgresGenerationLogs(db: QueryExecutor, logs: Stor
                 log.completedAt || null,
             ],
         );
+        await db.query("DELETE FROM generation_log_assets WHERE generation_log_id = $1", [log.id]);
         await insertPostgresGenerationLogAssets(db, log.id, log.assets);
     }
 }
@@ -555,6 +610,7 @@ function normalizeSnapshotSlot(value: unknown): GenerationLogSlotSnapshot[] {
             parameters: normalizeSnapshotParameters(source.parameters),
             referenceIds: Array.isArray(source.referenceIds) ? Array.from(new Set(source.referenceIds.map((item) => normalizeOptionalText(item, undefined, 160)).filter((item): item is string => Boolean(item)))).slice(0, 32) : undefined,
             assetIndex: toOptionalNumber(source.assetIndex),
+            clientRequestId: normalizeOptionalText(source.clientRequestId, undefined, 200),
             taskId: normalizeOptionalText(source.taskId, undefined, 200),
             taskKind: source.taskKind === "edit" ? "edit" : source.taskKind === "generation" ? "generation" : undefined,
             taskProvider: source.taskProvider === "openai" || source.taskProvider === "seedance" || source.taskProvider === "generation" ? source.taskProvider : undefined,
@@ -564,6 +620,7 @@ function normalizeSnapshotSlot(value: unknown): GenerationLogSlotSnapshot[] {
             serverTaskId: normalizeOptionalText(source.serverTaskId, undefined, 200),
             startedAt: toOptionalNumber(source.startedAt),
             error: normalizeOptionalText(source.error, undefined, 1000),
+            canRetry: source.canRetry === true ? true : undefined,
         },
     ];
 }
@@ -600,6 +657,7 @@ export function normalizeStoredAsset(asset: Partial<GenerationLogAsset> | undefi
         mimeType: normalizeOptionalText(asset.mimeType, undefined, 120),
         width: toOptionalNumber(asset.width),
         height: toOptionalNumber(asset.height),
+        durationMs: toOptionalNumber(asset.durationMs),
         bytes: toOptionalNumber(asset.bytes),
     };
 }

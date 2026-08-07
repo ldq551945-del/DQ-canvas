@@ -3,16 +3,17 @@ import { randomUUID } from "node:crypto";
 
 import { resolveGenerationWorkerOrigin } from "./generation-runtime.mjs";
 
-const token = process.env.DQ_MAINTENANCE_TOKEN?.trim() || "";
+const token = process.env.DQ_WORKER_TOKEN?.trim() || "";
 const origin = resolveGenerationWorkerOrigin();
 const workerId = (process.env.DQ_GENERATION_WORKER_ID?.trim() || `generation-worker:${hostname()}:${process.pid}:${randomUUID()}`).slice(0, 150);
 const idleDelayMs = boundedNumber(process.env.DQ_GENERATION_WORKER_INTERVAL_MS, 2_000, 500, 30_000);
 const lanes = boundedNumber(process.env.DQ_GENERATION_WORKER_LANES, 2, 1, 8);
 const heartbeatIntervalMs = boundedNumber(process.env.DQ_GENERATION_WORKER_HEARTBEAT_MS, 15_000, 5_000, 60_000);
+const refundIntervalMs = boundedNumber(process.env.DQ_BILLING_REFUND_WORKER_INTERVAL_MS, 15_000, 2_000, 5 * 60_000);
 let stopping = false;
 let heartbeatPending = false;
 
-if (token.length < 32) throw new Error("DQ_MAINTENANCE_TOKEN must contain at least 32 characters");
+if (token.length < 32) throw new Error("DQ_WORKER_TOKEN must contain at least 32 characters");
 
 process.once("SIGTERM", stop);
 process.once("SIGINT", stop);
@@ -20,7 +21,7 @@ process.once("SIGINT", stop);
 console.log(`Generation worker started: ${workerId}`);
 void sendHeartbeat();
 const heartbeatTimer = setInterval(() => void sendHeartbeat(), heartbeatIntervalMs);
-await Promise.all(Array.from({ length: lanes }, (_, index) => runLane(index + 1)));
+await Promise.all([...Array.from({ length: lanes }, (_, index) => runLane(index + 1)), runRefundLane()]);
 clearInterval(heartbeatTimer);
 console.log("Generation worker stopped");
 
@@ -47,6 +48,34 @@ async function runLane(index) {
             consecutiveErrors += 1;
             const retryMs = Math.min(60_000, 1_000 * 2 ** Math.min(consecutiveErrors - 1, 6));
             console.error(`Generation worker lane ${index} batch failed`, error instanceof Error ? error.message : error, `retrying in ${retryMs}ms`);
+            await delay(retryMs);
+        }
+    }
+}
+
+async function runRefundLane() {
+    const refundWorkerId = `${workerId}:billing-refunds`;
+    let consecutiveErrors = 0;
+    while (!stopping) {
+        try {
+            const response = await fetch(`${origin}/api/maintenance/billing-refunds/run`, {
+                method: "POST",
+                headers: {
+                    authorization: `Bearer ${token}`,
+                    "x-dq-worker-id": refundWorkerId,
+                },
+                signal: AbortSignal.timeout(60_000),
+            });
+            const payload = await response.json().catch(() => null);
+            if (!response.ok) throw new Error(payload?.msg || `Refund worker endpoint returned HTTP ${response.status}`);
+            consecutiveErrors = 0;
+            const claimed = Number(payload?.data?.claimed || 0);
+            await delay(claimed > 0 ? 500 : refundIntervalMs);
+        } catch (error) {
+            if (stopping) break;
+            consecutiveErrors += 1;
+            const retryMs = Math.min(60_000, 1_000 * 2 ** Math.min(consecutiveErrors - 1, 6));
+            console.error("Billing refund worker batch failed", error instanceof Error ? error.message : error, `retrying in ${retryMs}ms`);
             await delay(retryMs);
         }
     }

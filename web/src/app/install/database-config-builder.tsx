@@ -6,7 +6,21 @@ import { Check, Copy, Database, FileCode2, KeyRound, RefreshCw, Server, Terminal
 
 import { buildDeploymentSnippets, generateDeploymentSecret, modeOptions, type DeployMode } from "./database-config";
 
-export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChange }: { maintenanceToken?: string; onMaintenanceTokenChange?: (value: string) => void }) {
+export function DatabaseConfigBuilder({
+    installToken,
+    maintenanceToken,
+    workerToken,
+    onInstallTokenChange,
+    onMaintenanceTokenChange,
+    onWorkerTokenChange,
+}: {
+    installToken?: string;
+    maintenanceToken?: string;
+    workerToken?: string;
+    onInstallTokenChange?: (value: string) => void;
+    onMaintenanceTokenChange?: (value: string) => void;
+    onWorkerTokenChange?: (value: string) => void;
+}) {
     const [mode, setMode] = useState<DeployMode>("local");
     const [host, setHost] = useState("localhost");
     const [port, setPort] = useState("5432");
@@ -15,13 +29,19 @@ export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChan
     const [password, setPassword] = useState("");
     const [ssl, setSsl] = useState(false);
     const [encryptionKey, setEncryptionKey] = useState("");
+    const [generatedInstallToken, setGeneratedInstallToken] = useState("");
     const [generatedMaintenanceToken, setGeneratedMaintenanceToken] = useState("");
+    const [generatedWorkerToken, setGeneratedWorkerToken] = useState("");
     const [copiedKey, setCopiedKey] = useState("");
     const [activeSnippet, setActiveSnippet] = useState<SnippetKey>("env");
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const effectiveInstallToken = installToken ?? generatedInstallToken;
     const effectiveMaintenanceToken = maintenanceToken ?? generatedMaintenanceToken;
+    const effectiveWorkerToken = workerToken ?? generatedWorkerToken;
+    const setInstallToken = onInstallTokenChange || setGeneratedInstallToken;
     const setMaintenanceToken = onMaintenanceTokenChange || setGeneratedMaintenanceToken;
-    const configurationReady = Boolean(password && encryptionKey && effectiveMaintenanceToken);
+    const setWorkerToken = onWorkerTokenChange || setGeneratedWorkerToken;
+    const configurationReady = Boolean(password && encryptionKey && effectiveInstallToken && effectiveMaintenanceToken && effectiveWorkerToken && effectiveWorkerToken !== effectiveMaintenanceToken);
     const snippets = useMemo(
         () =>
             buildDeploymentSnippets({
@@ -33,12 +53,14 @@ export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChan
                 password,
                 ssl,
                 encryptionKey,
+                installToken: effectiveInstallToken,
                 maintenanceToken: effectiveMaintenanceToken,
+                workerToken: effectiveWorkerToken,
             }),
-        [database, effectiveMaintenanceToken, encryptionKey, host, mode, password, port, ssl, username],
+        [database, effectiveInstallToken, effectiveMaintenanceToken, effectiveWorkerToken, encryptionKey, host, mode, password, port, ssl, username],
     );
     const snippetOptions: SnippetOption[] = [
-        { key: "env", label: "环境变量", title: mode === "local" ? "web/.env.local" : "项目根目录 .env", description: "数据库、加密密钥与 App/Worker 共享令牌", icon: FileCode2, text: snippets.envText },
+        { key: "env", label: "环境变量", title: mode === "local" ? "web/.env.local" : "项目根目录 .env", description: "数据库、加密密钥、安装令牌与 Worker 令牌", icon: FileCode2, text: snippets.envText },
         { key: "compose", label: "Compose", title: mode === "baota" ? "宝塔 Compose 模板" : "Docker Compose 模板", description: "同时启动 App 与生成 Worker", icon: Server, text: snippets.composeText },
         { key: "sql", label: "建库命令", title: "PostgreSQL 建库命令", description: "在数据库服务器终端中创建独立账号和数据库", icon: TerminalSquare, text: snippets.sqlText },
     ];
@@ -48,7 +70,9 @@ export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChan
 
     useEffect(() => {
         setEncryptionKey(generateDeploymentSecret());
+        setInstallToken(generateDeploymentSecret());
         setMaintenanceToken(generateDeploymentSecret());
+        setWorkerToken(generateDeploymentSecret());
         return () => {
             if (timerRef.current) clearTimeout(timerRef.current);
         };
@@ -132,13 +156,53 @@ export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChan
                         </span>
                     </label>
                     <label className="block space-y-1.5 sm:col-span-2">
+                        <span className="text-xs font-medium text-slate-500">Worker Token</span>
+                        <span className="flex gap-2">
+                            <input
+                                className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none"
+                                value={effectiveWorkerToken}
+                                onChange={(event) => setWorkerToken(event.target.value)}
+                                aria-label="生成 Worker 独立令牌"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setWorkerToken(generateDeploymentSecret())}
+                                className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+                                title="重新生成 Worker 令牌"
+                                aria-label="重新生成 Worker 令牌"
+                            >
+                                <RefreshCw className="size-4" />
+                            </button>
+                        </span>
+                    </label>
+                    <label className="block space-y-1.5 sm:col-span-2">
+                        <span className="text-xs font-medium text-slate-500">Install Token</span>
+                        <span className="flex gap-2">
+                            <input
+                                className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none"
+                                value={effectiveInstallToken}
+                                onChange={(event) => setInstallToken(event.target.value)}
+                                aria-label="一次性安装令牌"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setInstallToken(generateDeploymentSecret())}
+                                className="inline-flex size-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+                                title="重新生成安装令牌"
+                                aria-label="重新生成安装令牌"
+                            >
+                                <RefreshCw className="size-4" />
+                            </button>
+                        </span>
+                    </label>
+                    <label className="block space-y-1.5 sm:col-span-2">
                         <span className="text-xs font-medium text-slate-500">Maintenance Token</span>
                         <span className="flex gap-2">
                             <input
                                 className="h-11 min-w-0 flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 font-mono text-xs text-slate-700 outline-none"
                                 value={effectiveMaintenanceToken}
                                 onChange={(event) => setMaintenanceToken(event.target.value)}
-                                aria-label="App 与 Worker 共享维护令牌"
+                                aria-label="外部维护令牌"
                             />
                             <button
                                 type="button"
@@ -165,7 +229,9 @@ export function DatabaseConfigBuilder({ maintenanceToken, onMaintenanceTokenChan
                     <FieldNote title="Database / User" text="建议使用独立库和独立账号，避免和同一 PostgreSQL 内其他项目混用。" />
                     <FieldNote title="Password" text="安装页只生成配置文本，不会把数据库密码保存到浏览器或服务端。" />
                     <FieldNote title="Encryption Key" text="随机生成 32 字节密钥；部署后必须保持不变，否则已保存密钥无法解密。" />
-                    <FieldNote title="Maintenance Token" text="App 与生成 Worker 使用同一个 32 字节令牌；复制配置时会一并带上。" />
+                    <FieldNote title="Install Token" text="仅用于初始化数据库和首个管理员；安装完成后可从 App 环境变量删除。" />
+                    <FieldNote title="Maintenance Token" text="仅供外部计划任务和运维接口使用；不要复制给生成 Worker。" />
+                    <FieldNote title="Worker Token" text="仅供生成 Worker 调用任务和内部模型代理；必须与 Maintenance Token 使用不同随机值。" />
                 </div>
 
                 <div className="mt-5">
@@ -284,7 +350,7 @@ function buildDeploymentSteps(mode: DeployMode) {
         return [
             { title: "创建数据库", text: "打开上方“建库命令”，复制后在宝塔“终端”执行。已有数据库和账号时可跳过。" },
             { title: "保存环境变量", text: "复制“环境变量”，在 /www/wwwroot/dq 下创建或更新 .env 文件。" },
-            { title: "重建应用与 Worker", text: "在宝塔终端进入项目目录执行下面的命令；两个服务会读取同一个维护令牌。", command: "docker compose -f docker-compose.baota.yml up -d --force-recreate" },
+            { title: "重建应用与 Worker", text: "在宝塔终端进入项目目录执行下面的命令；App 读取两类令牌，Worker 只读取独立 Worker 令牌。", command: "docker compose -f docker-compose.baota.yml up -d --force-recreate" },
             { title: "返回安装页", text: "等待 10-30 秒，点击右侧“刷新检查”；看到连接可用后，再点击“初始化表结构”。" },
         ];
     }
@@ -300,7 +366,7 @@ function buildDeploymentSteps(mode: DeployMode) {
         return [
             { title: "准备云数据库", text: "先在云数据库控制台创建数据库和账号，并按服务商要求放行应用服务器 IP。" },
             { title: "保存环境变量", text: "复制“环境变量”到项目根目录 .env；服务商要求 SSL 时保持“启用 SSL”开启。" },
-            { title: "重启应用与 Worker", text: "重新创建两个服务，使数据库配置、加密密钥和共享维护令牌生效。", command: "docker compose -f docker-compose.external-db.yml up -d --force-recreate" },
+            { title: "重启应用与 Worker", text: "重新创建两个服务，使数据库配置、加密密钥和两类独立令牌生效。", command: "docker compose -f docker-compose.external-db.yml up -d --force-recreate" },
             { title: "完成初始化", text: "刷新安装页，连接成功后点击“初始化表结构”，然后创建管理员。" },
         ];
     }

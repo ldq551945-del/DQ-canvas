@@ -38,7 +38,7 @@ export function AppWorkspaceShell({ children }: { children: ReactNode }) {
                     <div className="flex min-w-0 items-center gap-2.5">
                         <button
                             type="button"
-                            className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:bg-stone-900 dark:hover:text-white"
+                            className="inline-flex size-10 shrink-0 items-center justify-center rounded-md text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 lg:hidden dark:text-stone-300 dark:hover:bg-stone-900 dark:hover:text-white"
                             onClick={() => setMobileNavOpen(true)}
                             aria-label="打开导航菜单"
                             title="导航菜单"

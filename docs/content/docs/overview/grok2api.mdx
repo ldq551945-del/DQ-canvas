@@ -1,0 +1,54 @@
+---
+title: Grok2API 渠道适配
+description: Grok2API 文本、图片和视频渠道的配置边界、媒体代理与验收记录
+---
+
+# Grok2API 渠道适配
+
+本文记录 DQ-绘图 对 Grok2API 的实际接入方式。它不是新的模型服务，而是一个严格的渠道协议适配器：管理员仍在后台配置真实 Base URL、API Key 和模型，普通用户只看到绑定后的逻辑模型。
+
+## 支持范围
+
+| 能力 | 配置方式 | 关键模型或路径 |
+| --- | --- | --- |
+| 文本 | 使用 OpenAI 兼容文本协议 | 由 `/v1/models` 目录和能力检测决定 |
+| 图片 | 使用 OpenAI 兼容图片请求 | `grok-imagine-image` 及其带后缀版本 |
+| 视频 | 选择 `Grok2API Video` 严格协议 | `grok-imagine-video`、`/v1/videos/generations` |
+| 音频 | 本次未配置 | 需要单独的音频渠道和真实验收 |
+
+## 后台配置
+
+在“管理后台 -> 模型渠道”新建渠道，协议选择 `Grok2API Video`（视频）或对应的 OpenAI 兼容协议（文本、图片），然后填写：
+
+1. `Base URL` 使用上游 API 根地址，例如 `https://provider.example`；系统会按协议补齐 `/v1`，不要把 `/v1/videos/...` 填到 Base URL。
+2. API Key 只保存在服务端加密配置中。相同上游地址和凭据可以按能力拆成多条独立渠道，分别只拉取文本、图片或视频模型。
+3. 拉取模型目录后按能力绑定逻辑模型，并单独执行文本、图片或视频能力检测。检测可能产生上游费用。
+4. 生产环境不要把 API Key 写进浏览器代码、README、日志、备份导出或提交记录。
+
+## 视频协议细节
+
+- 创建：`POST /v1/videos/generations`
+- 查询：`GET /v1/videos/:task_id`
+- 完成状态：`completed`、`success`、`done` 等成功状态
+- 内容：`GET /v1/videos/:task_id/content`
+- 请求字段：`model`、`prompt`、`duration`、`aspect_ratio`、`resolution`；首张参考图放入 `image.url`，其余参考图放入 `reference_images[].url`。
+
+Grok2API 有些版本在完成响应中返回本机回环地址或相对内容地址，不能把它直接保存为用户结果。DQ-绘图 对 `grok2api` 视频完成状态统一使用上游任务 ID 拼出 `/v1/videos/:task_id/content`，再通过站内 `/_media?url=` 代理读取。代理请求带有任务、用户、渠道和模型绑定的短期签名，服务端会继续执行出站地址安全校验、响应大小限制和文件签名检测，最后保存为永久媒体资产。
+
+## 生产运行边界
+
+- 结果媒体会写入 `DQ_DATA_DIR/reference-assets/permanent/...`，启用 S3 兼容对象存储后写入对象存储；数据库只保存稳定 `storageKey` 和归属关系。
+- 生成 Worker 必须常驻运行，页面关闭或刷新不会丢失轮询和媒体保存。
+- 不要为了兼容某个上游而关闭全局 MIME/文件头校验。当前实现使用 `fileTypeFromBuffer` 读取有限文件前缀，兼容 Next standalone 镜像，避免 `fileTypeFromFile` 的动态导入在生产容器中失效。
+- 视频上游若返回 HTML、JSON、图片或超出大小限制，任务会停留在可恢复的持久化阶段并记录 `persist_error`，不会把伪造内容登记成视频。
+
+## 本轮真实验收
+
+2026-08-07 在本地 Docker Compose、PostgreSQL 和真实 Grok2API 渠道上完成：
+
+- 文本：成功返回指定测试文本。
+- 图片：成功生成 `2048x2048` PNG，约 `1.1 MB`，任务和媒体已持久化。
+- 视频：任务 `28ea8a5b-42f7-4a3a-9972-b4b9ecd67d34` 最终为 `success/completed`；登记媒体为 `video/mp4`、`713813` 字节，`ffprobe` 识别为 MP4，时长 `5.042` 秒。
+- 视频故障记录：首次运行曾因 standalone 中 `file-type` 动态导入导致持久化校验失败；修复为静态打包的有限前缀检测后，由 Worker 自动恢复并完成落盘。
+
+这条记录只证明当前渠道和当前模型的接入闭环，不代表其他模型、音频能力、支付商或生产反向代理已经完成商业上线验收。

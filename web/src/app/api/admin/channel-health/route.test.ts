@@ -93,6 +93,51 @@ describe("admin channel health route", () => {
         });
     });
 
+    it("tests the VOZEB recommended video protocol on one v1-prefixed endpoint", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ id: "video-task", status: "queued" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(
+            request({
+                baseUrl: "https://new.aiym.ink/v1",
+                apiKey: "secret",
+                model: "Seedance 2.0-fast-720p",
+                kind: "video",
+                protocol: "vozeb-recommended",
+            }),
+        );
+        const payload = await response.json();
+
+        expect(payload.result).toMatchObject({ ok: true, protocolKey: "vozeb-recommended", createPath: "/v1/videos/generations" });
+        expect(fetchMock).toHaveBeenCalledWith("https://new.aiym.ink/v1/videos/generations", expect.objectContaining({ method: "POST" }));
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ model: "Seedance 2.0-fast-720p", generate_audio: false, duration: 5 });
+    });
+
+    it("tests Grok2API video with only documented JSON fields", async () => {
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({ request_id: "video-test" }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const response = await POST(
+            request({
+                baseUrl: "https://grok.example.com/",
+                apiKey: "secret",
+                model: "grok-imagine-video",
+                kind: "video",
+                protocol: "grok2api",
+            }),
+        );
+
+        expect((await response.json()).result).toMatchObject({ ok: true, protocolKey: "grok2api", taskId: "video-test", createPath: "/v1/videos/generations" });
+        expect(fetchMock).toHaveBeenCalledWith("https://grok.example.com/v1/videos/generations", expect.objectContaining({ method: "POST" }));
+        expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+            model: "grok-imagine-video",
+            prompt: expect.any(String),
+            duration: 4,
+            aspect_ratio: "16:9",
+            resolution: "720p",
+        });
+    });
+
     it("recognizes a binary audio response", async () => {
         vi.stubGlobal(
             "fetch",

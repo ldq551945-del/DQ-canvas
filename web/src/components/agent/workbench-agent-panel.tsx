@@ -23,7 +23,7 @@ export function WorkbenchAgentHeader({ subtitle, historyContent, onNew }: { subt
     const [historyQuery, setHistoryQuery] = useState("");
     const [historyOpen, setHistoryOpen] = useState(false);
     const history = (
-        <div className="w-[360px] max-w-[calc(100vw-32px)] p-2">
+        <div className="w-[360px] max-w-[calc(100vw-56px)] p-2">
             <div className="mb-3 text-base font-semibold">生成记录</div>
             <Input prefix={<Search className="size-4 text-stone-400" />} placeholder="搜索记录或对话内容" value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} allowClear />
             <div className="thin-scrollbar mt-3 max-h-[380px] overflow-y-auto">{historyContent(historyQuery.trim(), () => setHistoryOpen(false))}</div>
@@ -64,7 +64,7 @@ export function WorkbenchSkillEmptyState({ skills, onSelect }: { skills: Workben
                         <button
                             key={skill.id}
                             type="button"
-                            className="h-7 min-w-0 truncate whitespace-nowrap rounded-full border border-stone-200 bg-white px-2 text-[11px] text-stone-600 transition hover:border-stone-400 hover:text-stone-950 sm:h-auto sm:px-4 sm:py-2 sm:text-sm dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300 dark:hover:border-stone-500 dark:hover:text-white"
+                            className="min-h-10 min-w-0 truncate whitespace-nowrap rounded-full border border-stone-200 bg-white px-2 text-[11px] text-stone-600 transition hover:border-stone-400 hover:text-stone-950 sm:min-h-0 sm:px-4 sm:py-2 sm:text-sm dark:border-stone-700 dark:bg-stone-900 dark:text-stone-300 dark:hover:border-stone-500 dark:hover:text-white"
                             onClick={() => onSelect(skill)}
                         >
                             {skill.name}
@@ -78,7 +78,11 @@ export function WorkbenchSkillEmptyState({ skills, onSelect }: { skills: Workben
 
 export function WorkbenchBackgroundTaskNotice({ count }: { count: number }) {
     if (!count) return null;
-    return <div className="mx-1 mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-200">有 {count} 个后台生成任务仍在运行，可在历史记录中查看进度。</div>;
+    return (
+        <div role="status" className="mx-1 mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:border-sky-500/25 dark:bg-sky-500/10 dark:text-sky-200">
+            有 {count} 个后台生成任务仍在运行，可在历史记录中查看进度。
+        </div>
+    );
 }
 
 export function WorkbenchAgentConversation({
@@ -148,8 +152,8 @@ export function WorkbenchAgentConversation({
                 );
             })}
             {running && !hasActiveProgress && messages.at(-1)?.role === "user" ? (
-                <div className="flex items-center gap-2 px-2 text-sm text-stone-500">
-                    <LoaderCircle className="size-4 animate-spin" />
+                <div role="status" aria-live="polite" className="flex items-center gap-2 px-2 text-sm text-stone-500">
+                    <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                     Agent 正在处理当前需求…
                 </div>
             ) : null}
@@ -311,7 +315,7 @@ export function WorkbenchComposerFrame({
                             trigger="click"
                             placement="top"
                             content={
-                                <div className="w-[336px] max-w-[calc(100vw-24px)]">
+                                <div className="w-[328px] max-w-[calc(100vw-32px)]">
                                     <div className="border-b border-stone-200 px-2 pb-2 pt-1 dark:border-stone-700">
                                         <p className="text-sm font-semibold text-stone-900 dark:text-stone-100">生成参数</p>
                                         <p className="mt-0.5 truncate text-[11px] text-stone-500 dark:text-stone-400">当前：{summary}</p>

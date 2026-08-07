@@ -1,0 +1,62 @@
+---
+title: 镜像供应链与回滚
+description: DQ 容器镜像的不可变部署、漏洞门禁、SBOM、签名、来源证明与回滚流程
+---
+
+# 镜像供应链与回滚
+
+主应用、文档站和 rembg 的发布工作流按 amd64/arm64 分别构建。每个架构镜像都生成 BuildKit SBOM 与 provenance，并在合并多架构 manifest 前使用 Trivy 检查有修复版本的 HIGH/CRITICAL 漏洞。任一架构不通过时，不会更新发布标签。
+
+多架构 manifest 发布后，工作流会：
+
+- 解析并再次读取 `sha256` digest，避免把标签当作发布身份。
+- 生成 SPDX JSON SBOM。
+- 使用 GitHub OIDC 执行 Cosign keyless 签名，并立即验证签名。
+- 生成 GitHub build provenance attestation 并写回 GHCR。
+- 上传保留 90 天的 `*-release-evidence-<git-sha>` artifact，其中包含不可变镜像引用、OCI manifest、SBOM、Cosign 验证结果、provenance bundle 和 SHA-256 校验清单。
+
+Dockerfile 的基础镜像和 Compose 内置 PostgreSQL 镜像均固定到 manifest digest。Dependabot 每周提出 digest 与 GitHub Actions commit 更新，更新仍需通过发布契约、测试和镜像扫描。
+
+## Compose 上线
+
+从成功工作流的 release evidence artifact 读取 `image-reference.txt`，不要根据 `latest` 猜测当前镜像。主应用和 Worker 必须使用同一个不可变引用：
+
+```bash
+export DQ_IMAGE='ghcr.io/dao-qin/dq@sha256:<verified-app-digest>'
+export DQ_REMBG_IMAGE='ghcr.io/dao-qin/dq-rembg@sha256:<verified-rembg-digest>'
+docker compose pull
+docker compose up -d
+curl -fsS http://127.0.0.1:3000/api/health/live
+curl -fsS http://127.0.0.1:3000/api/health/ready
+```
+
+可在有 Cosign 的运维机上独立验证签名：
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/DAO-QIN/DQ-canvas/.github/workflows/.*@refs/(heads|tags)/.*$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  'ghcr.io/dao-qin/dq@sha256:<verified-app-digest>'
+```
+
+仓库可能 fork 或改名，验证时应把 identity 正则中的 owner/repository 改成实际 GitHub 仓库，不能放宽为任意仓库。
+
+## Compose 回滚
+
+发布前保存当前 `DQ_IMAGE`、`DQ_REMBG_IMAGE` 和对应 release evidence artifact。涉及 Schema 变更时，先创建数据库与媒体灾备恢复点；镜像回滚不等于数据库回滚。
+
+```bash
+export DQ_IMAGE='ghcr.io/dao-qin/dq@sha256:<previous-verified-app-digest>'
+export DQ_REMBG_IMAGE='ghcr.io/dao-qin/dq-rembg@sha256:<previous-verified-rembg-digest>'
+docker compose pull app generation-worker rembg
+docker compose up -d --no-deps app rembg
+curl -fsS http://127.0.0.1:3000/api/health/live
+curl -fsS http://127.0.0.1:3000/api/health/ready
+docker compose up -d --no-deps generation-worker
+```
+
+只有 `/api/health/ready` 返回成功并确认关键读写路径兼容后才恢复 Worker。若旧应用不兼容新 Schema，应保持服务离线，按灾备清单恢复数据库和媒体，不能用反复重启掩盖不兼容。
+
+## Render 边界
+
+当前 `render.yaml` 使用 Docker runtime 从仓库源码重新构建 Web 与 Worker，并不拉取 GHCR 发布镜像。因此，GHCR 的 Cosign 签名、SBOM 和 provenance 不能证明 Render 实际运行的镜像。Render 发布应记录 Git commit 和 Deploy ID，使用平台 Deploy 历史回滚到上一成功构建，再验证 `/api/health/live`、`/api/health/ready`、Worker 心跳和关键读写路径。若需要统一使用 GHCR digest，必须改为 Render 支持的预构建镜像部署方式，并单独验证私有镜像凭据和 Web/Worker 同 digest，不能仅修改文档后宣称完成。

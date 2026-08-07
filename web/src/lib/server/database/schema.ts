@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS system_model_channels (
     name text NOT NULL,
     base_url text NOT NULL DEFAULT '',
     api_key_ciphertext text NOT NULL DEFAULT '',
+    webhook_secret_ciphertext text NOT NULL DEFAULT '',
     api_format text NOT NULL DEFAULT 'openai',
     models jsonb NOT NULL DEFAULT '[]'::jsonb,
     enabled boolean NOT NULL DEFAULT true,
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS system_model_channels (
     updated_at timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT system_model_channels_api_format CHECK (api_format IN ('openai', 'gemini'))
 );
+ALTER TABLE system_model_channels ADD COLUMN IF NOT EXISTS webhook_secret_ciphertext text NOT NULL DEFAULT '';
 ALTER TABLE system_model_channels ADD COLUMN IF NOT EXISTS health_results jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE SEQUENCE IF NOT EXISTS user_account_id_seq START WITH 1;
@@ -254,17 +256,21 @@ ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS worker_id text;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS lease_until timestamptz;
 ALTER TABLE generation_tasks ADD COLUMN IF NOT EXISTS last_heartbeat_at timestamptz;
 ALTER TABLE generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_execution_phase;
-ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
+ALTER TABLE generation_tasks ADD CONSTRAINT generation_tasks_execution_phase CHECK (execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting', 'cancel_requested', 'cancel_polling', 'needs_review', 'review_pending', 'reviewing', 'review_unavailable', 'completed'));
 
 DROP INDEX IF EXISTS generation_tasks_user_client_request_idx;
 CREATE UNIQUE INDEX generation_tasks_user_client_request_idx ON generation_tasks (user_id, task_type, client_request_id, COALESCE(attempt_no, 0)) WHERE client_request_id IS NOT NULL AND client_request_id <> '';
+CREATE INDEX IF NOT EXISTS generation_tasks_owner_upstream_idx
+    ON generation_tasks (user_id, task_type, channel_id, upstream_task_id, updated_at DESC)
+    WHERE channel_id IS NOT NULL AND channel_id <> '' AND upstream_task_id IS NOT NULL AND upstream_task_id <> '';
 CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_image_process_source_active_idx
     ON generation_tasks (user_id, COALESCE(project_id, ''), (payload->>'sourceNodeId'))
     WHERE task_type = 'image_process' AND status IN ('pending', 'running') AND COALESCE(payload->>'sourceNodeId', '') <> '';
 CREATE INDEX IF NOT EXISTS generation_tasks_conversation_idx ON generation_tasks (conversation_id, updated_at DESC) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_run_idx ON generation_tasks (run_id, updated_at DESC) WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS generation_tasks_user_project_idx ON generation_tasks (user_id, project_id, task_type, status) WHERE project_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
+DROP INDEX IF EXISTS generation_tasks_recovery_due_idx;
+CREATE INDEX generation_tasks_recovery_due_idx ON generation_tasks (next_poll_at, lease_until, id) WHERE (status IN ('pending', 'running') AND execution_phase IN ('created', 'submitting', 'submitted', 'polling', 'result_ready', 'persisting')) OR (status = 'cancelled' AND execution_phase IN ('cancel_requested', 'cancel_polling')) OR (task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing'));
 
 CREATE TABLE IF NOT EXISTS generation_worker_heartbeats (
     worker_id text PRIMARY KEY,
@@ -280,11 +286,22 @@ CREATE TABLE IF NOT EXISTS generation_webhook_events (
     task_id text,
     task_type text,
     payload_hash text NOT NULL,
+    signature_timestamp timestamptz NOT NULL,
     status text NOT NULL DEFAULT 'received',
+    conflict_count integer NOT NULL DEFAULT 0,
+    last_conflict_payload_hash text,
+    last_conflict_at timestamptz,
     received_at timestamptz NOT NULL DEFAULT now(),
     processed_at timestamptz,
     PRIMARY KEY (channel_id, event_id)
 );
+
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS signature_timestamp timestamptz;
+UPDATE generation_webhook_events SET signature_timestamp = COALESCE(signature_timestamp, received_at) WHERE signature_timestamp IS NULL;
+ALTER TABLE generation_webhook_events ALTER COLUMN signature_timestamp SET NOT NULL;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS conflict_count integer NOT NULL DEFAULT 0;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_payload_hash text;
+ALTER TABLE generation_webhook_events ADD COLUMN IF NOT EXISTS last_conflict_at timestamptz;
 
 CREATE INDEX IF NOT EXISTS generation_webhook_events_received_idx ON generation_webhook_events (received_at DESC);
 
@@ -875,10 +892,20 @@ CREATE TABLE IF NOT EXISTS generation_log_assets (
     mime_type text,
     width integer,
     height integer,
+    duration_ms integer,
     bytes bigint,
     sort_order integer NOT NULL DEFAULT 0,
     CONSTRAINT generation_log_assets_type CHECK (type IN ('image', 'video'))
 );
+ALTER TABLE generation_log_assets ADD COLUMN IF NOT EXISTS duration_ms integer;
+UPDATE generation_log_assets AS asset
+SET duration_ms = ((task.payload #>> '{result,durationMs}')::numeric)::integer
+FROM generation_logs AS log
+JOIN generation_tasks AS task ON task.id = log.task_id
+WHERE asset.generation_log_id = log.id
+  AND asset.type = 'video'
+  AND asset.duration_ms IS NULL
+  AND task.payload #>> '{result,durationMs}' ~ '^[0-9]+$';
 
 CREATE INDEX IF NOT EXISTS generation_log_assets_log_idx ON generation_log_assets (generation_log_id, sort_order);
 
@@ -940,6 +967,8 @@ CREATE TRIGGER coupon_redemptions_set_updated_at BEFORE UPDATE ON coupon_redempt
 
 DROP TRIGGER IF EXISTS payment_transactions_set_updated_at ON payment_transactions;
 CREATE TRIGGER payment_transactions_set_updated_at BEFORE UPDATE ON payment_transactions FOR EACH ROW EXECUTE FUNCTION dq_set_updated_at();
+DROP TRIGGER IF EXISTS billing_refund_jobs_set_updated_at ON billing_refund_jobs;
+CREATE TRIGGER billing_refund_jobs_set_updated_at BEFORE UPDATE ON billing_refund_jobs FOR EACH ROW EXECUTE FUNCTION dq_set_updated_at();
 DROP TRIGGER IF EXISTS referral_programs_set_updated_at ON referral_programs;
 CREATE TRIGGER referral_programs_set_updated_at BEFORE UPDATE ON referral_programs FOR EACH ROW EXECUTE FUNCTION dq_set_updated_at();
 DROP TRIGGER IF EXISTS referral_codes_set_updated_at ON referral_codes;

@@ -277,8 +277,6 @@ export default function HomePage() {
         let cancelled = false;
         let idleHandle: number | undefined;
         let timeoutHandle: ReturnType<typeof globalThis.setTimeout> | undefined;
-        let observer: IntersectionObserver | undefined;
-
         const loadShowcase = () => {
             void fetchPrompts({ pageSize: 9, random: true })
                 .then((data) => {
@@ -311,20 +309,21 @@ export default function HomePage() {
             };
         }
 
-        observer = new IntersectionObserver(
+        const observer = new IntersectionObserver(
             (entries) => {
                 if (entries.some((entry) => entry.isIntersecting)) {
-                    observer?.disconnect();
+                    observer.disconnect();
                     scheduleLoad();
                 }
             },
             { rootMargin: "360px 0px" },
         );
+
         observer.observe(section);
 
         return () => {
             cancelled = true;
-            observer?.disconnect();
+            observer.disconnect();
             if (idleHandle && "cancelIdleCallback" in window) window.cancelIdleCallback(idleHandle);
             if (timeoutHandle) globalThis.clearTimeout(timeoutHandle);
         };

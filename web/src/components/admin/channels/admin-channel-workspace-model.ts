@@ -1,6 +1,6 @@
 import type { LogicalModelCapability, SystemDefaultModels, SystemModelChannel } from "@/lib/auth/store";
 import type { ChannelHealthResult } from "@/components/admin/admin-system-channel-editor";
-import { channelDetectedCapabilities, normalizeDefaultModelsConfig } from "@/lib/model-routing-config";
+import { channelDetectedCapabilities, normalizeDefaultModelsConfig, synchronizeModelRoutingWithChannels } from "@/lib/model-routing-config";
 import { channelProtocolDefinition } from "@/lib/channel-protocol-registry";
 
 export type ChannelWorkspaceSettings = {
@@ -64,6 +64,13 @@ export function removeChannelFromWorkspace(settings: ChannelWorkspaceSettings, c
 
 export function updateChannelInWorkspace(settings: ChannelWorkspaceSettings, channelId: string, patch: Partial<SystemModelChannel>): ChannelWorkspaceSettings {
     const systemChannels = settings.systemChannels.map((channel) => (channel.id === channelId ? { ...channel, ...patch } : channel));
+    if ("models" in patch) {
+        return {
+            ...settings,
+            systemChannels,
+            ...synchronizeModelRoutingWithChannels(settings.logicalModels, settings.defaultModels, systemChannels),
+        };
+    }
     return {
         ...settings,
         systemChannels,
@@ -77,6 +84,10 @@ export function defaultModelField(capability: LogicalModelCapability): keyof Sys
 
 export function switchChannelBindingUpstream(upstreamModel = ""): ChannelBindingDraft {
     return { upstreamModel, logicalId: "", newLogicalId: "", newLogicalName: "" };
+}
+
+export function validChannelBindingUpstream(channel: Pick<SystemModelChannel, "models"> | undefined, upstreamModel: string) {
+    return channel?.models.includes(upstreamModel) ? upstreamModel : channel?.models[0] || "";
 }
 
 export function channelBindingCount(channelId: string, settings: ChannelWorkspaceSettings) {

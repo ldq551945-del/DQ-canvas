@@ -201,7 +201,7 @@ import {
 } from "./store-normalizers";
 import { matchesPublicUser, publicUserFromAuthenticatedRecord, summarizePublicUsers, toPublicUser } from "./store-user-projection";
 
-export { authenticateUser, createEmailVerificationCode, createUser, createUserByAdmin } from "./store-user-access";
+export { authenticateUser, createEmailVerificationCode, createFirstAdmin, createUser, createUserByAdmin } from "./store-user-access";
 export { toPublicUser };
 
 export function sessionMaxAgeSeconds() {

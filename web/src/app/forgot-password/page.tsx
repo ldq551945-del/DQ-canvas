@@ -5,6 +5,8 @@ import Link from "next/link";
 import { App, Button, Input } from "antd";
 import { ArrowLeft, Mail } from "lucide-react";
 
+import { readAuthPayload } from "@/services/api/auth-client";
+
 export default function ForgotPasswordPage() {
     const { message } = App.useApp();
     const [email, setEmail] = useState("");
@@ -14,6 +16,11 @@ export default function ForgotPasswordPage() {
     const [submitting, setSubmitting] = useState(false);
 
     const sendCode = async () => {
+        if (sendingCode) return;
+        if (!email.trim()) {
+            message.error("请先填写绑定邮箱");
+            return;
+        }
         setSendingCode(true);
         try {
             const response = await fetch("/api/auth/email-code", {
@@ -21,8 +28,7 @@ export default function ForgotPasswordPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ purpose: "password-reset", email }),
             });
-            const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "验证码发送失败");
+            await readAuthPayload<{ ok?: boolean }>(response, "验证码发送失败");
             message.success("验证码已发送，请查看邮箱");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "验证码发送失败");
@@ -32,6 +38,11 @@ export default function ForgotPasswordPage() {
     };
 
     const resetPassword = async () => {
+        if (submitting) return;
+        if (!email.trim() || !code.trim() || !newPassword) {
+            message.error("请填写邮箱、验证码和新密码");
+            return;
+        }
         setSubmitting(true);
         try {
             const response = await fetch("/api/auth/password/reset", {
@@ -39,8 +50,7 @@ export default function ForgotPasswordPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ email, code, newPassword }),
             });
-            const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "重置密码失败");
+            await readAuthPayload<{ ok?: boolean }>(response, "重置密码失败");
             message.success("密码已重置，请登录");
             window.location.href = "/login";
         } catch (error) {
@@ -66,7 +76,7 @@ export default function ForgotPasswordPage() {
                     <Input size="large" prefix={<Mail className="size-4 text-stone-500" />} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="绑定邮箱" type="email" />
                     <Input.Search size="large" value={code} onChange={(event) => setCode(event.target.value)} placeholder="6 位验证码" enterButton="获取验证码" loading={sendingCode} onSearch={() => void sendCode()} />
                     <Input.Password size="large" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="新密码，至少 8 位" />
-                    <Button type="primary" size="large" block loading={submitting} onClick={() => void resetPassword()}>
+                    <Button type="primary" size="large" block loading={submitting} disabled={!email.trim() || !code.trim() || !newPassword} onClick={() => void resetPassword()}>
                         重置密码
                     </Button>
                 </div>

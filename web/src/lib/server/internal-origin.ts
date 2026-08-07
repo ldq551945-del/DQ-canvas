@@ -1,5 +1,7 @@
 import { Agent, fetch as undiciFetch } from "undici";
 
+import { toUndiciRequestBody } from "@/lib/server/undici-request-body";
+
 const internalDispatcher = new Agent({});
 
 export function resolveInternalOrigin(publicOrigin: string) {
@@ -19,8 +21,11 @@ export function isInternalApiBaseUrl(baseUrl: string) {
     return baseUrl.trim().startsWith("/");
 }
 
-export function fetchInternalApi(input: string | URL, init?: RequestInit): Promise<Response> {
-    return undiciFetch(input, { ...init, dispatcher: internalDispatcher } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>;
+export async function fetchInternalApi(input: string | URL, init: RequestInit = {}): Promise<Response> {
+    const requestBody = await toUndiciRequestBody(init.body);
+    const headers = new Headers(init.headers);
+    if (requestBody.contentType && !headers.has("content-type")) headers.set("content-type", requestBody.contentType);
+    return (await undiciFetch(input, { ...init, body: requestBody.body, headers, dispatcher: internalDispatcher } as Parameters<typeof undiciFetch>[1])) as unknown as Response;
 }
 
 function normalizeOrigin(value: string) {

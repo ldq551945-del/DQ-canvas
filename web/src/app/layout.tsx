@@ -23,18 +23,12 @@ export async function generateMetadata(): Promise<Metadata> {
     const site = await getPublicSiteSettings();
     const base = siteMetadataBase();
     const logoUrl = absoluteSiteUrl(site.logoUrl || "/logo.svg", base);
-    const iconUrl = absoluteSiteUrl("/favicon.ico", base);
     const title = site.seoTitle || site.title;
     return {
         metadataBase: base,
         title,
         description: site.seoDescription,
         alternates: { canonical: "/" },
-        icons: {
-            icon: iconUrl,
-            shortcut: iconUrl,
-            apple: iconUrl,
-        },
         keywords: site.seoKeywords
             .split(/[,，]/)
             .map((keyword) => keyword.trim())

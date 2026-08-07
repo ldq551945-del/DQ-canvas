@@ -36,13 +36,13 @@ export async function exportDramaEpisodeAsJianying(input: { project: DramaProjec
         for (const [index, shot] of clips.entries()) {
             const duration = Math.max(1, Math.min(20, shot.duration)) * 1_000_000;
             const videoPath = join(assetsDir, `segment_${String(index + 1).padStart(3, "0")}.mp4`);
-            const downloadedVideo = await downloadMediaToFile(shot.videoUrl!, videoPath, { origin: input.origin, cookie: input.cookie, maxBytes: MAX_MEDIA_BYTES });
+            const downloadedVideo = await downloadMediaToFile(shot.videoUrl!, videoPath, { origin: input.origin, cookie: input.cookie, maxBytes: MAX_MEDIA_BYTES, expectedType: "video" });
             totalBytes += downloadedVideo.bytes;
             if (totalBytes > MAX_MEDIA_BYTES) throw new DramaJianyingExportError("剪映导出素材超过 200MB，请减少镜头后重试", 413);
             script.addSegment(new VideoSegment(new VideoMaterial(videoPath, { duration, width, height }), trange(offset, duration)));
             if (shot.audioUrl) {
                 const audioPath = join(assetsDir, `audio_${String(index + 1).padStart(3, "0")}${audioExtension(shot.audioUrl)}`);
-                const downloadedAudio = await downloadMediaToFile(shot.audioUrl, audioPath, { origin: input.origin, cookie: input.cookie, maxBytes: 20 * 1024 * 1024 });
+                const downloadedAudio = await downloadMediaToFile(shot.audioUrl, audioPath, { origin: input.origin, cookie: input.cookie, maxBytes: 20 * 1024 * 1024, expectedType: "audio" });
                 totalBytes += downloadedAudio.bytes;
                 script.addSegment(new AudioSegment(new AudioMaterial(audioPath, { duration }), trange(offset, duration)), "配音");
             }

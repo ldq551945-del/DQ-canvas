@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/server/maintenance-auth", () => ({
-    isMaintenanceTokenConfigured: mocks.configured,
-    isAuthorizedMaintenanceRequest: mocks.authorized,
+    isWorkerTokenConfigured: mocks.configured,
+    isAuthorizedWorkerRequest: mocks.authorized,
 }));
 vi.mock("@/lib/server/generation-worker-heartbeat", () => ({ recordGenerationWorkerHeartbeat: mocks.record }));
 vi.mock("@/lib/server/install-status", () => ({ getInstallStatus: mocks.install }));

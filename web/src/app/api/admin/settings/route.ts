@@ -4,7 +4,7 @@ import { AuthInputError, getAuthSettings, isAuthInputError, setAuthSettings, typ
 import { modelRoutingValidationErrors, normalizeDefaultModelsConfig, normalizeLogicalModelsConfig } from "@/lib/model-routing-config";
 import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
-import { mergeSystemChannelSecrets, serializeAdminSettings } from "@/lib/server/admin-channel-config";
+import { mergeSystemChannelSecrets, serializeAdminSettings, systemChannelWebhookSecretValidationError } from "@/lib/server/admin-channel-config";
 import { auditActorFromRequest, safeRecordAuditLog } from "@/lib/server/audit-log-store";
 import { invalidatePublicSiteSettings } from "@/lib/server/site-metadata";
 import { channelProtocolValidationErrors } from "@/lib/channel-protocol-registry";
@@ -41,6 +41,8 @@ export async function PATCH(request: Request) {
         if (Array.isArray(body.systemChannels)) patch.systemChannels = mergeSystemChannelSecrets(body.systemChannels, currentSettings.systemChannels);
         if (Array.isArray(body.systemChannels) || Array.isArray(body.logicalModels) || body.defaultModels) {
             const channels = patch.systemChannels || currentSettings.systemChannels;
+            const webhookSecretError = channels.map(systemChannelWebhookSecretValidationError).find(Boolean);
+            if (webhookSecretError) throw new AuthInputError(webhookSecretError);
             const protocolErrors = channels.flatMap(channelProtocolValidationErrors);
             if (protocolErrors.length) throw new AuthInputError(protocolErrors[0]);
             const sourceLogicalModels = Array.isArray(body.logicalModels) ? body.logicalModels : currentSettings.logicalModels;

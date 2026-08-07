@@ -5,6 +5,7 @@ import {
     createCreativeConversation,
     getCreativeAsset,
     getCreativeConversation,
+    listCreativeAssetPage,
     listCreativeAssets,
     listCreativeConversations,
     listCreativeMessages,
@@ -86,6 +87,17 @@ export async function listMessagesForUser(userId: string, id: string, afterSeque
 export async function listAssetsForUser(userId: string, id: string) {
     await getConversationForUser(userId, id);
     return listCreativeAssets(id, userId);
+}
+
+export async function listAssetPageForUser(userId: string, id: string, input: { ids?: unknown; messageIds?: unknown; runIds?: unknown; limit?: unknown; offset?: unknown }) {
+    await getConversationForUser(userId, id);
+    return listCreativeAssetPage(id, userId, {
+        ids: normalizeAssetIds(input.ids),
+        messageIds: normalizeAssetIds(input.messageIds),
+        runIds: normalizeAssetIds(input.runIds),
+        limit: Number(input.limit),
+        offset: Number(input.offset),
+    });
 }
 
 export async function getAssetForUser(userId: string, id: string) {
@@ -263,4 +275,15 @@ function object(value: unknown) {
 
 function optionalText(value: unknown, max: number) {
     return typeof value === "string" ? value.trim().slice(0, max) || undefined : undefined;
+}
+
+function normalizeAssetIds(value: unknown) {
+    return Array.from(
+        new Set(
+            (Array.isArray(value) ? value : [])
+                .flatMap((item) => (typeof item === "string" ? item.split(",") : []))
+                .map((item) => item.trim().slice(0, 160))
+                .filter(Boolean),
+        ),
+    ).slice(0, 200);
 }

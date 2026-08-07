@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { SYSTEM, Viewer } from "@photo-sphere-viewer/core";
 import "@photo-sphere-viewer/core/index.css";
 
+import { canvasWebGlAvailable } from "../utils/canvas-performance-mode";
+
 export function CanvasPanoramaSurface({ src, alt }: { src: string; alt: string }) {
     const containerRef = useRef<HTMLDivElement>(null);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -13,10 +15,19 @@ export function CanvasPanoramaSurface({ src, alt }: { src: string; alt: string }
         if (!container) return;
 
         let viewer: Viewer | null = null;
+        let rendererCanvas: HTMLCanvasElement | null = null;
         const handleReady = () => setStatus("ready");
         const handleError = () => setStatus("error");
+        const handleContextLost = (event: Event) => {
+            event.preventDefault();
+            setStatus("error");
+        };
 
         try {
+            if (!canvasWebGlAvailable()) {
+                setStatus("error");
+                return;
+            }
             SYSTEM.load();
             viewer = new Viewer({
                 container,
@@ -32,6 +43,8 @@ export function CanvasPanoramaSurface({ src, alt }: { src: string; alt: string }
             });
             viewer.addEventListener("ready", handleReady);
             viewer.addEventListener("panorama-error", handleError);
+            rendererCanvas = container.querySelector("canvas");
+            rendererCanvas?.addEventListener("webglcontextlost", handleContextLost);
         } catch {
             setStatus("error");
         }
@@ -39,6 +52,7 @@ export function CanvasPanoramaSurface({ src, alt }: { src: string; alt: string }
         return () => {
             viewer?.removeEventListener("ready", handleReady);
             viewer?.removeEventListener("panorama-error", handleError);
+            rendererCanvas?.removeEventListener("webglcontextlost", handleContextLost);
             viewer?.destroy();
         };
     }, [src]);

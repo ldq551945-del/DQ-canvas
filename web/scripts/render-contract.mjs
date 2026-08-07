@@ -22,7 +22,7 @@ export function validateRenderBlueprint({ repoRoot, source, dockerfile: dockerfi
     const web = services.find((service) => service?.name === "dq");
     const worker = services.find((service) => service?.name === "dq-generation-worker");
     const database = databases.find((entry) => entry?.name === "dq-postgres");
-    const runtimeGroup = environmentGroups.find((group) => group?.name === "dq-runtime");
+    const runtimeGroup = environmentGroups.find((group) => group?.name === "dq-worker-auth");
     const webEnvironment = environmentMap(web?.envVars);
     const workerEnvironment = environmentMap(worker?.envVars);
     const dockerfile = dockerfileSource ?? readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
@@ -42,13 +42,23 @@ export function validateRenderBlueprint({ repoRoot, source, dockerfile: dockerfi
     ensure(dockerfile.includes("test -n \"$(find /app/sharp-runtime/node_modules/.pnpm -mindepth 1 -maxdepth 1 -type d -name '@img+sharp-libvips-linux-*' -print -quit)\""), "生产镜像缺少 Sharp libvips 依赖存在性检查");
     ensure(dockerfile.includes("COPY --from=web-build /app/sharp-runtime/node_modules/.pnpm /app/web/node_modules/.pnpm"), "生产镜像缺少 Sharp 原生依赖");
     ensure(dockerfile.includes("RUN cd /app/web && node -e \"require('sharp')\""), "生产镜像缺少 Sharp 运行时检查");
-    ensure(hasGroup(web?.envVars, "dq-runtime") && hasGroup(worker?.envVars, "dq-runtime"), "Web 与 Worker 必须引用同一运行时环境组");
-    ensure(environmentMap(runtimeGroup?.envVars).DQ_MAINTENANCE_TOKEN?.generateValue === true, "运行时环境组必须生成共享维护令牌");
+    ensure(dockerfile.includes("USER node"), "生产镜像必须使用非 root 用户");
+    ensure(dockerfile.includes("postgresql-client-16"), "生产镜像的灾备客户端必须匹配 PostgreSQL 16");
+    ensure(hasGroup(web?.envVars, "dq-worker-auth") && hasGroup(worker?.envVars, "dq-worker-auth"), "Web 与 Worker 必须只共享 Worker 认证环境组");
+    ensure(environmentMap(runtimeGroup?.envVars).DQ_WORKER_TOKEN?.generateValue === true, "Worker 认证环境组必须生成独立 Worker 令牌");
+    ensure(Object.keys(environmentMap(runtimeGroup?.envVars)).length === 1, "Worker 认证环境组禁止包含其他应用密钥");
     ensure(webEnvironment.DQ_DATA_DIR?.value === "/app/web/.data", "Web 数据目录必须位于持久盘");
     ensure(webEnvironment.DATABASE_URL?.fromDatabase?.name === "dq-postgres", "Web 必须引用 Blueprint PostgreSQL");
     ensure(webEnvironment.DQ_ENCRYPTION_KEY?.generateValue === true, "Web 必须生成稳定加密密钥");
+    ensure(webEnvironment.DQ_INSTALL_TOKEN?.generateValue === true, "Web 必须生成可在安装后删除的一次性安装令牌");
+    ensure(webEnvironment.DQ_MAINTENANCE_TOKEN?.generateValue === true, "Web 必须生成独立外部维护令牌");
     ensure(workerEnvironment.DQ_WORKER_API_ORIGIN?.fromService?.name === "dq" && workerEnvironment.DQ_WORKER_API_ORIGIN?.fromService?.property === "hostport", "Worker 必须通过 Render 私网调用 Web");
     ensure(!workerEnvironment.DATABASE_URL && !workerEnvironment.DQ_DATABASE_PROVIDER, "Render Worker 不应直接持有数据库配置");
+    ensure(!workerEnvironment.DQ_ENCRYPTION_KEY && !workerEnvironment.DQ_INSTALL_TOKEN && !workerEnvironment.DQ_MAINTENANCE_TOKEN, "Render Worker 不应持有加密、安装或外部维护令牌");
+    ensure(
+        (worker?.envVars || []).every((entry) => entry?.fromGroup === "dq-worker-auth" || ["NODE_OPTIONS", "DQ_WORKER_API_ORIGIN"].includes(entry?.key)),
+        "Render Worker 环境变量超出最小权限白名单",
+    );
     ensure(database?.plan === "basic-256mb" && database?.databaseName === "dq" && database?.user === "dq", "Render PostgreSQL 必须使用持久生产实例和稳定名称");
 
     if (violations.length > 0) throw new Error(`Render Blueprint 契约失败：\n- ${violations.join("\n- ")}`);

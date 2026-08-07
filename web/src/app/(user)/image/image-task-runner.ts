@@ -4,6 +4,20 @@ export type ImageTaskQueueOptions = {
     onActiveCountChange?: (count: number) => void;
 };
 
+export class ImageSubmissionGate {
+    private submitting = false;
+
+    tryStart() {
+        if (this.submitting) return false;
+        this.submitting = true;
+        return true;
+    }
+
+    finish() {
+        this.submitting = false;
+    }
+}
+
 export class ImageTaskQueue {
     private activeCount = 0;
     private readonly queue: Array<() => void> = [];

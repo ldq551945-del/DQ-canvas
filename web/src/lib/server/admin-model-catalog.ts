@@ -2,6 +2,8 @@ import { agnesModelCatalog, agnesModelConfigs } from "@/lib/agnes-model-catalog"
 import { capabilityFromHint, inferModelCapability, normalizeModelId, type ModelCatalogEntry, type ModelCatalogSource } from "@/lib/model-capability";
 import type { LogicalModelCapability } from "@/lib/auth/store-types";
 import type { SystemChannelModelConfig, SystemChannelProtocol } from "@/lib/auth/store-types";
+import { protocolCatalogCapability } from "@/lib/channel-protocol-registry";
+import { grok2ApiCatalogModelConfig } from "@/lib/grok2api";
 
 type ModelsResponse = Record<string, unknown> & {
     data?: unknown;
@@ -32,6 +34,14 @@ const MODEL_METADATA_KEYS = new Set([
     "outputModalities",
     "supported_generation_methods",
     "supportedGenerationMethods",
+    "supported_endpoint_types",
+    "supportedEndpointTypes",
+    "supported_endpoints",
+    "supportedEndpoints",
+    "endpoints",
+    "interfaces",
+    "owned_by",
+    "ownedBy",
 ]);
 
 export function buildModelsUrl(baseUrl: string, apiFormat: "openai" | "gemini", globalAiOpc = false) {
@@ -66,22 +76,22 @@ export function parseModels(payload: ModelsResponse) {
     return parseModelCatalog(payload).map((entry) => entry.id);
 }
 
-export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider") {
+export function parseModelCatalog(payload: unknown, source: ModelCatalogSource = "provider", protocol?: SystemChannelProtocol) {
     return mergeModelCatalogEntries(
         ...collectModelValues(payload).map(({ id, metadata }) => [
             {
                 id,
-                capability: capabilityFromModelMetadata(metadata) || inferModelCapability(id),
+                capability: resolveCatalogCapability(id, metadata, protocol),
                 source,
             },
         ]),
     );
 }
 
-export function parseModelConfigs(payload: unknown) {
+export function parseModelConfigs(payload: unknown, protocol?: SystemChannelProtocol) {
     return Object.fromEntries(
         collectModelValues(payload).map(({ id, metadata }) => {
-            const capability = capabilityFromModelMetadata(metadata) || inferModelCapability(id);
+            const capability = resolveCatalogCapability(id, metadata, protocol);
             return [normalizeModelId(id), { ...modelConfigFromMetadata(metadata, capability), source: "provider" as const }] as const;
         }),
     ) as Record<string, SystemChannelModelConfig>;
@@ -225,6 +235,11 @@ function capabilityFromModelMetadata(record: Record<string, unknown> | undefined
         record.capabilities,
         record.supported_generation_methods,
         record.supportedGenerationMethods,
+        record.supported_endpoint_types,
+        record.supportedEndpointTypes,
+        record.supported_endpoints,
+        record.supportedEndpoints,
+        record.endpoints,
         record.interfaces,
     ];
     for (const hint of directHints) {
@@ -238,8 +253,16 @@ function capabilityFromModelMetadata(record: Record<string, unknown> | undefined
     return undefined;
 }
 
+function resolveCatalogCapability(model: string, metadata: Record<string, unknown> | undefined, protocol?: SystemChannelProtocol) {
+    const metadataCapability = capabilityFromModelMetadata(metadata);
+    if (metadataCapability) return metadataCapability;
+    if (protocol === "grok2api") return inferModelCapability(model);
+    return (protocol ? protocolCatalogCapability(protocol) : undefined) || inferModelCapability(model);
+}
+
 function modelConfigFromMetadata(record: Record<string, unknown> | undefined, capability: LogicalModelCapability): SystemChannelModelConfig {
     if (!record) return { capability };
+    const providerSpecificConfig = grok2ApiCatalogModelConfig(record, capability);
     const apiFormatHint = String(record.apiFormat ?? record.api_format ?? "")
         .trim()
         .toLowerCase();
@@ -270,6 +293,7 @@ function modelConfigFromMetadata(record: Record<string, unknown> | undefined, ca
         ...(typeof record.supportsReferenceImage === "boolean" ? { supportsReferenceImage: record.supportsReferenceImage } : {}),
         ...(typeof record.supportsReferenceVideo === "boolean" ? { supportsReferenceVideo: record.supportsReferenceVideo } : {}),
         ...(typeof record.supportsReferenceAudio === "boolean" ? { supportsReferenceAudio: record.supportsReferenceAudio } : {}),
+        ...(providerSpecificConfig || {}),
     };
 }
 
@@ -296,8 +320,10 @@ function isChannelProtocol(value: unknown): value is SystemChannelProtocol {
     return (
         value === "auto" ||
         value === "openai" ||
+        value === "grok2api" ||
         value === "sub2api" ||
         value === "newapi" ||
+        value === "vozeb-recommended" ||
         value === "qingyan" ||
         value === "globalaiopc" ||
         value === "seedance" ||

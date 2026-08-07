@@ -17,6 +17,15 @@ describe("system channel model capabilities", () => {
         expect(normalized?.modelCapabilities).toEqual({ "writer-v1": "text", "image-v1": "image", "video-v1": "video" });
     });
 
+    it("persists the VOZEB recommended protocol", () => {
+        expect(normalizeSystemChannelAdvancedConfig({ protocol: "vozeb-recommended" } as never)?.protocol).toBe("vozeb-recommended");
+    });
+
+    it("persists only a valid model catalog capability filter", () => {
+        expect(normalizeSystemChannelAdvancedConfig({ protocol: "openai", modelCatalogCapability: "image" } as never)?.modelCatalogCapability).toBe("image");
+        expect(normalizeSystemChannelAdvancedConfig({ protocol: "openai", modelCatalogCapability: "invalid" } as never)?.modelCatalogCapability).toBeUndefined();
+    });
+
     it("normalizes per-model routes for mixed company APIs", () => {
         const normalized = normalizeSystemChannelAdvancedConfig({
             protocol: "auto",

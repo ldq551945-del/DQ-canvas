@@ -26,10 +26,14 @@ describe("low-memory release type-check contract", () => {
         expect(productionBuild.indexOf("node_modules/typescript/bin/tsc")).toBeLessThan(productionBuild.indexOf("node_modules/next/dist/bin/next"));
         expect(productionBuild).toContain('NEXT_SKIP_BUILD_TYPECHECK: "1"');
         expect(releaseCheck).toContain("prepareStandaloneAssets");
+        expect(releaseCheck).toContain("validateStandaloneSharpRuntime");
+        expect(releaseCheck).toContain("validateContainerReleaseContracts");
         expect(nextConfig).toContain("typescript: { ignoreBuildErrors: skipBuildTypeCheck }");
         expect(standaloneStart).toContain('process.env.NEXT_DIST_DIR?.trim() || ".next"');
         expect(standaloneStart).toContain("prepareStandaloneAssets");
         expect(dockerfile).toContain("pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build");
+        expect(dockerfile).toContain("COPY web/scripts/http-observability.mjs /app/web/scripts/http-observability.mjs");
+        expect(dockerfile).toContain('CMD ["node", "--import", "file:///app/web/scripts/http-observability.mjs", "server.js"]');
     });
 
     it("copies static and complete public assets into a custom standalone dist directory", async () => {
@@ -40,6 +44,7 @@ describe("low-memory release type-check contract", () => {
                 mkdir(path.join(fixtureRoot, distDir, "standalone"), { recursive: true }),
                 mkdir(path.join(fixtureRoot, distDir, "static", "chunks"), { recursive: true }),
                 mkdir(path.join(fixtureRoot, "public", "icons"), { recursive: true }),
+                mkdir(path.join(fixtureRoot, "node_modules", ".pnpm", "@img+sharp-test@0.0.0", "node_modules", "@img", "sharp-test"), { recursive: true }),
             ]);
             await Promise.all([
                 writeFile(path.join(fixtureRoot, distDir, "standalone", "server.js"), "server"),
@@ -47,15 +52,18 @@ describe("low-memory release type-check contract", () => {
                 writeFile(path.join(fixtureRoot, "public", "logo.svg"), "logo"),
                 writeFile(path.join(fixtureRoot, "public", "icon.svg"), "icon"),
                 writeFile(path.join(fixtureRoot, "public", "icons", "icon-192.png"), "png"),
+                writeFile(path.join(fixtureRoot, "node_modules", ".pnpm", "@img+sharp-test@0.0.0", "node_modules", "@img", "sharp-test", "fixture.node"), "native"),
             ]);
 
             const result = await prepareStandaloneAssets({ webRoot: fixtureRoot, distDir });
 
             expect(result.staticFiles).toBe(1);
             expect(result.publicFiles).toBe(3);
+            expect(result.sharpPackages).toEqual(["@img+sharp-test@0.0.0"]);
             expect(existsSync(path.join(fixtureRoot, distDir, "standalone", distDir, "static", "chunks", "app.js"))).toBe(true);
             expect(existsSync(path.join(fixtureRoot, distDir, "standalone", "public", "logo.svg"))).toBe(true);
             expect(existsSync(path.join(fixtureRoot, distDir, "standalone", "public", "icons", "icon-192.png"))).toBe(true);
+            expect(existsSync(path.join(fixtureRoot, distDir, "standalone", "node_modules", ".pnpm", "@img+sharp-test@0.0.0", "node_modules", "@img", "sharp-test", "fixture.node"))).toBe(true);
         } finally {
             await rm(fixtureRoot, { recursive: true, force: true });
         }

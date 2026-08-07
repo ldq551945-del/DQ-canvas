@@ -39,6 +39,10 @@ export async function loadWorkbenchAgentSession(workspace: WorkbenchWorkspace, s
     ])[0];
 }
 
+export function restoreLatestWorkbenchAgentSession(workspace: WorkbenchWorkspace, sessions: WorkbenchAgentSession[]) {
+    return sessions[0] ? loadWorkbenchAgentSession(workspace, sessions[0]) : Promise.resolve(null);
+}
+
 export async function loadOlderWorkbenchAgentSession(workspace: WorkbenchWorkspace, session: WorkbenchAgentSession) {
     if (!session.loaded || !session.hasOlderMessages || !session.oldestSequence) return session;
     const detail = await getCreativeWorkbenchSession(session.creativeConversationId || session.id, workspace, session.oldestSequence);
@@ -109,6 +113,17 @@ export function findWorkbenchAgentSessionForRecord(sessions: WorkbenchAgentSessi
 
 export function removeWorkbenchAgentSessionsForRecords(sessions: WorkbenchAgentSession[], recordIds: ReadonlySet<string>) {
     return sessions.filter((session) => !session.recordId || !recordIds.has(session.recordId));
+}
+
+export function expandWorkbenchConversationSelection<T extends { id: string; creativeConversationId?: string }>(records: T[], selectedRecordIds: readonly string[]) {
+    const selectedIds = new Set(selectedRecordIds);
+    const conversationIds = new Set(
+        records
+            .filter((record) => selectedIds.has(record.id))
+            .map((record) => record.creativeConversationId)
+            .filter((id): id is string => Boolean(id)),
+    );
+    return records.filter((record) => selectedIds.has(record.id) || Boolean(record.creativeConversationId && conversationIds.has(record.creativeConversationId)));
 }
 
 function toWorkbenchMessage(message: CreativeMessage): WorkbenchAgentMessage[] {

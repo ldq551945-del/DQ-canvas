@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpRight, CheckCircle2, FileImage, LoaderCircle, Maximize2, Paperclip, RefreshCw, Video } from "lucide-react";
+import { ArrowUpRight, CheckCircle2, FileAudio2, FileImage, LoaderCircle, Maximize2, Paperclip, RefreshCw, Video } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -21,7 +21,7 @@ export function CreateWorkbenchOverview({ onUseAsset }: { onUseAsset: (asset: Cr
     const { latestProject, runningTasks, recentAssets, loading, error, reload } = useCreateWorkbenchOverview();
     const [importingAssetId, setImportingAssetId] = useState("");
 
-    const useAsset = async (asset: CreateOverviewAsset) => {
+    const importAsset = async (asset: CreateOverviewAsset) => {
         setImportingAssetId(asset.id);
         try {
             await onUseAsset(asset);
@@ -38,7 +38,7 @@ export function CreateWorkbenchOverview({ onUseAsset }: { onUseAsset: (asset: Cr
                         <h2 id="create-assets-heading" className={sectionTitleClass}>
                             最近生成
                         </h2>
-                        <p className={sectionHintClass}>点击图片或视频可直接放大查看</p>
+                        <p className={sectionHintClass}>最近的图片、视频和音频结果</p>
                     </div>
                     <Link href="/assets" className="inline-flex shrink-0 items-center gap-1 text-xs text-[#697381] transition hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:text-white">
                         查看素材库 <ArrowUpRight className="size-3.5" />
@@ -50,12 +50,12 @@ export function CreateWorkbenchOverview({ onUseAsset }: { onUseAsset: (asset: Cr
                     <div className="grid grid-cols-2 gap-2 pt-2 sm:grid-cols-3 sm:gap-3 sm:pt-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                         {recentAssets.slice(0, recentAssetVisibilityClasses.length).map((asset, index) => (
                             <div key={asset.id} className={recentAssetVisibilityClasses[index]}>
-                                <RecentAssetCard asset={asset} importing={importingAssetId === asset.id} onUse={() => void useAsset(asset)} />
+                                <RecentAssetCard asset={asset} importing={importingAssetId === asset.id} onUse={() => void importAsset(asset)} />
                             </div>
                         ))}
                     </div>
                 ) : null}
-                {!loading && !error && !recentAssets.length ? <OverviewEmpty label="完成一次图片或视频生成后，结果会出现在这里" /> : null}
+                {!loading && !error && !recentAssets.length ? <OverviewEmpty label="完成一次图片、视频或音频生成后，结果会出现在这里" /> : null}
             </section>
 
             <section aria-labelledby="create-projects-heading">
@@ -154,12 +154,20 @@ function CanvasProjectCover({ previews }: { previews: CreateOverviewMedia[] }) {
 }
 
 function RecentAssetCard({ asset, importing, onUse }: { asset: CreateOverviewAsset; importing: boolean; onUse: () => void }) {
+    const isAudio = asset.kind === "audio";
     return (
         <div className="group min-w-0 overflow-hidden rounded-lg border border-[#e2e7eb] bg-white transition hover:border-[#cbd2d9] hover:shadow-[0_8px_20px_rgba(32,36,42,0.08)] dark:border-[#2b3037] dark:bg-[#181b20] dark:hover:border-[#3b424c] dark:hover:shadow-black/25">
             <div className="relative overflow-hidden bg-[#eef1f4] dark:bg-[#252a31]">
-                <AgentMediaPreview type={asset.kind} url={browserReadableMediaUrl(asset.url)} title={asset.title} className="aspect-[4/3] max-h-52" />
+                {isAudio ? (
+                    <div className="flex aspect-[4/3] flex-col items-center justify-center gap-4 px-3 text-[#697381] dark:text-[#aab2bd]">
+                        <FileAudio2 className="size-8" aria-hidden="true" />
+                        <AgentMediaPreview type="audio" url={browserReadableMediaUrl(asset.url)} title={asset.title} className="h-10" />
+                    </div>
+                ) : (
+                    <AgentMediaPreview type={asset.kind} url={browserReadableMediaUrl(asset.url)} title={asset.title} className="aspect-[4/3] max-h-52" />
+                )}
                 <span className="pointer-events-none absolute left-2 top-2 inline-flex size-7 items-center justify-center rounded-lg bg-black/55 text-white backdrop-blur-sm" aria-hidden="true">
-                    {asset.kind === "image" ? <FileImage className="size-3.5" /> : <Video className="size-3.5" />}
+                    {asset.kind === "image" ? <FileImage className="size-3.5" /> : asset.kind === "video" ? <Video className="size-3.5" /> : <FileAudio2 className="size-3.5" />}
                 </span>
             </div>
             <div className="min-w-0 px-2.5 py-2">

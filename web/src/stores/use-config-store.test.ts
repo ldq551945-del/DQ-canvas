@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { applyPublicSystemSettings, defaultConfig, modelMatchesCapability, modelOptionLabel, type PublicSystemSettings } from "./use-config-store";
+import { applyPublicSystemSettings, defaultConfig, modelMatchesCapability, modelOptionLabel, useConfigStore, type PublicSystemSettings } from "./use-config-store";
+
+afterEach(() => vi.unstubAllGlobals());
 
 const audioSettings: PublicSystemSettings = {
     systemChannels: [
@@ -100,6 +102,19 @@ describe("applyPublicSystemSettings", () => {
         });
 
         expect(config.modelPointCosts["voice-pro"]).toBe(2.5);
+    });
+
+    it("includes the missing capability in the global configuration prompt", () => {
+        const target = new EventTarget();
+        vi.stubGlobal("window", target);
+        let detail: unknown;
+        target.addEventListener("dq-system-config-missing", (event) => {
+            detail = (event as CustomEvent).detail;
+        });
+
+        useConfigStore.getState().openConfigDialog(true, "image");
+
+        expect(detail).toEqual({ shouldPromptContinue: true, capability: "image" });
     });
 });
 

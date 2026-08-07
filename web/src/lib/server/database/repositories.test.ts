@@ -95,6 +95,7 @@ describe("split Postgres repositories", () => {
                     name: "主渠道",
                     base_url: "https://api.example.com/v1",
                     api_key_ciphertext: "ciphertext",
+                    webhook_secret_ciphertext: "webhook-ciphertext",
                     api_format: "openai",
                     models: ["gpt-test"],
                     enabled: true,
@@ -111,6 +112,7 @@ describe("split Postgres repositories", () => {
             name: "主渠道",
             baseUrl: "https://api.example.com/v1",
             apiKeyCiphertext: "ciphertext",
+            webhookSecretCiphertext: "webhook-ciphertext",
             apiFormat: "openai",
             models: ["gpt-test"],
             enabled: true,
@@ -118,8 +120,9 @@ describe("split Postgres repositories", () => {
             sortOrder: 0,
         });
 
-        expect(String(queryArgs(query, 0)[0])).toContain("health_results");
-        expect(JSON.parse(String((queryArgs(query, 0)[1] as unknown[])[8]))).toEqual(healthResults);
+        expect(String(queryArgs(query, 0)[0])).toContain("webhook_secret_ciphertext");
+        expect(String((queryArgs(query, 0)[1] as unknown[])[4])).toBe("webhook-ciphertext");
+        expect(JSON.parse(String((queryArgs(query, 0)[1] as unknown[])[9]))).toEqual(healthResults);
         expect(channel.healthResults).toEqual(healthResults);
     });
 
@@ -580,6 +583,69 @@ describe("split Postgres repositories", () => {
         expect(queryArgs(query, 1)[0]).toContain("processing_at IS NULL OR processing_at < now() - interval '5 minutes'");
         expect(queryArgs(query, 1)[0]).toContain("RETURNING *");
         expect(queryArgs(query, 1)[1]).toEqual(["event-one"]);
+    });
+
+    it("does not overwrite a provider event when the same event id carries another payload", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const eventRow = { id: "event-one", provider: "stripe", event_id: "evt-one", event_type: "paid", signature_valid: true, payload: { amount: 100 }, created_at: timestamp, updated_at: timestamp };
+        const { executor, query } = mockExecutor([[], [eventRow]]);
+
+        const result = await createPostgresRepositories(executor).billing.upsertProviderEvent({
+            id: "event-two",
+            provider: "stripe",
+            eventId: "evt-one",
+            eventType: "paid",
+            signatureValid: true,
+            payload: { amount: 999 },
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+
+        expect(result).toMatchObject({ event: { id: "event-one", payload: { amount: 100 } }, conflict: true });
+        expect(queryArgs(query, 0)[0]).toContain("DO NOTHING");
+        expect(queryArgs(query, 0)[0]).not.toContain("DO UPDATE");
+        expect(queryArgs(query, 1)[0]).toContain("provider = $1 AND event_id = $2");
+    });
+
+    it("returns the immutable payment record when a deterministic id already exists", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const existing = {
+            id: "payment-one",
+            order_id: "order-original",
+            user_id: "user-original",
+            provider: "stripe",
+            channel: "checkout",
+            status: "succeeded",
+            amount_cents: 100,
+            currency: "CNY",
+            provider_trade_id: "trade-one",
+            provider_payment_id: "payment-one",
+            raw_payload: {},
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        const { executor, query } = mockExecutor([[], [existing]]);
+
+        const saved = await createPostgresRepositories(executor).billing.upsertPayment({
+            id: "payment-one",
+            orderId: "order-attacker",
+            userId: "user-attacker",
+            provider: "stripe",
+            channel: "webhook",
+            status: "succeeded",
+            amountCents: 999,
+            currency: "USD",
+            providerTradeId: "trade-one",
+            providerPaymentId: "payment-one",
+            rawPayload: { replaced: true },
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        });
+
+        expect(saved).toMatchObject({ orderId: "order-original", userId: "user-original", amountCents: 100, currency: "CNY" });
+        expect(queryArgs(query, 0)[0]).toContain("ON CONFLICT (id) DO NOTHING");
+        expect(queryArgs(query, 0)[0]).not.toContain("DO UPDATE");
+        expect(queryArgs(query, 1)[0]).toContain("WHERE id = $1");
     });
 
     it("replaces generation assets during upsert", async () => {

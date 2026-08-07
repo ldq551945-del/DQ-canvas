@@ -1,7 +1,13 @@
 import type { CanvasProject, CanvasProjectSummary, CreateCanvasProjectInput } from "@/lib/canvas-project-contract";
 
-export function listCanvasProjectSummaries() {
-    return request<{ projects: CanvasProjectSummary[] }>("/api/canvas/projects", { cache: "no-store" }).then((data) => data.projects);
+export function listCanvasProjectSummaries(input: { page?: number; pageSize?: number } = {}) {
+    const query = new URLSearchParams({ page: String(input.page || 1), pageSize: String(input.pageSize || 12) });
+    return request<{ projects: CanvasProjectSummary[]; total: number; page: number; pageSize: number }>(`/api/canvas/projects?${query}`, { cache: "no-store" }).then((data) => ({
+        items: data.projects,
+        total: data.total,
+        page: data.page,
+        pageSize: data.pageSize,
+    }));
 }
 
 export function getCanvasProject(id: string) {

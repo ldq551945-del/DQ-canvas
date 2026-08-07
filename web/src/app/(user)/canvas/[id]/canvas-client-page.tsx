@@ -188,6 +188,7 @@ function DQCanvasPage() {
         isNodeDragging,
         setIsNodeDragging,
         performanceMode,
+        lowPerformanceDevice,
         setPerformanceMode,
         canvasTool,
         setCanvasTool,
@@ -363,7 +364,7 @@ function DQCanvasPage() {
     const backgroundRefineNode = backgroundRefineNodeId ? nodes.find((node) => node.id === backgroundRefineNodeId) || null : null;
     const backgroundRefineOriginalNode = findBackgroundRefineOriginalNode(nodes, backgroundRefineNode);
     const canUngroup = nodes.some((node) => selectedNodeIds.has(node.id) && Boolean(node.metadata?.groupId));
-    const performanceReduced = shouldReduceCanvasEffects(performanceMode, nodes);
+    const performanceReduced = shouldReduceCanvasEffects(performanceMode, nodes, lowPerformanceDevice);
     const connectionSource = connectingParams ? nodeById.get(connectingParams.nodeId) : undefined;
     const connectionOrigin = connectionSource && connectingParams ? { x: connectionSource.position.x + (connectingParams.handleType === "source" ? connectionSource.width : 0), y: nodeAnchorY(connectionSource, connectingParams.anchorRatio) } : undefined;
     const connectionSourceFeedbackVisible = !connectionOrigin || Math.hypot((mouseWorld.x - connectionOrigin.x) * viewport.k, (mouseWorld.y - connectionOrigin.y) * viewport.k) <= 44;
@@ -401,6 +402,7 @@ function DQCanvasPage() {
                     viewport={viewport}
                     backgroundMode={backgroundMode}
                     performanceMode={performanceMode}
+                    lowPerformanceDevice={lowPerformanceDevice}
                     canvasTool={canvasTool}
                     nodes={nodes}
                     onViewportChange={(next) => {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { generationLogPublicPrompt } from "@/lib/generation-log-snapshot";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { GenerationLog, PendingImageTask } from "./image-workbench-records";
-import { authoritativeGeneratedImageMeta, buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, resultsFromLog, snapshotFromLog, stableResultImageUrl } from "./image-workbench-records";
+import { authoritativeGeneratedImageMeta, buildLogFromResults, filterCoveredLocalImageTaskLogs, imageServerLogIds, resultsFromLog, snapshotFromLog, stableResultImageUrl, summarizeImageConversationLogs } from "./image-workbench-records";
 
 describe("image workbench records", () => {
     it("restores pending, failed, and success results in slot order", () => {
@@ -96,6 +96,17 @@ describe("image workbench records", () => {
 
         expect(result.logs.map((item) => item.id)).toEqual(["local-workbench"]);
         expect(result.coveredIds).toEqual(new Set(["image-task-task-1"]));
+    });
+
+    it("summarizes every image round while keeping the first automatic title", () => {
+        const latest = generationLog({ id: "latest", createdAt: 20, title: "第二轮", images: [image("latest")] });
+        const first = generationLog({ id: "first", createdAt: 10, title: "第一轮", durationMs: 2000, images: [image("first-a"), image("first-b")], failures: [{ resultId: "failed", index: 2, error: "失败" }], failCount: 1, imageCount: 3 });
+
+        const summary = summarizeImageConversationLogs([latest, first]);
+
+        expect(summary).toMatchObject({ id: "latest", title: "第一轮", successCount: 3, failCount: 1, imageCount: 4, durationMs: 3000, status: "成功" });
+        expect(summary.thumbnails).toEqual(["https://cdn.example.com/latest.png", "https://cdn.example.com/first-a.png", "https://cdn.example.com/first-b.png"]);
+        expect(latest.images).toHaveLength(1);
     });
 });
 

@@ -40,6 +40,27 @@ describe("canvas project file provider", () => {
         await expect(getCanvasProject("one", "user-one")).resolves.toMatchObject({ nodes: [{ id: "node-one" }] });
     });
 
+    it("includes a stable media preview in file-provider summaries", async () => {
+        await createCanvasProject("user-one", {
+            ...project("preview", "Preview project"),
+            nodes: [
+                { id: "temporary", type: "image", metadata: { status: "success", content: "data:image/png;base64,abc" } },
+                { id: "video", type: "video", metadata: { status: "success", serverUrl: "/api/media/preview.mp4" } },
+                { id: "image", type: "image", metadata: { status: "success", serverUrl: "/api/media/preview.webp" } },
+            ] as CanvasProject["nodes"],
+        });
+
+        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "preview", preview: { kind: "image", url: "/api/media/preview.webp" } }]);
+    });
+
+    it("paginates file-provider summaries after sorting by update time", async () => {
+        await createCanvasProject("user-one", { ...project("old", "旧项目"), updatedAt: "2026-07-20T00:00:00.000Z" });
+        await createCanvasProject("user-one", { ...project("middle", "中间项目"), updatedAt: "2026-07-21T00:00:00.000Z" });
+        await createCanvasProject("user-one", { ...project("latest", "最新项目"), updatedAt: "2026-07-22T00:00:00.000Z" });
+
+        await expect(listCanvasProjectSummaries("user-one", { page: 2, pageSize: 1 })).resolves.toMatchObject({ items: [{ id: "middle" }], total: 3, page: 2, pageSize: 1 });
+    });
+
     it("projects only Canvas list summary fields in PostgreSQL", async () => {
         mocks.provider = "postgres";
         mocks.postgresQuery.mockResolvedValue({
@@ -51,17 +72,43 @@ describe("canvas project file provider", () => {
                     creative_conversation_id: "conversation-one",
                     node_count: 8,
                     connection_count: 3,
+                    preview_kind: "video",
+                    preview_url: "/api/media/preview.mp4",
                     created_at: "2026-07-20T00:00:00.000Z",
                     updated_at: "2026-07-22T00:00:00.000Z",
                 },
             ],
         });
 
-        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "canvas-one", nodeCount: 8, connectionCount: 3 }]);
+        await expect(listCanvasProjectSummaries("user-one")).resolves.toMatchObject([{ id: "canvas-one", nodeCount: 8, connectionCount: 3, preview: { kind: "video", url: "/api/media/preview.mp4" } }]);
         const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
         expect(statement).toContain("jsonb_array_length");
+        expect(statement).toContain("LEFT JOIN LATERAL");
         expect(statement).not.toMatch(/SELECT\s+project_json\s+FROM/i);
         expect(params).toEqual(["user-one"]);
+    });
+
+    it("uses a bounded PostgreSQL summary page with a window total", async () => {
+        mocks.provider = "postgres";
+        mocks.postgresQuery.mockResolvedValue({
+            rows: [
+                {
+                    id: "canvas-page-two",
+                    title: "第二页画布",
+                    node_count: 2,
+                    connection_count: 1,
+                    total_count: "25",
+                    created_at: "2026-07-20T00:00:00.000Z",
+                    updated_at: "2026-07-22T00:00:00.000Z",
+                },
+            ],
+        });
+
+        await expect(listCanvasProjectSummaries("user-one", { page: 2, pageSize: 12 })).resolves.toMatchObject({ items: [{ id: "canvas-page-two" }], total: 25, page: 2, pageSize: 12 });
+        const [statement, params] = mocks.postgresQuery.mock.calls[0] as [string, unknown[]];
+        expect(statement).toContain("COUNT(*) OVER()");
+        expect(statement).toContain("LIMIT $2 OFFSET $3");
+        expect(params).toEqual(["user-one", 12, 12]);
     });
 
     it("returns only the latest file-provider project summary", async () => {

@@ -66,6 +66,9 @@ describe("PostgreSQL schema lifecycle", () => {
         const ddl = String(mocks.query.mock.calls[0]?.[0]);
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS dq_schema_migrations");
         expect(ddl).toContain("CREATE TABLE IF NOT EXISTS dq_generation_worker_heartbeats");
+        expect(ddl).toContain("CREATE TABLE IF NOT EXISTS dq_billing_refund_jobs");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS dq_payment_transactions_provider_payment_idx");
+        expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS dq_billing_refund_jobs_provider_refund_idx");
         expect(ddl).toContain("CREATE SEQUENCE IF NOT EXISTS dq_user_account_id_seq");
         expect(ddl).toContain("account_id bigint NOT NULL DEFAULT nextval('dq_user_account_id_seq')");
         expect(ddl).toContain("CREATE UNIQUE INDEX IF NOT EXISTS dq_users_account_id_idx ON dq_users (account_id)");
@@ -75,7 +78,7 @@ describe("PostgreSQL schema lifecycle", () => {
         expect(ddl).toContain("task_type = 'agent' AND status = 'success' AND execution_phase IN ('review_pending', 'reviewing')");
 
         const tableNames = [...ddl.matchAll(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+([a-z][a-z0-9_]*)/gi)].map((match) => match[1]).sort();
-        expect(tableNames).toHaveLength(58);
+        expect(tableNames).toHaveLength(59);
         expect(tableNames.every((name) => name.startsWith("dq_"))).toBe(true);
         expect(tableNames).not.toContain("dq_check_ins");
         expect(ddl).toContain("DROP TABLE IF EXISTS dq_check_ins");

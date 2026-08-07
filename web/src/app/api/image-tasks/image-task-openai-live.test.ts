@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
 
@@ -8,8 +8,14 @@ import { runCustomImageTask } from "./image-task-custom";
 import type { ImageTask } from "@/lib/server/image-task-store";
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 
+beforeEach(() => {
+    vi.stubEnv("DQ_ALLOW_PRIVATE_UPSTREAMS", "1");
+    vi.stubEnv("DQ_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1");
+});
+
 afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
 });
 
 describe("OpenAI image provider over a live compatible fixture", () => {
@@ -41,6 +47,29 @@ describe("OpenAI image provider over a live compatible fixture", () => {
             expect(fixture.requests[0]).toMatchObject({ method: "POST", path: "/v1/images/generations" });
             expect(fixture.requests[0]?.headers.authorization).toBe("Bearer fixture-key");
             expect(JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}")).toMatchObject({ model: "mock-image", response_format: "url" });
+        } finally {
+            await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
+        }
+    });
+
+    it("sends Grok image models with the Grok2API aspect ratio contract", async () => {
+        const fixture = createProtocolFixtureServer();
+        await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
+        const address = fixture.server.address();
+        if (!address || typeof address === "string") throw new Error("Protocol fixture did not bind a TCP port");
+        const origin = `http://127.0.0.1:${address.port}`;
+        const task = liveImageTask(origin, {
+            id: "image-grok-live",
+            config: { baseUrl: origin, apiKey: "fixture-key", apiFormat: "openai", model: "grok-imagine-image", channelId: "fixture-grok", size: "1:1", quality: "high" },
+        });
+
+        try {
+            await expect(runOpenAiImageTask(task, "http://internal", "http://public", "", true)).resolves.toMatchObject({ dataUrl: expect.stringMatching(/^data:image\/png;base64,/) });
+            const body = JSON.parse(fixture.requests[0]?.body.toString("utf8") || "{}");
+            expect(body).toMatchObject({ model: "grok-imagine-image", aspect_ratio: "1:1", resolution: "2k", response_format: "url" });
+            expect(body).not.toHaveProperty("size");
+            expect(body).not.toHaveProperty("quality");
+            expect(body).not.toHaveProperty("output_format");
         } finally {
             await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
         }

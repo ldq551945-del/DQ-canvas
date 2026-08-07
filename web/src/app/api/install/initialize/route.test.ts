@@ -1,15 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-    authorized: vi.fn(),
-    configured: vi.fn(),
     initialize: vi.fn(),
 }));
 
-vi.mock("@/lib/server/maintenance-auth", () => ({
-    isAuthorizedMaintenanceRequest: mocks.authorized,
-    isMaintenanceTokenConfigured: mocks.configured,
-}));
 vi.mock("@/lib/server/install-status", () => ({
     InstallInitializationError: class InstallInitializationError extends Error {
         constructor(
@@ -27,36 +21,27 @@ import { POST } from "./route";
 describe("POST /api/install/initialize", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        mocks.configured.mockReturnValue(true);
-        mocks.authorized.mockReturnValue(true);
         mocks.initialize.mockResolvedValue({ firstAdminRequired: true });
     });
 
-    it("rejects initialization when the maintenance token is not configured", async () => {
-        mocks.configured.mockReturnValue(false);
-
-        const response = await POST(new Request("http://localhost/api/install/initialize", { method: "POST" }));
-
-        expect(response.status).toBe(503);
-        expect(mocks.initialize).not.toHaveBeenCalled();
-    });
-
-    it("rejects unauthenticated public initialization requests", async () => {
-        mocks.authorized.mockReturnValue(false);
-
-        const response = await POST(new Request("http://localhost/api/install/initialize", { method: "POST" }));
-
-        expect(response.status).toBe(401);
-        expect(mocks.initialize).not.toHaveBeenCalled();
-    });
-
-    it("initializes only after maintenance authentication", async () => {
-        const request = new Request("http://localhost/api/install/initialize", { method: "POST", headers: { Authorization: "Bearer maintenance-token" } });
+    it("passes the one-time install token to the explicit initializer", async () => {
+        const request = new Request("http://localhost/api/install/initialize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ installToken: "install-token" }),
+        });
 
         const response = await POST(request);
 
         expect(response.status).toBe(200);
-        expect(mocks.authorized).toHaveBeenCalledWith(request);
-        expect(mocks.initialize).toHaveBeenCalledOnce();
+        expect(mocks.initialize).toHaveBeenCalledWith("install-token");
+    });
+
+    it("does not accept a maintenance bearer token as an install token", async () => {
+        const request = new Request("http://localhost/api/install/initialize", { method: "POST", headers: { Authorization: "Bearer maintenance-token" } });
+
+        await POST(request);
+
+        expect(mocks.initialize).toHaveBeenCalledWith(undefined);
     });
 });

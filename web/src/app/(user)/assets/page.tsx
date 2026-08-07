@@ -339,7 +339,27 @@ export default function AssetsPage() {
                                 </Button>
                             </section>
                         ) : !assets.length ? (
-                            <CompactEmptyState title="没有找到素材" description="调整筛选条件，或新增一条常用素材。" />
+                            <CompactEmptyState
+                                title={keyword || kindFilter !== "all" ? "没有匹配的素材" : "还没有素材"}
+                                description={keyword || kindFilter !== "all" ? "调整筛选条件后再试一次。" : "把常用提示词、参考图片或视频保存到这里，创作时可以直接引用。"}
+                                action={
+                                    <Button
+                                        size="small"
+                                        type="primary"
+                                        disabled={!ready}
+                                        icon={keyword || kindFilter !== "all" ? <Search className="size-3.5" /> : <Plus className="size-3.5" />}
+                                        onClick={() => {
+                                            if (keyword || kindFilter !== "all") {
+                                                setKeyword("");
+                                                setKindFilter("all");
+                                                setPage(1);
+                                            } else openCreate();
+                                        }}
+                                    >
+                                        {keyword || kindFilter !== "all" ? "清除筛选" : "新增素材"}
+                                    </Button>
+                                }
+                            />
                         ) : null}
 
                         <div className="flex justify-center overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     appendCreativeConversationExchange: vi.fn(),
     getCreativeConversation: vi.fn(),
+    listCreativeAssetPage: vi.fn(),
     registerCreativeAssets: vi.fn(),
     getCreativeWorkbenchSessionDetail: vi.fn(),
     listCreativeWorkbenchSessionSummaries: vi.fn(),
@@ -15,6 +16,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     createCreativeConversation: vi.fn(),
     getCreativeAsset: vi.fn(),
     getCreativeConversation: mocks.getCreativeConversation,
+    listCreativeAssetPage: mocks.listCreativeAssetPage,
     listCreativeAssets: vi.fn(),
     listCreativeConversations: vi.fn(),
     listCreativeMessages: vi.fn(),
@@ -28,7 +30,7 @@ vi.mock("@/lib/server/creative-workbench-session-store", () => ({
     listCreativeWorkbenchSessionSummaries: mocks.listCreativeWorkbenchSessionSummaries,
 }));
 
-import { appendWorkbenchExchangeForUser, getWorkbenchSessionForUser, listWorkbenchSessionsForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
+import { appendWorkbenchExchangeForUser, getWorkbenchSessionForUser, listAssetPageForUser, listWorkbenchSessionsForUser, registerGenerationLogAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
 
 function file(name: string, type: string, size = 4): File {
     return { name, type, size, arrayBuffer: async () => new Uint8Array(Math.min(size, 4)).buffer } as File;
@@ -38,6 +40,7 @@ describe("创作会话素材上传", () => {
     beforeEach(() => {
         mocks.appendCreativeConversationExchange.mockReset().mockResolvedValue({});
         mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", status: "active" });
+        mocks.listCreativeAssetPage.mockReset().mockResolvedValue({ assets: [], hasMore: false });
         mocks.getCreativeWorkbenchSessionDetail.mockReset().mockResolvedValue({ id: "conversation-one", messages: [], hasMore: false });
         mocks.listCreativeWorkbenchSessionSummaries.mockReset().mockResolvedValue([]);
         mocks.getLocalMediaRegistrations.mockReset().mockResolvedValue([]);
@@ -55,6 +58,24 @@ describe("创作会话素材上传", () => {
         );
         expect(asset).toMatchObject({ id: "asset-one", type: "video", serverUrl: "/api/reference-assets/persistent-one.mp4", storageKey: "persistent-one.mp4" });
         expect(JSON.stringify(mocks.registerCreativeAssets.mock.calls[0][0])).not.toContain("base64");
+    });
+
+    it("normalizes and bounds asset page selectors before querying storage", async () => {
+        await listAssetPageForUser("user-one", "conversation-one", {
+            ids: [" asset-one,asset-two ", "asset-one"],
+            messageIds: ["message-one"],
+            runIds: ["run-one"],
+            limit: "50",
+            offset: "25",
+        });
+
+        expect(mocks.listCreativeAssetPage).toHaveBeenCalledWith("conversation-one", "user-one", {
+            ids: ["asset-one", "asset-two"],
+            messageIds: ["message-one"],
+            runIds: ["run-one"],
+            limit: 50,
+            offset: 25,
+        });
     });
 
     it("keeps the internal storage key while marking object-backed uploads", async () => {

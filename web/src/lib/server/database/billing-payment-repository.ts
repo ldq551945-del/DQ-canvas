@@ -24,19 +24,7 @@ export class BillingPaymentRepository {
                 provider_payment_id, raw_payload, paid_at, refunded_at, failed_at, created_at, updated_at
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-            ON CONFLICT (id) DO UPDATE SET
-                user_id = EXCLUDED.user_id,
-                provider = EXCLUDED.provider,
-                channel = EXCLUDED.channel,
-                status = EXCLUDED.status,
-                amount_cents = EXCLUDED.amount_cents,
-                currency = EXCLUDED.currency,
-                provider_trade_id = EXCLUDED.provider_trade_id,
-                provider_payment_id = EXCLUDED.provider_payment_id,
-                raw_payload = EXCLUDED.raw_payload,
-                paid_at = EXCLUDED.paid_at,
-                refunded_at = EXCLUDED.refunded_at,
-                failed_at = EXCLUDED.failed_at
+            ON CONFLICT (id) DO NOTHING
             RETURNING *
             `,
             [
@@ -58,6 +46,26 @@ export class BillingPaymentRepository {
                 payment.updatedAt,
             ],
         );
+        if (result.rows[0]) return mapPaymentTransaction(result.rows[0]);
+        const existing = await this.db.query("SELECT * FROM payment_transactions WHERE id = $1", [payment.id]);
+        if (!existing.rows[0]) throw new Error("Payment transaction conflict could not be resolved");
+        return mapPaymentTransaction(existing.rows[0]);
+    }
+
+    async updatePaymentState(payment: PaymentTransactionRecord) {
+        const result = await this.db.query(
+            `UPDATE payment_transactions SET
+                status = $4,
+                raw_payload = $5,
+                paid_at = $6,
+                refunded_at = $7,
+                failed_at = $8,
+                updated_at = $9
+             WHERE id = $1 AND order_id = $2 AND provider = $3
+             RETURNING *`,
+            [payment.id, payment.orderId, payment.provider, payment.status, jsonParam(payment.rawPayload ?? {}), payment.paidAt || null, payment.refundedAt || null, payment.failedAt || null, payment.updatedAt],
+        );
+        if (!result.rows[0]) throw new Error("Payment transaction state update target was not found");
         return mapPaymentTransaction(result.rows[0]);
     }
 
@@ -80,18 +88,31 @@ export class BillingPaymentRepository {
         return pageResult(result.rows.map(mapPaymentTransaction), Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
 
-    async getPaymentByProviderIdentifier(identifier: string) {
+    async lockPaymentIdentity(provider: string, identifiers: string[]) {
+        const values = [...new Set(identifiers.map((item) => item.trim()).filter(Boolean))].sort();
+        for (const identifier of values) await this.db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`${provider}:${identifier}`]);
+    }
+
+    async getPaymentByProviderIdentifiers(provider: string, identifiers: string[], forUpdate = false) {
+        const values = identifiers.map((item) => item.trim()).filter(Boolean);
+        if (!values.length) return null;
         const result = await this.db.query(
             `
             SELECT *
             FROM payment_transactions
-            WHERE provider_trade_id = $1 OR provider_payment_id = $1
+            WHERE provider = $1
+              AND (provider_trade_id = ANY($2::text[]) OR provider_payment_id = ANY($2::text[]))
             ORDER BY created_at DESC
             LIMIT 1
+            ${forUpdate ? "FOR UPDATE" : ""}
             `,
-            [identifier],
+            [provider, values],
         );
         return result.rows[0] ? mapPaymentTransaction(result.rows[0]) : null;
+    }
+
+    async getPaymentByProviderIdentifier(provider: string, identifier: string, forUpdate = false) {
+        return this.getPaymentByProviderIdentifiers(provider, [identifier], forUpdate);
     }
 
     async createReconciliationRun(run: BillingReconciliationRunRecord, rows: BillingReconciliationRowRecord[]) {
@@ -296,18 +317,15 @@ export class BillingPaymentRepository {
             `
             INSERT INTO payment_provider_events (id, provider, event_id, event_type, order_id, signature_valid, payload, processing_at, processed_at, error, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT (provider, event_id) WHERE event_id IS NOT NULL AND event_id <> '' DO UPDATE SET
-                event_type = EXCLUDED.event_type,
-                order_id = EXCLUDED.order_id,
-                signature_valid = EXCLUDED.signature_valid,
-                payload = EXCLUDED.payload,
-                processed_at = COALESCE(EXCLUDED.processed_at, payment_provider_events.processed_at),
-                error = EXCLUDED.error
+            ON CONFLICT (provider, event_id) WHERE event_id IS NOT NULL AND event_id <> '' DO NOTHING
             RETURNING *
             `,
             [event.id, event.provider, eventId, event.eventType, event.orderId || null, event.signatureValid, jsonParam(event.payload ?? {}), event.processingAt || null, event.processedAt || null, event.error || null, event.createdAt, event.updatedAt],
         );
-        return mapPaymentProviderEvent(result.rows[0]);
+        if (result.rows[0]) return { event: mapPaymentProviderEvent(result.rows[0]), conflict: false };
+        const existing = await this.getProviderEventByProviderEventId(event.provider, eventId);
+        if (!existing) throw new Error("Payment provider event conflict could not be resolved");
+        return { event: existing, conflict: !sameProviderEvent(existing, event) };
     }
 
     async getProviderEventByProviderEventId(provider: string, eventId: string) {
@@ -327,8 +345,28 @@ export class BillingPaymentRepository {
         return result.rows[0] ? mapPaymentProviderEvent(result.rows[0]) : null;
     }
 
+    async markProviderEventConflict(id: string) {
+        const result = await this.db.query("UPDATE payment_provider_events SET error = 'event_payload_conflict', updated_at = now() WHERE id = $1 RETURNING *", [id]);
+        return result.rows[0] ? mapPaymentProviderEvent(result.rows[0]) : null;
+    }
+
     async releaseProviderEvent(id: string, error?: string) {
         const result = await this.db.query("UPDATE payment_provider_events SET processing_at = NULL, error = $2, updated_at = now() WHERE id = $1 AND processed_at IS NULL RETURNING *", [id, error || null]);
         return result.rows[0] ? mapPaymentProviderEvent(result.rows[0]) : null;
     }
+}
+
+function sameProviderEvent(existing: PaymentProviderEventRecord, incoming: PaymentProviderEventRecord) {
+    return existing.eventType === incoming.eventType && (existing.orderId || "") === (incoming.orderId || "") && existing.signatureValid === incoming.signatureValid && stableJson(existing.payload ?? {}) === stableJson(incoming.payload ?? {});
+}
+
+function stableJson(value: unknown): string {
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+    if (value && typeof value === "object") {
+        return `{${Object.entries(value as Record<string, unknown>)
+            .sort(([left], [right]) => left.localeCompare(right))
+            .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+            .join(",")}}`;
+    }
+    return JSON.stringify(value) ?? "null";
 }

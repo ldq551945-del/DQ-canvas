@@ -2,6 +2,7 @@ import { postgresQuery, type QueryExecutor } from "@/lib/server/database/postgre
 import { AuditLogsRepository } from "./audit-log-repository";
 import { BillingOrderRepository } from "./billing-order-repository";
 import { BillingPaymentRepository } from "./billing-payment-repository";
+import { BillingRefundRepository } from "./billing-refund-repository";
 import { BillingProductRepository } from "./billing-product-repository";
 import { CouponRepository } from "./coupon-repository";
 import { PointsWalletRepository } from "./points-wallet-repository";
@@ -73,6 +74,7 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
     const billingOrder = new BillingOrderRepository(executor);
     const pointsWallet = new PointsWalletRepository(executor);
     const billingPayment = new BillingPaymentRepository(executor);
+    const billingRefund = new BillingRefundRepository(executor);
     const promotion = new PromotionRepository(executor);
     const coupons = new CouponRepository(executor);
 
@@ -101,7 +103,10 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
             expirePendingOrders: billingOrder.expirePendingOrders.bind(billingOrder),
             updateOrder: billingOrder.updateOrder.bind(billingOrder),
             upsertPayment: billingPayment.upsertPayment.bind(billingPayment),
+            updatePaymentState: billingPayment.updatePaymentState.bind(billingPayment),
             listPayments: billingPayment.listPayments.bind(billingPayment),
+            lockPaymentIdentity: billingPayment.lockPaymentIdentity.bind(billingPayment),
+            getPaymentByProviderIdentifiers: billingPayment.getPaymentByProviderIdentifiers.bind(billingPayment),
             getPaymentByProviderIdentifier: billingPayment.getPaymentByProviderIdentifier.bind(billingPayment),
             createReconciliationRun: billingPayment.createReconciliationRun.bind(billingPayment),
             listReconciliationRuns: billingPayment.listReconciliationRuns.bind(billingPayment),
@@ -115,7 +120,13 @@ export function createPostgresRepositories(executor: QueryExecutor = { query: po
             getProviderEventByProviderEventId: billingPayment.getProviderEventByProviderEventId.bind(billingPayment),
             claimProviderEvent: billingPayment.claimProviderEvent.bind(billingPayment),
             markProviderEventProcessed: billingPayment.markProviderEventProcessed.bind(billingPayment),
+            markProviderEventConflict: billingPayment.markProviderEventConflict.bind(billingPayment),
             releaseProviderEvent: billingPayment.releaseProviderEvent.bind(billingPayment),
+            getRefundJobByOrderId: billingRefund.getByOrderId.bind(billingRefund),
+            upsertRefundJob: billingRefund.upsert.bind(billingRefund),
+            claimDueRefundJobs: billingRefund.claimDue.bind(billingRefund),
+            checkpointRefundJob: billingRefund.checkpoint.bind(billingRefund),
+            releaseRefundJob: billingRefund.release.bind(billingRefund),
         },
         promotions: promotion,
         coupons,
@@ -227,12 +238,13 @@ class SettingsRepository {
     async upsertSystemModelChannel(channel: Omit<SystemModelChannelRecord, "createdAt" | "updatedAt">) {
         const result = await this.db.query(
             `
-            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO system_model_channels (id, name, base_url, api_key_ciphertext, webhook_secret_ciphertext, api_format, models, enabled, advanced_config, health_results, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 base_url = EXCLUDED.base_url,
                 api_key_ciphertext = EXCLUDED.api_key_ciphertext,
+                webhook_secret_ciphertext = EXCLUDED.webhook_secret_ciphertext,
                 api_format = EXCLUDED.api_format,
                 models = EXCLUDED.models,
                 enabled = EXCLUDED.enabled,
@@ -241,7 +253,19 @@ class SettingsRepository {
                 sort_order = EXCLUDED.sort_order
             RETURNING *
             `,
-            [channel.id, channel.name, channel.baseUrl, channel.apiKeyCiphertext, channel.apiFormat, jsonParam(channel.models), channel.enabled, jsonParam(channel.advancedConfig), jsonParam(channel.healthResults || {}), channel.sortOrder],
+            [
+                channel.id,
+                channel.name,
+                channel.baseUrl,
+                channel.apiKeyCiphertext,
+                channel.webhookSecretCiphertext,
+                channel.apiFormat,
+                jsonParam(channel.models),
+                channel.enabled,
+                jsonParam(channel.advancedConfig),
+                jsonParam(channel.healthResults || {}),
+                channel.sortOrder,
+            ],
         );
         return mapSystemModelChannel(result.rows[0]);
     }
@@ -290,6 +314,7 @@ function mapSystemModelChannel(row: Record<string, unknown>): SystemModelChannel
         name: stringValue(row.name),
         baseUrl: stringValue(row.base_url),
         apiKeyCiphertext: stringValue(row.api_key_ciphertext),
+        webhookSecretCiphertext: stringValue(row.webhook_secret_ciphertext),
         apiFormat: row.api_format === "gemini" ? "gemini" : "openai",
         models: jsonValue(row.models),
         enabled: row.enabled !== false,

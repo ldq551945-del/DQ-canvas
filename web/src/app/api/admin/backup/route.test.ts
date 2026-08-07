@@ -29,4 +29,14 @@ describe("POST /api/admin/backup", () => {
         expect(response.status).toBe(413);
         expect((await response.json()).error).toBe("备份文件过大，请确认文件是否正确");
     });
+
+    it("rejects a disaster recovery manifest at the account-config import endpoint", async () => {
+        const formData = new FormData();
+        formData.set("file", new File([JSON.stringify({ app: "DQ-绘图", backupType: "disaster", files: {} })], "recovery-point.json", { type: "application/json" }));
+
+        const response = await POST(new Request("http://localhost/api/admin/backup", { method: "POST", body: formData }));
+
+        expect(response.status).toBe(400);
+        expect((await response.json()).error).toContain("不能用于整库灾难恢复");
+    });
 });

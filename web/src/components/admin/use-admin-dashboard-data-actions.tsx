@@ -12,6 +12,7 @@ import type { PaymentConfigSummary } from "@/lib/payment-config-types";
 import type { AdminSetupSummary } from "@/lib/server/admin-setup-status";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 import type { Prompt } from "@/services/api/prompts";
+import { notifyPublicSettingsChanged } from "@/stores/use-public-session-store";
 import { downloadTextFile, formatCreatedCdkExport, splitTags } from "./admin-dashboard-elements";
 
 export type AdminDashboardProps = {
@@ -194,6 +195,7 @@ export function useAdminDashboardDataActions({ state }: { state: AdminDashboardS
             const payload = (await response.json()) as { settings?: AuthSettings; error?: string };
             if (!response.ok || !payload.settings) throw new Error(payload.error || "更新设置失败");
             setSettings(payload.settings);
+            notifyPublicSettingsChanged();
             message.success(successText);
             return true;
         } catch (error) {

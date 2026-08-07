@@ -47,7 +47,10 @@ export function AnnouncementNotificationCenter({ compact, buttonClassName, butto
         <button type="button" className={cn(buttonClassName, "relative")} style={buttonStyle} onClick={() => handleOpenChange(true)} aria-label={totalUnread ? `通知中心，${totalUnread} 条未读` : "通知中心"} title="通知中心" aria-expanded={open}>
             <Bell className="size-4" />
             {hydrated && totalUnread ? (
-                <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-[#66758e] px-1 text-[9px] font-semibold leading-[14px] text-white ring-2 ring-white dark:bg-[#d8dee8] dark:text-[#252b33] dark:ring-[#181b20]">
+                <span
+                    aria-hidden="true"
+                    className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-[#66758e] px-1 text-[9px] font-semibold leading-[14px] text-white ring-2 ring-white dark:bg-[#d8dee8] dark:text-[#252b33] dark:ring-[#181b20]"
+                >
                     {totalUnread > 9 ? "9+" : totalUnread}
                 </span>
             ) : null}
@@ -154,7 +157,7 @@ function AnnouncementPanel({
                 </div>
                 <button
                     type="button"
-                    className="grid size-8 shrink-0 place-items-center rounded-lg text-[#7c8591] transition hover:bg-[#f1f3f5] hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:bg-[#22262c] dark:hover:text-white"
+                    className="grid size-10 shrink-0 place-items-center rounded-lg text-[#7c8591] transition hover:bg-[#f1f3f5] hover:text-[#20242a] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:size-8 dark:text-[#9aa3af] dark:hover:bg-[#22262c] dark:hover:text-white"
                     onClick={onClose}
                     aria-label="关闭通知中心"
                     title="关闭"
@@ -162,11 +165,15 @@ function AnnouncementPanel({
                     <X className="size-4" />
                 </button>
             </header>
-            <div className="grid shrink-0 grid-cols-2 border-b border-[#e8ebef] p-1.5 dark:border-[#2a2f36]">
+            <div role="tablist" aria-label="通知类型" className="grid shrink-0 grid-cols-2 border-b border-[#e8ebef] p-1.5 dark:border-[#2a2f36]">
                 <button
                     type="button"
+                    id="notification-tab-announcements"
+                    role="tab"
+                    aria-selected={activeTab === "announcements"}
+                    aria-controls="notification-tab-panel"
                     className={cn(
-                        "h-8 rounded-md text-xs font-semibold transition",
+                        "h-10 rounded-md text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-8",
                         activeTab === "announcements" ? "bg-[#eef1f5] text-[#20242a] dark:bg-[#252a32] dark:text-white" : "text-[#76808c] hover:bg-[#f5f6f8] dark:text-[#9ca5b0] dark:hover:bg-[#1d2127]",
                     )}
                     onClick={() => onTabChange("announcements")}
@@ -175,8 +182,12 @@ function AnnouncementPanel({
                 </button>
                 <button
                     type="button"
+                    id="notification-tab-interactions"
+                    role="tab"
+                    aria-selected={activeTab === "interactions"}
+                    aria-controls="notification-tab-panel"
                     className={cn(
-                        "h-8 rounded-md text-xs font-semibold transition",
+                        "h-10 rounded-md text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-8",
                         activeTab === "interactions" ? "bg-[#eef1f5] text-[#20242a] dark:bg-[#252a32] dark:text-white" : "text-[#76808c] hover:bg-[#f5f6f8] dark:text-[#9ca5b0] dark:hover:bg-[#1d2127]",
                     )}
                     onClick={() => onTabChange("interactions")}
@@ -184,7 +195,7 @@ function AnnouncementPanel({
                     互动 {interactionUnreadCount ? `· ${interactionUnreadCount}` : ""}
                 </button>
             </div>
-            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            <div id="notification-tab-panel" role="tabpanel" aria-labelledby={activeTab === "announcements" ? "notification-tab-announcements" : "notification-tab-interactions"} className="thin-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain">
                 {activeTab === "announcements" && loading ? <AnnouncementLoading /> : null}
                 {activeTab === "announcements" && !loading && error ? <AnnouncementError onRetry={onRetry} /> : null}
                 {activeTab === "announcements" && !loading && !error && announcements.length ? (
@@ -291,7 +302,7 @@ function AnnouncementRow({ announcement, expanded, unread, onExpand }: { announc
 
 function AnnouncementLoading() {
     return (
-        <div className="divide-y divide-[#edf0f3] dark:divide-[#272c33]" aria-label="公告加载中">
+        <div role="status" aria-live="polite" className="divide-y divide-[#edf0f3] dark:divide-[#272c33]" aria-label="通知加载中">
             {[0, 1, 2].map((item) => (
                 <div key={item} className="animate-pulse px-4 py-4">
                     <div className="ml-5 h-3 w-2/3 rounded bg-[#e8ebef] dark:bg-[#2a3038]" />
@@ -305,7 +316,7 @@ function AnnouncementLoading() {
 
 function AnnouncementError({ onRetry }: { onRetry: () => void }) {
     return (
-        <div className="grid min-h-40 place-items-center px-5 py-10 text-center">
+        <div role="alert" className="grid min-h-40 place-items-center px-5 py-10 text-center">
             <div>
                 <p className="text-sm font-medium">公告暂时无法加载</p>
                 <button

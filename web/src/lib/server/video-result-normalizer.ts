@@ -30,9 +30,9 @@ export async function normalizeVideoResult(input: {
     const workdir = await mkdtemp(join(tmpdir(), "dq-video-"));
     const sourcePath = join(workdir, "source-video");
     try {
-        const downloaded = await downloadMediaToFile(input.url, sourcePath, { origin: input.origin, cookie: input.cookie, internalHeaders: input.internalHeaders, maxBytes: MAX_VIDEO_BYTES });
+        const downloaded = await downloadMediaToFile(input.url, sourcePath, { origin: input.origin, cookie: input.cookie, internalHeaders: input.internalHeaders, maxBytes: MAX_VIDEO_BYTES, expectedType: "video" });
         const requestedDuration = normalizeRequestedDuration(input.requestedDurationSeconds);
-        const mimeType = downloaded.mimeType.startsWith("video/") ? downloaded.mimeType : input.mimeType || "video/mp4";
+        const mimeType = downloaded.mimeType;
 
         const asset = await writeReferenceMediaFile(sourcePath, "video", mimeType, true, {
             ownerUserId: input.ownerUserId,

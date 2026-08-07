@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
 vi.mock("@/lib/server/proxy-dispatcher", () => ({ configureServerProxyDispatcher: vi.fn() }));
+vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutboundUrl: (url: string | URL, init?: RequestInit) => fetch(url, init) }));
 vi.mock("@/lib/server/text-task-store", () => ({
     getTextTask: mocks.getTask,
     updateTextTask: mocks.updateTask,
@@ -17,7 +18,7 @@ vi.mock("@/lib/server/text-task-store", () => ({
 
 import { emptyAdvancedConfig } from "@/lib/channel-protocol-registry";
 import { createProtocolFixtureServer } from "../../../scripts/protocol-fixture-server.mjs";
-import { maintenanceWorkerContext } from "./maintenance-auth";
+import { workerContext } from "./maintenance-auth";
 import { runTextTaskStep, taskHeaders } from "./text-task-runtime";
 import type { TextTask, TextTaskConfig } from "./text-task-store";
 
@@ -46,9 +47,9 @@ describe("text task runtime recovery", () => {
 
     it("preserves maintenance authorization for the internal system proxy", () => {
         const token = "m".repeat(32);
-        vi.stubEnv("DQ_MAINTENANCE_TOKEN", token);
+        vi.stubEnv("DQ_WORKER_TOKEN", token);
 
-        const headers = taskHeaders({ ...openAiConfig("channel-one", "/api/ai/system/channel-one"), apiKey: "system" }, maintenanceWorkerContext("user-one"), "text-task:test:attempt:1");
+        const headers = taskHeaders({ ...openAiConfig("channel-one", "/api/ai/system/channel-one"), apiKey: "system" }, workerContext("user-one"), "text-task:test:attempt:1");
 
         expect(headers.get("authorization")).toBe(`Bearer ${token}`);
         expect(headers.get("x-dq-worker-user-id")).toBe("user-one");

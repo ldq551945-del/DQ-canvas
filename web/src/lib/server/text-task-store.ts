@@ -56,8 +56,13 @@ export async function getTextTask(id: string) {
     return getStoredGenerationTask<TextTask>("text", id);
 }
 
-export function transitionTextTask(task: TextTask, allowedStatuses: TextTaskStatus[], patch: Partial<Pick<TextTask, "config" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus }) {
-    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS);
+export function transitionTextTask(
+    task: TextTask,
+    allowedStatuses: TextTaskStatus[],
+    patch: Partial<Pick<TextTask, "config" | "messages" | "result" | "error" | "pointsRemaining" | "upstream" | "billing">> & { status: TextTaskStatus },
+    executionPatch?: import("@/lib/server/generation-task-scheduler").GenerationTaskSchedulePatch,
+) {
+    return transitionStoredGenerationTask<TextTask>("text", task.id, task.userId, allowedStatuses, patch, GENERATION_TASK_RETENTION_MS, executionPatch);
 }
 
 export function touchTextTask(id: string) {

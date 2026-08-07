@@ -18,5 +18,5 @@ export async function refundAudioTask(task: AudioTask) {
 }
 
 export function audioTaskRefundIdempotencyKey(task: Pick<AudioTask, "id" | "attemptNo">) {
-    return task.attemptNo === undefined ? `audio-task:${task.id}` : `audio-task:${task.id}:attempt:${task.attemptNo}`;
+    return task.attemptNo === undefined ? `audio-task:${task.id}:refund` : `audio-task:${task.id}:attempt:${task.attemptNo}:refund`;
 }

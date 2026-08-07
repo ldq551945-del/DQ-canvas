@@ -21,4 +21,23 @@ describe("payment provider definitions", () => {
         expect(getAlipayPaymentModePresentation("face_to_face")).toMatchObject({ checkoutKind: "当面付二维码" });
         expect(getAlipayPaymentModePresentation("both")).toBeUndefined();
     });
+
+    it("exposes PayPly provider-query fields required for server-side verification", () => {
+        const payply = PAYMENT_PROVIDER_DEFINITIONS.find((provider) => provider.id === "payply");
+        const queryFields = payply?.fields.filter((field) => field.key.startsWith("query")) || [];
+
+        expect(queryFields.map((field) => field.key)).toEqual([
+            "queryUrl",
+            "queryStatusField",
+            "queryOrderIdField",
+            "queryOrderNoField",
+            "queryTradeIdField",
+            "queryPaymentIdField",
+            "queryAmountCentsField",
+            "queryAmountField",
+            "queryCurrencyField",
+            "queryPaidAtField",
+        ]);
+        expect(queryFields.find((field) => field.key === "queryUrl")?.envNames).toEqual(["DQ_PAYPLY_QUERY_URL", "PAYPLY_QUERY_URL"]);
+    });
 });

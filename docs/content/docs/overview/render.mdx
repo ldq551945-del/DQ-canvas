@@ -5,7 +5,7 @@ description: 使用 Render Blueprint 和 PostgreSQL 部署 DQ-绘图
 
 # Render 部署
 
-仓库根目录 `render.yaml` 会创建 Web Service、独立生成 Worker、PostgreSQL 和 Web 持久盘。Web 与 Worker 通过同一 Render 环境组取得自动生成的维护令牌；Worker 只通过 Render 私网调用 Web 维护接口，不直接读取数据库连接。
+仓库根目录 `render.yaml` 会创建 Web Service、独立生成 Worker、PostgreSQL 和 Web 持久盘。Web 与 Worker 只通过 `dq-worker-auth` 环境组共享自动生成的 `DQ_WORKER_TOKEN`；外部 `DQ_MAINTENANCE_TOKEN` 只注入 Web。数据库、加密密钥和一次性安装令牌也只注入 Web。Worker 通过 Render 私网调用 Web 的 Worker 接口。
 
 [部署到 Render](https://render.com/deploy?repo=https://github.com/DAO-QIN/DQ-canvas)
 
@@ -13,9 +13,9 @@ description: 使用 Render Blueprint 和 PostgreSQL 部署 DQ-绘图
 
 1. 连接 GitHub 仓库并创建 Blueprint。
 2. 为 `NEXT_PUBLIC_SITE_URL` 填写最终 Render 域名或自定义 HTTPS 域名。
-3. 确认 `DQ_ENCRYPTION_KEY` 和环境组中的 `DQ_MAINTENANCE_TOKEN` 已由 Render 生成并长期保留。
+3. 确认 `DQ_ENCRYPTION_KEY`、`DQ_INSTALL_TOKEN`、Web 的 `DQ_MAINTENANCE_TOKEN` 和环境组中的 `DQ_WORKER_TOKEN` 已由 Render 生成。
 4. 确认 Web 的 `/app/web/.data` 已挂载 `dq-data` 持久盘，Worker 状态为运行中。
-5. 部署完成后访问 `/install` 创建管理员。
+5. 部署完成后访问 `/install` 初始化并创建管理员；完成后可从 Web 删除 `DQ_INSTALL_TOKEN` 并重启。
 6. 登录后台配置模型渠道和默认逻辑模型，再检查 `/api/health/ready` 返回成功且包含有效 Worker 心跳。
 
 ## 实例与持久化边界
@@ -24,5 +24,5 @@ description: 使用 Render Blueprint 和 PostgreSQL 部署 DQ-绘图
 - Render 临时文件系统不适合长期媒体目录；Blueprint 已把 `DQ_DATA_DIR` 与持久盘统一为 `/app/web/.data`。
 - Render 存活检查使用 `/api/health/live`，确保首次安装前也能部署；数据库、加密密钥、管理员和 Worker 心跳由 `/api/health/ready` 供外部监控检查。
 - Canvas、素材库、短剧和工作台记录保存在 PostgreSQL，媒体文件还需要随持久化磁盘一起备份。
-- 持久盘只挂载到 Web，Worker 经私网维护 API 领取任务，由 Web 完成数据库和媒体写入；Worker 不应获得 `DATABASE_URL`。
+- 持久盘只挂载到 Web，Worker 经私网维护 API 领取任务，由 Web 完成数据库和媒体写入；Worker 不获得 `DATABASE_URL`、`DQ_ENCRYPTION_KEY` 或 `DQ_INSTALL_TOKEN`。
 - Blueprint 结构化契约通过不等于 Render 已真实创建资源；上线前仍需核对实际费用、首次部署、重启恢复、支付回调、长任务与媒体生成。

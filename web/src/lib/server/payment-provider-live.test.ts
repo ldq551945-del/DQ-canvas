@@ -28,6 +28,9 @@ const alipayKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const alipayPrivateKey = alipayKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 const alipayPublicKey = alipayKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
 const wechatPrivateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+const wechatPlatformKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const wechatPlatformPrivateKey = wechatPlatformKeys.privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+const wechatPlatformPublicKey = wechatPlatformKeys.publicKey.export({ type: "spki", format: "pem" }).toString();
 
 const order = {
     id: "order-live",
@@ -74,7 +77,9 @@ let fixture: ReturnType<typeof createPaymentFixtureServer>;
 let origin: string;
 
 beforeEach(async () => {
-    fixture = createPaymentFixtureServer({ alipayPrivateKey });
+    vi.stubEnv("DQ_ALLOW_PRIVATE_UPSTREAMS", "1");
+    vi.stubEnv("DQ_PRIVATE_UPSTREAM_HOSTS", "127.0.0.1");
+    fixture = createPaymentFixtureServer({ alipayPrivateKey, wechatPlatformPrivateKey });
     await new Promise<void>((resolve) => fixture.server.listen(0, "127.0.0.1", resolve));
     const address = fixture.server.address();
     if (!address || typeof address === "string") throw new Error("Payment fixture did not bind a TCP port");
@@ -83,6 +88,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
     await new Promise<void>((resolve, reject) => fixture.server.close((error) => (error ? reject(error) : resolve())));
+    vi.unstubAllEnvs();
 });
 
 describe("payment providers over a live compatible HTTP fixture", () => {
@@ -146,6 +152,7 @@ function wechatConfig(): PaymentRuntimeConfig {
         DQ_WECHAT_PAY_MCH_ID: "1900000001",
         DQ_WECHAT_PAY_CERT_SERIAL_NO: "fixture-serial",
         DQ_WECHAT_PAY_PRIVATE_KEY: wechatPrivateKey,
+        DQ_WECHAT_PAY_PLATFORM_PUBLIC_KEY: wechatPlatformPublicKey,
         DQ_WECHAT_PAY_API_BASE: `${origin}/wechat`,
     });
 }

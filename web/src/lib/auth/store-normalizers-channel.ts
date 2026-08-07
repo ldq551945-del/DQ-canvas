@@ -3,7 +3,7 @@ import { isGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
 
 import type { LogicalModelCapability, SystemChannelAdvancedConfig, SystemChannelHealthSnapshot, SystemChannelProtocol } from "./store-types";
 
-const CHANNEL_PROTOCOLS: SystemChannelProtocol[] = ["auto", "openai", "sub2api", "newapi", "qingyan", "globalaiopc", "seedance", "stable-diffusion", "volcengine-video", "seedance-special", "custom", "compatible"];
+const CHANNEL_PROTOCOLS: SystemChannelProtocol[] = ["auto", "openai", "grok2api", "sub2api", "newapi", "vozeb-recommended", "qingyan", "globalaiopc", "seedance", "stable-diffusion", "volcengine-video", "seedance-special", "custom", "compatible"];
 
 export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChannelAdvancedConfig> | undefined): SystemChannelAdvancedConfig | undefined {
     if (!config || typeof config !== "object") return undefined;
@@ -43,6 +43,7 @@ export function normalizeSystemChannelAdvancedConfig(config: Partial<SystemChann
         supportsReferenceVideo: Boolean(config.supportsReferenceVideo),
         supportsReferenceAudio: Boolean(config.supportsReferenceAudio),
         ...(modelCatalogPaths.length ? { modelCatalogPaths } : {}),
+        ...(isModelCapability(config.modelCatalogCapability) ? { modelCatalogCapability: config.modelCatalogCapability } : {}),
         ...(Object.keys(modelCapabilities).length ? { modelCapabilities } : {}),
         ...(Object.keys(modelConfigs).length ? { modelConfigs } : {}),
         ...(Object.keys(operationConfigs).length ? { operationConfigs } : {}),

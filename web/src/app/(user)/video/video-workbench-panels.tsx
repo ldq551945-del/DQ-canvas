@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquare, ChevronDown, ClipboardPaste, Download, FolderPlus, Music2, SlidersHorizontal, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
+import { CheckSquare, ChevronDown, CircleStop, ClipboardPaste, Download, FolderPlus, Music2, SlidersHorizontal, Sparkles, Square, Trash2, Upload, VideoIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import { App, Button, Drawer, Empty, Modal, Tag, Typography } from "antd";
@@ -16,19 +16,21 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { preloadOnIdle } from "@/lib/preload-on-idle";
 import { droppedFiles, leftDropTarget, preventFileDragEvent } from "@/lib/file-drop";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
+import type { GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { deleteStoredMedia, uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { deleteGenerationLogs as deleteServerGenerationLogs } from "@/services/api/generation-logs";
 import { createServerVideoGenerationTask, pollVideoGenerationTask, storeGeneratedVideo } from "@/services/api/video";
 import { useAssetStore } from "@/stores/use-asset-store";
-import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, selectableModelsByCapability, useConfigStore, useEffectiveConfig, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { WorkbenchAgentConversation, WorkbenchAgentHeader, WorkbenchBackgroundTaskNotice, WorkbenchComposerFrame, WorkbenchSkillEmptyState, type WorkbenchAgentMessage } from "@/components/agent/workbench-agent-panel";
-import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder } from "@/components/agent/workbench-generation-placeholder";
+import { WorkbenchGenerationActivity, WorkbenchGenerationPlaceholder, WorkbenchGenerationStatus } from "@/components/agent/workbench-generation-placeholder";
 import { WorkbenchHistoryPanel } from "@/components/agent/workbench-history-panel";
 import { moveListItem, ReferenceOrderButtons, WorkbenchPromptEditor } from "@/components/agent/workbench-composer-controls";
 import { preloadWorkbenchResourceDialogs, WorkbenchResourceDialogs } from "@/components/agent/workbench-resource-dialogs";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import { ResultSelectCheckbox, WorkbenchFileInput } from "@/components/agent/workbench-result-controls";
 import { findWorkbenchAgentSessionForRecord, matchesWorkbenchHistoryQuery, removeWorkbenchAgentSessionsForRecords } from "@/components/agent/workbench-agent-session-store";
 import { mergeWorkbenchAgentPatch, useWorkbenchAgentRun, type WorkbenchAgentParameterPatch } from "@/hooks/use-workbench-agent-run";
@@ -48,7 +50,6 @@ import {
     normalizeLogConfig,
     normalizeResolution,
     normalizeVideoSeconds,
-    readStoredLogs,
     removeStoredVideoLogs,
     replaceResult,
     resultsFromLog,
@@ -68,7 +69,19 @@ export function selectVideoModel(config: AiConfig, options = selectableModelsByC
     return candidates.find((candidate) => options.includes(candidate)) || "";
 }
 
-export function GenerationSettings({ config, model, updateConfig, openConfigDialog, hideModel = false }: { config: AiConfig; model: string; updateConfig: UpdateAiConfig; openConfigDialog: (shouldPromptContinue?: boolean) => void; hideModel?: boolean }) {
+export function GenerationSettings({
+    config,
+    model,
+    updateConfig,
+    openConfigDialog,
+    hideModel = false,
+}: {
+    config: AiConfig;
+    model: string;
+    updateConfig: UpdateAiConfig;
+    openConfigDialog: (shouldPromptContinue?: boolean, capability?: ModelCapability) => void;
+    hideModel?: boolean;
+}) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [audioOpen, setAudioOpen] = useState(false);
 
@@ -77,7 +90,7 @@ export function GenerationSettings({ config, model, updateConfig, openConfigDial
             {!hideModel ? (
                 <label className="col-span-2 block min-w-0 sm:col-span-1">
                     <span className="mb-1.5 block text-sm font-semibold sm:mb-2 sm:text-base">模型</span>
-                    <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(true)} />
+                    <ModelPicker config={config} value={model} onChange={(value) => updateConfig("videoModel", value)} capability="video" fullWidth onMissingConfig={() => openConfigDialog(true, "video")} />
                 </label>
             ) : null}
             <div className="col-span-2">
@@ -115,7 +128,7 @@ export function ResultVideoCard({
         <div className="relative overflow-hidden rounded-lg border border-stone-200 bg-background dark:border-stone-800">
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
             <div className={`${large ? "h-[156px] sm:h-[240px]" : "h-[144px] sm:h-[220px]"} flex w-full items-center justify-center bg-black`}>
-                <video src={video.url} controls className="h-full w-full object-contain" />
+                <video src={video.url} controls preload="none" className="h-full w-full object-contain" />
             </div>
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-stone-200 px-3 py-2.5 dark:border-stone-800">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500 dark:text-stone-400">
@@ -138,12 +151,31 @@ export function ResultVideoCard({
     );
 }
 
-export function PendingVideoCard() {
-    return <WorkbenchGenerationPlaceholder kind="video" className="h-[144px] sm:aspect-video sm:h-auto" />;
+export function PendingVideoCard({ state }: { state?: GenerationTaskExecutionState }) {
+    return (
+        <div className="relative">
+            <WorkbenchGenerationPlaceholder kind="video" className="h-[144px] sm:aspect-video sm:h-auto" />
+            <WorkbenchGenerationStatus state={state} />
+        </div>
+    );
 }
 
-export function FailedVideoCard({ error, retryable, selected, onSelectedChange, onRetry }: { error: string; retryable?: boolean; selected?: boolean; onSelectedChange?: (checked: boolean) => void; onRetry: () => void }) {
-    const failure = videoFailureDisplay(error);
+export function FailedVideoCard({
+    error,
+    retryable,
+    state,
+    selected,
+    onSelectedChange,
+    onRetry,
+}: {
+    error: string;
+    retryable?: boolean;
+    state?: GenerationTaskExecutionState;
+    selected?: boolean;
+    onSelectedChange?: (checked: boolean) => void;
+    onRetry: () => void;
+}) {
+    const failure = videoFailureDisplay(error, state);
     return (
         <div className="relative overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
             <ResultSelectCheckbox selected={selected} onSelectedChange={onSelectedChange} />
@@ -165,7 +197,10 @@ export function FailedVideoCard({ error, retryable, selected, onSelectedChange, 
     );
 }
 
-export function videoFailureDisplay(error: string) {
+export function videoFailureDisplay(error: string, state?: GenerationTaskExecutionState) {
+    if (state?.publicStatus === "needs_review") return { title: "待确认", hint: "上游创建结果未知，系统已停止重复创建。" };
+    if (state?.publicStatus === "cancelled") return { title: "已取消", hint: "任务已取消，不会继续生成。" };
+    if (state?.publicStatus === "retryable") return { title: "生成失败，可重试", hint: "上游已确认失败，可以安全重新创建任务。" };
     if (error.startsWith("上游生成阶段失败")) return { title: "上游生成失败", hint: "任务已创建，但上游生成阶段失败。" };
     if (error.startsWith("视频任务创建失败") || error.startsWith("Seedance 任务创建失败")) return { title: "任务创建失败", hint: "当前请求未能成功创建生成任务。" };
     if (error.startsWith("视频任务查询失败") || error.startsWith("Seedance 任务查询失败")) return { title: "任务查询失败", hint: "任务已提交后，轮询上游状态失败。" };
@@ -181,6 +216,12 @@ export function LogPanel({
     onDeleteSelected,
     onPreviewLog,
     onRenameLog,
+    onCancelLog,
+    cancellingLogIds = [],
+    historyTotal,
+    historyHasMore,
+    historyLoadingMore,
+    onLoadMore,
     compact = false,
 }: {
     logs: GenerationLog[];
@@ -191,6 +232,12 @@ export function LogPanel({
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
     onRenameLog: (log: GenerationLog, title: string) => void;
+    onCancelLog?: (log: GenerationLog) => void;
+    cancellingLogIds?: string[];
+    historyTotal?: number;
+    historyHasMore?: boolean;
+    historyLoadingMore?: boolean;
+    onLoadMore?: () => void;
     compact?: boolean;
 }) {
     return (
@@ -203,7 +250,23 @@ export function LogPanel({
             onDeleteSelected={onDeleteSelected}
             onPreviewLog={onPreviewLog}
             onRenameLog={onRenameLog}
+            total={historyTotal}
+            hasMore={historyHasMore}
+            loadingMore={historyLoadingMore}
+            onLoadMore={onLoadMore}
             compact={compact}
+            renderPreview={(log) => {
+                const previews = resultsFromLog(log)
+                    .flatMap((result) => (result.status === "success" && result.video?.url ? [result.video] : []))
+                    .slice(0, 3);
+                return previews.length ? (
+                    <div className="mt-2 flex gap-1 overflow-hidden">
+                        {previews.map((video, index) => (
+                            <LazyMediaVideo key={video.id} src={video.url} label={`视频结果 ${index + 1}`} containerClassName="size-10 shrink-0 rounded-md" videoClassName="size-full object-cover" />
+                        ))}
+                    </div>
+                ) : null;
+            }}
             renderDetails={(log) => (
                 <div className="grid min-w-0 gap-2 pl-7">
                     <div className="flex min-w-0 flex-wrap gap-1">
@@ -227,6 +290,21 @@ export function LogPanel({
                             {formatDuration(log.durationMs)}
                         </Tag>
                     </div>
+                    {log.status === "生成中" && log.task && onCancelLog && !resultsFromLog(log).some((result) => result.taskState?.publicStatus === "cancelled") ? (
+                        <Button
+                            danger
+                            size="small"
+                            className="w-fit"
+                            icon={<CircleStop className="size-3.5" />}
+                            loading={cancellingLogIds.includes(log.id)}
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onCancelLog(log);
+                            }}
+                        >
+                            取消任务
+                        </Button>
+                    ) : null}
                 </div>
             )}
         />

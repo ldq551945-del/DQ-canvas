@@ -13,7 +13,10 @@ import { adaptGlobalAiOpcTextRequest, adaptGlobalAiOpcTextResponse, isGlobalAiOp
 import { SYSTEM_AI_LOGICAL_MODEL_HEADER, SYSTEM_AI_POINTS_IDEMPOTENCY_HEADER, SYSTEM_AI_UPSTREAM_MODEL_HEADER } from "@/lib/server/system-ai-billing";
 import { isAgnesApiBaseUrl } from "@/lib/agnes-model-catalog";
 import { channelConnectionReady, protocolAuthHeaders, resolveChannelModelConfig } from "@/lib/channel-protocol-registry";
-import { authorizedMaintenanceUserId } from "@/lib/server/maintenance-auth";
+import { authorizedWorkerUserId } from "@/lib/server/maintenance-auth";
+import { authorizeGenerationMediaProxyRequest } from "@/lib/server/generation-media-access";
+import { userOwnsGenerationUpstreamTask } from "@/lib/server/generation-task-authorization";
+import { authorizeSystemAiProxyRequest } from "@/lib/server/system-ai-proxy-policy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +59,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
 async function proxySystemRequest(request: Request, context: RouteContext) {
     const currentUser = await getCurrentUser();
-    const userId = currentUser?.id || authorizedMaintenanceUserId(request);
+    const userId = currentUser?.id || authorizedWorkerUserId(request);
     if (!userId) return NextResponse.json({ error: "请先登录" }, { status: 401 });
 
     const { channelId, path } = await context.params;
@@ -67,7 +70,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
     if (isMediaProxyPath(path)) {
         const rate = await checkMediaProxyRateLimit(userId, request);
         if (!rate.allowed) return NextResponse.json({ error: "媒体访问过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
-        return proxySystemMediaRequest(request, channel);
+        return proxySystemMediaRequest(request, channel, userId);
     }
 
     const contentType = request.headers.get("content-type");
@@ -81,7 +84,7 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
         if (error instanceof RequestBodyTooLargeError) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
-    const upstreamModel = requestModel(requestBody.pointsPayload) || request.headers.get(SYSTEM_AI_UPSTREAM_MODEL_HEADER)?.trim() || "";
+    const upstreamModel = readRequestModel(readRequestBody(contentType, requestBody.pointsPayload)) || request.headers.get(SYSTEM_AI_UPSTREAM_MODEL_HEADER)?.trim() || readPathModel(path);
     const modelConfig = upstreamModel ? resolveChannelModelConfig(channel.advancedConfig, upstreamModel) : undefined;
     const apiFormat = modelConfig?.apiFormat || channel.apiFormat;
     const globalChannel = isGlobalAiOpcChannel(channel.advancedConfig);
@@ -110,8 +113,38 @@ async function proxySystemRequest(request: Request, context: RouteContext) {
             settings.logicalModels,
             settings.generationPointMultipliers,
         );
-    if (!isAllowedSystemOperation(request.method, path, upstreamModel, pointsRequest, channel, globalPreset, modelConfig)) {
-        return NextResponse.json({ error: "请求的操作或模型未在后台渠道中启用" }, { status: 403 });
+    if (pointsRequest?.model && !channelHasModel(channel.models, pointsRequest.model)) return NextResponse.json({ error: "请求的模型未在后台渠道中启用" }, { status: 403 });
+    const access = authorizeSystemAiProxyRequest({
+        method: request.method,
+        path: globalAdaptation?.path || path,
+        search: new URL(request.url).search,
+        channelId: channel.id,
+        upstreamModel,
+        preferredLogicalModelId: request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "",
+        logicalModels: settings.logicalModels || [],
+        apiFormat: globalPreset?.apiFormat || apiFormat,
+        pointsUsageKind: pointsRequest?.usageKind,
+        upstreamTaskIdHint: readRequestTaskId(readRequestBody(contentType, requestBody.pointsPayload)),
+        paths: {
+            create: [globalPreset?.createPath, modelConfig?.createPath, modelConfig?.editPath, modelConfig?.imageToVideoPath, channel.advancedConfig?.createPath, channel.advancedConfig?.editPath, channel.advancedConfig?.imageToVideoPath],
+            query: [globalPreset?.queryPath, modelConfig?.queryPath, channel.advancedConfig?.queryPath],
+            cancel: [
+                { path: modelConfig?.cancelPath, method: modelConfig?.cancelMethod },
+                { path: channel.advancedConfig?.cancelPath, method: channel.advancedConfig?.cancelMethod },
+            ],
+        },
+    });
+    if (!access.allowed) return NextResponse.json({ error: access.error }, { status: access.status });
+    if (access.operation !== "create") {
+        const owned = await userOwnsGenerationUpstreamTask({
+            userId,
+            capability: access.capability,
+            channelId: channel.id,
+            upstreamModel,
+            upstreamTaskId: access.upstreamTaskId,
+            operation: access.operation,
+        });
+        if (!owned) return NextResponse.json({ error: "生成任务不存在" }, { status: 404 });
     }
     const billingModel =
         pointsRequest && pointsRequest.usageKind !== "api" ? resolveLogicalBillingModel(settings.logicalModels, pointsRequest.usageKind, channel.id, pointsRequest.model, request.headers.get(SYSTEM_AI_LOGICAL_MODEL_HEADER) || "") : pointsRequest?.model;
@@ -187,66 +220,18 @@ function channelHasModel(models: string[], requested: string) {
     );
 }
 
-function isAllowedSystemOperation(
-    method: string,
-    path: string[],
-    requestedModel: string,
-    pointsRequest: PointsRequest | null,
-    channel: { models: string[]; baseUrl: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig },
-    globalPreset: { queryPath?: string } | undefined,
-    modelConfig: { queryPath?: string } | undefined,
-) {
-    if (method.toUpperCase() === "POST") {
-        const model = requestedModel || pointsRequest?.model || "";
-        return Boolean(pointsRequest && model && channelHasModel(channel.models, model));
-    }
-
-    const configuredPaths = [
-        globalPreset?.queryPath,
-        modelConfig?.queryPath,
-        channel.advancedConfig?.queryPath,
-        ...Object.values(channel.advancedConfig?.modelConfigs || {}).map((config) => config?.queryPath),
-        ...Object.values(channel.advancedConfig?.operationConfigs || {}).map((config) => config?.queryPath),
-    ];
-    if (configuredPaths.some((configuredPath) => matchesConfiguredOperationPath(path, configuredPath))) return true;
-
-    // Agnes exposes one documented polling endpoint at the API origin.
-    return isAgnesApiBaseUrl(channel.baseUrl) && channel.models.length > 0 && matchesConfiguredOperationPath(path, "/agnesapi");
-}
-
-function matchesConfiguredOperationPath(path: string[], configuredPath: string | undefined) {
-    if (!configuredPath) return false;
-    const incoming = normalizeOperationPath(`/${path.join("/")}`);
-    const configured = normalizeOperationPath(configuredPath.split("?", 1)[0]);
-    if (!incoming || !configured) return false;
-    const expression = configured
-        .replace(/:(?:task_id|id)\b|\{\{taskId\}\}|\{taskId\}/gi, "__DQ_TASK_ID__")
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        .replace(/__DQ_TASK_ID__/g, "[^/]+");
-    return new RegExp(`^${expression}$`, "i").test(incoming);
-}
-
-function normalizeOperationPath(value: string) {
-    const clean = value.trim().replace(/^\/+|\/+$/g, "");
-    const segments = clean.split("/").filter(Boolean);
-    if (segments[0]?.toLowerCase() === "v1" || segments[0]?.toLowerCase() === "v1beta") segments.shift();
-    return segments.join("/");
-}
-
-function requestModel(payload: ArrayBuffer | Record<string, unknown> | undefined) {
-    return payload && !(payload instanceof ArrayBuffer) ? readRequestModel(payload) : "";
-}
-
 function normalizePointsIdempotencyKey(value: string | null) {
     const normalized = value?.trim().slice(0, 160) || "";
     return /^[a-zA-Z0-9._:-]+$/.test(normalized) ? normalized : "";
 }
 
-type SystemMediaChannel = { baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
+type SystemMediaChannel = { id: string; baseUrl: string; apiFormat: ApiCallFormat; apiKey: string; advancedConfig?: import("@/lib/auth/store").SystemChannelAdvancedConfig };
 
-async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel) {
+async function proxySystemMediaRequest(request: Request, channel: SystemMediaChannel, userId: string) {
     if (request.method !== "GET" && request.method !== "HEAD") return NextResponse.json({ error: "Media proxy only supports GET and HEAD" }, { status: 405 });
-    const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, new URL(request.url).searchParams.get("url") || "", isGlobalAiOpcChannel(channel.advancedConfig));
+    const rawUrl = new URL(request.url).searchParams.get("url") || "";
+    if (!(await authorizeGenerationMediaProxyRequest(request, { userId, channelId: channel.id, url: rawUrl }))) return NextResponse.json({ error: "媒体访问未获授权" }, { status: 403 });
+    const target = mediaTargetRequest(channel.baseUrl, channel.apiFormat, rawUrl, isGlobalAiOpcChannel(channel.advancedConfig));
     if (!target) return NextResponse.json({ error: "Invalid media url" }, { status: 400 });
     const headers = new Headers();
     const range = request.headers.get("range");
@@ -436,6 +421,13 @@ function readRequestModel(payload: Record<string, unknown>) {
     return overrideSettings && typeof overrideSettings === "object" && !Array.isArray(overrideSettings) && typeof (overrideSettings as Record<string, unknown>).sd_model_checkpoint === "string"
         ? String((overrideSettings as Record<string, unknown>).sd_model_checkpoint).trim()
         : "";
+}
+
+function readRequestTaskId(payload: Record<string, unknown>) {
+    for (const key of ["task_id", "taskId", "id", "job_id", "jobId", "video_id", "videoId", "request_id", "requestId"]) {
+        if (typeof payload[key] === "string" && payload[key].trim()) return payload[key].trim().slice(0, 500);
+    }
+    return "";
 }
 
 function readPathModel(path: string[]) {

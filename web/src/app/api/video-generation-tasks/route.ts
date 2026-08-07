@@ -9,7 +9,7 @@ import { resolveLogicalModelCandidates } from "@/lib/server/logical-model-router
 import { assertReferenceCapabilities, assertReferenceUrls, buildVideoProviderRequest, isProviderBusinessError, readProviderError, readProviderString, resolvedProviderCreatePaths } from "@/lib/server/provider-task-config";
 import { isQingyanProvider } from "@/lib/provider-compatibility";
 import { buildGlobalAiOpcVideoRequest, resolveGlobalAiOpcPreset } from "@/lib/globalaiopc-catalog";
-import { createVideoTask, transitionVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
+import { registerVideoTask, transitionVideoTask, updateVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { toSafeGenerationErrorMessage } from "@/lib/server/generation-errors";
 import { getStoredGenerationTaskByRequest, linkStoredGenerationTask, withGenerationConcurrencyLimit, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { normalizeVideoAspectRatio, resolveUpstreamVideoDuration, resolveVideoDuration, resolveVideoGenerationParameters, withVideoReferenceFidelity } from "@/lib/server/video-task-config";
@@ -22,10 +22,17 @@ import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-rec
 import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
+import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
+import { buildGrok2ApiVideoRequest, GROK2API_VIDEO_OPERATION } from "@/lib/grok2api";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
-import { maintenanceWorkerContextHeaders, requestRuntimeCredential } from "@/lib/server/maintenance-auth";
+import { requestRuntimeCredential, workerContextHeaders } from "@/lib/server/maintenance-auth";
 import { expandCanvasVideoSkillMentions } from "@/lib/server/canvas-skill-mentions";
+import { writeVideoGenerationLog } from "@/lib/server/video-task-log";
 import { buildOpenAiVideoFormData } from "./video-task-openai";
+import { requestPublicOrigin } from "@/lib/request-origin";
+import { getStoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
+import { publicGenerationTaskState } from "@/lib/server/generation-task-public-state";
+import type { StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +43,14 @@ type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; 
 export async function POST(request: Request) {
     const user = await getCurrentUser(request);
     if (!user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
+    const headerRequestId = clean(request.headers.get("x-dq-client-request-id"));
+    const headerAttemptNo = positiveAttemptNo(request.headers.get("x-dq-attempt-no"));
+    if (headerRequestId) {
+        const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, headerRequestId, headerAttemptNo);
+        if (existing) return NextResponse.json({ task: publicTask(existing) });
+    }
+    const rate = await checkGenerationRateLimit(user.id, request, "video");
+    if (!rate.allowed) return NextResponse.json({ error: "视频生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
     let body: CreateVideoTaskBody;
     try {
         body = await readJsonBody(request);
@@ -43,14 +58,18 @@ export async function POST(request: Request) {
         if (isAuthInputError(error)) return NextResponse.json({ error: error.message }, { status: error.status });
         throw error;
     }
-    if (body.context?.clientRequestId) {
+    if (!headerRequestId && body.context?.clientRequestId) {
         const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, body.context.clientRequestId, body.context.attemptNo);
         if (existing) return NextResponse.json({ task: publicTask(existing) });
     }
-    const rate = await checkGenerationRateLimit(user.id, request, "video");
-    if (!rate.allowed) return NextResponse.json({ error: "视频生成请求过于频繁，请稍后重试" }, { status: 429, headers: rateLimitHeaders(rate) });
+    if (headerRequestId) body.context = { ...(body.context || {}), clientRequestId: headerRequestId, ...(headerAttemptNo ? { attemptNo: headerAttemptNo } : {}) };
     const settings = await getAuthSettings();
     const response = await withGenerationConcurrencyLimit(user.id, "video", 30 * 60_000, settings.generationConcurrency.video, async () => {
+        const requestId = clean(body.context?.clientRequestId);
+        if (requestId) {
+            const existing = await getStoredGenerationTaskByRequest<VideoTask>("video", user.id, requestId, body.context?.attemptNo);
+            if (existing) return NextResponse.json({ task: publicTask(existing) });
+        }
         const requestedModel = typeof body.config?.model === "string" && body.config.model.trim() ? body.config.model : settings.defaultModels.videoModel;
         const channels = resolveLogicalModelCandidates(settings, "video", requestedModel).map(toSystemGenerationChannel);
         const prompt = String(body.prompt || "").trim();
@@ -61,7 +80,7 @@ export async function POST(request: Request) {
         const origin = resolveInternalOrigin(new URL(request.url).origin);
         const cookie = requestRuntimeCredential(request, user.id);
         const requestedParameters = resolveVideoGenerationParameters(body.config || {}, settings.generationDefaults);
-        const billingRequestId = clean(body.context?.clientRequestId) || clean(request.headers.get("x-dq-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
+        const billingRequestId = requestId || clean(request.headers.get("x-dq-client-request-id")) || `video-request:${user.id}:${Date.now()}`;
         let lastError: unknown;
         let capabilityError: unknown;
         let attempts: GenerationAttempt[] = [];
@@ -96,6 +115,7 @@ export async function POST(request: Request) {
                         : channel.advancedConfig,
                     references,
                 );
+                if (channel.advancedConfig?.protocol === "vozeb-recommended") assertVozebRecommendedVideoReferences(channel.model, references);
                 assertReferenceUrls(channel.advancedConfig, references, isQingyanProvider({ model: channel.model, protocol: channel.advancedConfig?.protocol }) || Boolean(globalPreset));
             } catch (error) {
                 capabilityError = error;
@@ -110,8 +130,11 @@ export async function POST(request: Request) {
                 pollPath: channel.advancedConfig?.createPath || CREATE_PATHS[0],
             };
             if (!localTask) {
-                localTask = await createVideoTask({
+                const registration = await registerVideoTask({
                     userId: user.id,
+                    username: user.username,
+                    displayName: user.displayName,
+                    title: prompt.slice(0, 36) || "视频生成",
                     config: channel,
                     upstream: pendingUpstream,
                     requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
@@ -120,6 +143,8 @@ export async function POST(request: Request) {
                     attempts,
                     ...(body.context || {}),
                 });
+                localTask = registration.task;
+                if (!registration.created) return NextResponse.json({ task: publicTask(localTask) });
                 await linkStoredGenerationTask("video", localTask.id, body.context || {});
             } else {
                 await updateVideoTask(localTask.id, {
@@ -130,12 +155,13 @@ export async function POST(request: Request) {
                 });
                 localTask = { ...localTask, config: channel, upstream: pendingUpstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
             }
+            const submissionStartedAt = Date.now();
             await scheduleGenerationTask("video", localTask.id, {
                 executionPhase: "submitting",
                 channelId: channel.channelId,
                 provider: channel.advancedConfig?.protocol || channel.apiFormat,
                 queryPath: channel.advancedConfig?.queryPath,
-                nextPollAt: Date.now(),
+                nextPollAt: submissionStartedAt + resolveModelRequestTimeoutMs(channel, "video"),
                 lastUpstreamStatus: "submitting",
             });
             try {
@@ -154,7 +180,7 @@ export async function POST(request: Request) {
                     lastUpstreamStatus: "submitted",
                 });
                 after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));
-                return NextResponse.json({ task: publicTask(task) });
+                return NextResponse.json({ task: publicTask(task, { executionPhase: "submitted", submittedAt, lastUpstreamStatus: "submitted" }) });
             } catch (error) {
                 lastError = error;
                 attempts = finishGenerationAttempt(attempts, started.attempt.attemptNo, { status: "failed", error: toSafeGenerationErrorMessage(error, "视频任务创建失败") });
@@ -163,16 +189,18 @@ export async function POST(request: Request) {
                 const message = toSafeGenerationErrorMessage(error, "视频任务创建失败");
                 if (!(error instanceof SafeCandidateFailure)) {
                     await scheduleGenerationTask("video", localTask.id, { executionPhase: "needs_review", nextPollAt: undefined, lastUpstreamStatus: "submission_outcome_unknown" });
-                    return NextResponse.json({ task: { ...publicTask({ ...localTask, attempts }), needsReview: true }, warning: `${message}；上游创建结果待确认，系统不会自动重复创建。` }, { status: 202 });
+                    return NextResponse.json(
+                        { task: { ...publicTask({ ...localTask, attempts }, { executionPhase: "needs_review", lastUpstreamStatus: "submission_outcome_unknown" }), needsReview: true }, warning: `${message}；上游创建结果待确认，系统不会自动重复创建。` },
+                        { status: 202 },
+                    );
                 }
-                await transitionVideoTask(localTask, { status: "error", error: message, retryable: true });
-                await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
                 break;
             }
         }
         if (!lastError && capabilityError) return NextResponse.json({ error: capabilityError instanceof Error ? capabilityError.message : "当前渠道不支持参考素材" }, { status: 400 });
         if (localTask && lastError) {
             const message = toSafeGenerationErrorMessage(lastError, "视频任务创建失败");
+            await writeVideoGenerationLog({ ...localTask, attempts }, "failed", message, lastError instanceof SafeCandidateFailure);
             await transitionVideoTask(localTask, { status: "error", error: message, retryable: lastError instanceof SafeCandidateFailure });
             await scheduleGenerationTask("video", localTask.id, { executionPhase: "completed", nextPollAt: undefined, lastUpstreamStatus: "create_failed" });
         }
@@ -205,6 +233,7 @@ export async function createUpstream(
     const requestImage = qingyan && images.length > 1 ? "" : images[0] || "";
     const requestImages = qingyan && images.length === 1 ? [] : images;
     const dimensions = videoDimensions(raw.size, raw.vquality);
+    const generateAudio = raw.videoGenerateAudio !== false && raw.videoGenerateAudio !== "false";
     const values = {
         model: channel.model,
         prompt,
@@ -234,7 +263,7 @@ export async function createUpstream(
         aspect_ratio: values.aspect_ratio,
         resolution: values.resolution,
         quality: values.quality,
-        generate_audio: raw.videoGenerateAudio !== "false",
+        generate_audio: generateAudio,
         watermark: raw.videoWatermark === "true",
         ...(requestImage ? { image: requestImage } : {}),
         ...(requestImages.length ? { images: requestImages, image_urls: requestImages, reference_images: requestImages } : {}),
@@ -243,34 +272,62 @@ export async function createUpstream(
         ...(references.length ? { ref_assets: references.map((item) => ({ type: item.type, url: item.url })) } : {}),
     };
     const globalPreset = globalAiOpcVideoPreset(channel.advancedConfig, channel.model);
+    const grok2api = channel.advancedConfig?.protocol === "grok2api";
     const multipart = channel.advancedConfig?.requestTemplate?.trim().toLowerCase().startsWith("multipart/form-data") === true;
     const payload = multipart
         ? undefined
-        : channel.advancedConfig?.protocol === "seedance-special"
-          ? buildSeedanceSpecialRequest({
+        : grok2api
+          ? buildGrok2ApiVideoRequest({
                 model: channel.model,
                 prompt,
-                duration: values.duration === -1 ? 5 : (values.duration as number),
-                ratio: values.ratio as string,
-                generateAudio: raw.videoGenerateAudio !== "false",
-                references: { images, videos, audios },
+                duration: values.duration as number,
+                aspectRatio: values.aspect_ratio as string,
+                resolution: values.resolution as string,
+                images,
             })
-          : globalPreset
-            ? buildGlobalAiOpcVideoRequest(globalPreset, {
+          : channel.advancedConfig?.protocol === "seedance-special"
+            ? buildSeedanceSpecialRequest({
                   model: channel.model,
                   prompt,
-                  duration: values.duration as number,
+                  duration: values.duration === -1 ? 5 : (values.duration as number),
                   ratio: values.ratio as string,
-                  resolution: values.resolution as string,
-                  images: requestImages.length ? requestImages : requestImage ? [requestImage] : [],
-                  videos,
-                  audios,
-                  generateAudio: raw.videoGenerateAudio !== "false",
+                  generateAudio,
+                  references: { images, videos, audios },
               })
-            : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
+            : channel.advancedConfig?.protocol === "vozeb-recommended"
+              ? buildVozebRecommendedVideoRequest({
+                    model: channel.model,
+                    prompt,
+                    duration: values.duration as number,
+                    aspectRatio: values.aspect_ratio as string,
+                    resolution: values.resolution as string,
+                    generateAudio,
+                    images,
+                    videos,
+                    audios,
+                })
+              : globalPreset
+                ? buildGlobalAiOpcVideoRequest(globalPreset, {
+                      model: channel.model,
+                      prompt,
+                      duration: values.duration as number,
+                      ratio: values.ratio as string,
+                      resolution: values.resolution as string,
+                      images: requestImages.length ? requestImages : requestImage ? [requestImage] : [],
+                      videos,
+                      audios,
+                      generateAudio,
+                  })
+                : buildVideoProviderRequest(channel.advancedConfig?.requestTemplate, defaults, values);
     const requestBody = multipart ? await buildOpenAiVideoFormData({ model: channel.model, prompt, seconds: values.seconds as number, width: dimensions.width, height: dimensions.height, imageUrls: images, origin, cookie }) : JSON.stringify(payload);
     const imageToVideoPath = images.length ? channel.advancedConfig?.imageToVideoPath?.trim() : "";
-    const createPaths = globalPreset ? [globalPreset.createPath] : imageToVideoPath ? [imageToVideoPath] : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
+    const createPaths = grok2api
+        ? [channel.advancedConfig?.createPath || GROK2API_VIDEO_OPERATION.createPath]
+        : globalPreset
+          ? [globalPreset.createPath]
+          : imageToVideoPath
+            ? [imageToVideoPath]
+            : resolvedProviderCreatePaths(channel.advancedConfig, "video", CREATE_PATHS);
     for (const path of createPaths) {
         const response = await proxyFetch(origin, channel.baseUrl, path, cookie, {
             method: "POST",
@@ -334,13 +391,13 @@ function globalAiOpcVideoPreset(config: NonNullable<ReturnType<typeof toSystemGe
 
 function proxyFetch(origin: string, baseUrl: string, path: string, cookie: string, init: RequestInit) {
     const headers = new Headers(init.headers);
-    const workerHeaders = maintenanceWorkerContextHeaders(cookie);
+    const workerHeaders = workerContextHeaders(cookie);
     if (workerHeaders) Object.entries(workerHeaders).forEach(([key, value]) => headers.set(key, value));
     else if (cookie) headers.set("cookie", cookie);
     return fetchInternalApi(`${origin}${baseUrl.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`, { ...init, headers });
 }
-function publicTask(task: VideoTask) {
-    return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id || undefined, durationSeconds: task.requestedDurationSeconds, canRetry: task.retryable === true };
+function publicTask(task: VideoTask, metadata?: Partial<Pick<StoredGenerationTaskRecord, "executionPhase" | "submittedAt" | "lastPollAt" | "lastUpstreamStatus" | "resultPayload" | "createdAt" | "updatedAt">>) {
+    return { id: task.id, status: task.status, model: generationModelId(task.config), upstreamId: task.upstream.id || undefined, durationSeconds: task.requestedDurationSeconds, ...publicGenerationTaskState(task, metadata) };
 }
 function duration(value: unknown) {
     return resolveVideoDuration(value, 5);
@@ -371,27 +428,15 @@ function videoUnits(raw: Record<string, unknown>, multipliers: Awaited<ReturnTyp
 function clean(value: unknown) {
     return typeof value === "string" ? value.trim() : "";
 }
+function positiveAttemptNo(value: unknown) {
+    const parsed = Math.floor(Number(value));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
 function unique(values: string[]) {
     return Array.from(new Set(values.filter(Boolean)));
 }
 function referenceUrls(items: Array<{ type?: string; url?: string }>, type: string) {
     return unique(items.filter((item) => item.type === type).map((item) => clean(item.url)));
-}
-function requestPublicOrigin(request: Request) {
-    const configured = normalizePublicOrigin(process.env.NEXT_PUBLIC_SITE_URL || "");
-    if (configured) return configured;
-    const url = new URL(request.url);
-    const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || request.headers.get("host") || url.host;
-    const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() || url.protocol.replace(/:$/, "");
-    return `${protocol}://${host}`;
-}
-function normalizePublicOrigin(value: string) {
-    try {
-        const url = new URL(value.trim());
-        return url.protocol === "http:" || url.protocol === "https:" ? url.origin : "";
-    } catch {
-        return "";
-    }
 }
 const MEDIA_KEYS = VIDEO_PROVIDER_MEDIA_KEYS;
 const SAFE_CREATE_FAILURE_STATUSES = new Set([400, 401, 403, 404, 405, 413, 415, 422, 429]);

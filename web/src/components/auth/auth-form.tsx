@@ -8,7 +8,8 @@ import { ArrowLeft, ArrowRight, Gift, LockKeyhole, Mail, UserRound } from "lucid
 import { App, Button, Input } from "antd";
 
 import { SiteLogo } from "@/components/layout/site-logo";
-import { usePublicSessionStore } from "@/stores/use-public-session-store";
+import { resetPublicSession, usePublicSessionStore } from "@/stores/use-public-session-store";
+import { readAuthPayload } from "@/services/api/auth-client";
 import { type LocalUser, useUserStore } from "@/stores/use-user-store";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +26,7 @@ type AuthFormProps = {
     initialReferralCode?: string;
     referralSource?: string;
     inviteError?: string;
-    bootstrapToken?: string;
+    installToken?: string;
 };
 
 export function AuthForm({
@@ -41,7 +42,7 @@ export function AuthForm({
     initialReferralCode = "",
     referralSource = "registration-form",
     inviteError,
-    bootstrapToken = "",
+    installToken = "",
 }: AuthFormProps) {
     const router = useRouter();
     const { message } = App.useApp();
@@ -60,16 +61,17 @@ export function AuthForm({
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (disabled) return;
+        if (disabled || submitting) return;
         setSubmitting(true);
         try {
             const response = await fetch(isRegister ? "/api/auth/register" : "/api/auth/login", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", ...(isRegister && firstUser && bootstrapToken.trim() ? { Authorization: `Bearer ${bootstrapToken.trim()}` } : {}) },
-                body: JSON.stringify({ username, email, emailCode, displayName, password, referralCode: isRegister && !firstUser ? referralCode : undefined, referralSource }),
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, email, emailCode, displayName, password, referralCode: isRegister && !firstUser ? referralCode : undefined, referralSource, installToken: isRegister && firstUser ? installToken.trim() : undefined }),
             });
-            const payload = (await response.json()) as { user?: LocalUser; error?: string };
-            if (!response.ok || !payload.user) throw new Error(payload.error || (isRegister ? "注册失败" : "登录失败"));
+            const payload = await readAuthPayload<{ user?: LocalUser }>(response, isRegister ? "注册失败" : "登录失败");
+            if (!payload?.user) throw new Error(isRegister ? "注册失败：服务器未返回用户信息" : "登录失败：服务器未返回用户信息");
+            resetPublicSession();
             setUser(payload.user);
             message.success(isRegister ? "注册成功" : "登录成功");
             router.replace(nextPath);
@@ -82,6 +84,11 @@ export function AuthForm({
     };
 
     const sendEmailCode = async () => {
+        if (sendingCode) return;
+        if (!email.trim()) {
+            message.error("请先填写邮箱");
+            return;
+        }
         setSendingCode(true);
         try {
             const response = await fetch("/api/auth/email-code", {
@@ -89,8 +96,7 @@ export function AuthForm({
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ purpose: "register", email }),
             });
-            const payload = (await response.json()) as { error?: string };
-            if (!response.ok) throw new Error(payload.error || "验证码发送失败");
+            await readAuthPayload<{ ok?: boolean }>(response, "验证码发送失败");
             message.success("验证码已发送，请查看邮箱");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "验证码发送失败");

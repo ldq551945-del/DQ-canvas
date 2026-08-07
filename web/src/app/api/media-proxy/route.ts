@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { UnsupportedMediaContentError } from "@/lib/server/media-content-validation";
 import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
-import { limitMediaResponseBody, MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, mediaResponseExceedsLimit, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
-import { checkMediaProxyRateLimit, fetchSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
+import { MediaProxyResponseError, fetchSafeUpstreamMedia } from "@/lib/server/media-proxy-service";
+import { MAX_MEDIA_PROXY_BYTES, MAX_MEDIA_PROXY_RANGE_BYTES, normalizeMediaProxyRange } from "@/lib/server/media-response-limit";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
+import { checkMediaProxyRateLimit, isSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,34 +35,20 @@ async function proxyMedia(request: Request, method: "GET" | "HEAD") {
     const permit = acquireMediaConcurrency("proxy", `user:${currentUser.id}`);
     if (!permit) return NextResponse.json({ error: "媒体并发访问过多，请稍后重试" }, { status: 429, headers: { "Retry-After": "2" } });
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), MEDIA_PROXY_TIMEOUT_MS);
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(MEDIA_PROXY_TIMEOUT_MS)]);
     try {
-        const upstream = await fetchMedia(target, method, range, controller.signal);
-
-        if (!upstream.ok && upstream.status !== 206) {
-            permit.release();
-            return NextResponse.json({ error: "Media fetch failed" }, { status: upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502 });
-        }
-
         const maxBytes = range ? MAX_MEDIA_PROXY_RANGE_BYTES : MAX_MEDIA_PROXY_BYTES;
-        if (mediaResponseExceedsLimit(upstream.headers, maxBytes)) {
-            permit.release();
-            await upstream.body?.cancel("Media is too large");
-            return NextResponse.json({ error: "Media is too large" }, { status: 413 });
-        }
-
-        const headers = mediaHeaders(upstream.headers);
+        const media = await fetchSafeUpstreamMedia({ method, range, maxBytes, timeoutMs: MEDIA_PROXY_TIMEOUT_MS, fetcher: (nextMethod, nextRange) => fetchMedia(target, nextMethod, nextRange, signal) });
+        const headers = mediaHeaders(media.response.headers, media.mimeType);
         if (method === "HEAD") {
             permit.release();
-            return new NextResponse(null, { status: upstream.status, headers });
+            return new NextResponse(null, { status: media.response.status, headers });
         }
-        return withMediaConcurrency(new NextResponse(limitMediaResponseBody(upstream.body, maxBytes), { status: upstream.status, headers }), permit);
-    } catch {
+        return withMediaConcurrency(new NextResponse(media.body, { status: media.response.status, headers }), permit);
+    } catch (error) {
         permit.release();
+        if (error instanceof UnsupportedMediaContentError || error instanceof MediaProxyResponseError) return NextResponse.json({ error: error.message }, { status: error.status });
         return NextResponse.json({ error: "Media fetch failed" }, { status: 502 });
-    } finally {
-        clearTimeout(timer);
     }
 }
 
@@ -71,7 +60,7 @@ async function readTargetUrl(request: Request) {
     } catch {
         return null;
     }
-    return target;
+    return (await isSafeOutboundUrl(target, { allowCredentials: false, allowPrivateUpstreams: false })) ? target : null;
 }
 
 async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | null, signal: AbortSignal) {
@@ -95,10 +84,9 @@ async function fetchMedia(target: URL, method: "GET" | "HEAD", range: string | n
     throw new Error("Media redirect failed");
 }
 
-function mediaHeaders(source: Headers) {
+function mediaHeaders(source: Headers, mimeType: string) {
     const headers = new Headers();
-    const contentType = source.get("content-type") || "application/octet-stream";
-    headers.set("Content-Type", contentType);
+    headers.set("Content-Type", mimeType);
     headers.set("Cache-Control", "private, max-age=600");
     headers.set("Cross-Origin-Resource-Policy", "same-site");
     headers.set("X-Content-Type-Options", "nosniff");

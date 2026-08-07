@@ -97,6 +97,16 @@ describe("video API service", () => {
             canRetry: true,
         });
     });
+
+    it("keeps a cancellation request pending until the recovery worker confirms the upstream terminal state", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(json({ task: { id: "video-cancelled", status: "cancelled", executionPhase: "cancel_polling", publicStatus: "cancelled", message: "已提交取消，正在确认上游状态" } }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        await expect(pollVideoGenerationTask(config, { id: "video-cancelled", provider: "generation", model: "video-v1", pollPath: "server" })).resolves.toMatchObject({
+            status: "pending",
+            taskState: { executionPhase: "cancel_polling", publicStatus: "cancelled" },
+        });
+    });
 });
 
 function json(value: unknown) {

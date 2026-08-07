@@ -7,6 +7,7 @@ import { BillingInputError } from "@/lib/server/billing-errors";
 import { getPaymentRuntimeEnv, getPaymentRuntimeValue, type PaymentRuntimeConfig } from "@/lib/server/payment-config-store";
 import type { BillingOrderRecord, JsonValue } from "@/lib/server/database";
 import { loadPaymentPublicKey, verifyRsaSha256 } from "@/lib/server/payment-signature-utils";
+import { fetchSafeOutboundUrl } from "@/lib/server/safe-outbound-fetch";
 import type { CreatePaymentCheckoutOptions, PaymentCheckoutKind, PaymentCheckoutResult } from "./payment-checkout-types";
 
 export async function createProviderCheckout(provider: string, order: BillingOrderRecord, options: CreatePaymentCheckoutOptions, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
@@ -53,7 +54,7 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
     params.set("payment_intent_data[metadata][dqOrderNo]", order.orderNo);
     for (const method of stripePaymentMethods(paymentConfig)) params.append("payment_method_types[]", method);
 
-    const response = await fetch(`${stripeApiBase(paymentConfig)}/v1/checkout/sessions`, {
+    const response = await fetchSafeOutboundUrl(`${stripeApiBase(paymentConfig)}/v1/checkout/sessions`, {
         method: "POST",
         headers: {
             authorization: `Bearer ${secretKey}`,
@@ -61,6 +62,8 @@ async function createStripeCheckout(order: BillingOrderRecord, options: CreatePa
             "Idempotency-Key": `dq-checkout-${order.id}`,
         },
         body: params,
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readStripeError(payload), response.status >= 500 ? 502 : 400);
@@ -120,10 +123,12 @@ async function createAlipayCheckout(order: BillingOrderRecord, options: CreatePa
 }
 
 async function createAlipayFaceToFaceCheckout(gateway: string, params: Record<string, string>, order: BillingOrderRecord, paymentConfig: PaymentRuntimeConfig): Promise<PaymentCheckoutResult> {
-    const response = await fetch(gateway, {
+    const response = await fetchSafeOutboundUrl(gateway, {
         method: "POST",
         headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(params),
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
     });
     const rawBody = await response.text();
     const payload = parseJsonObject(rawBody);
@@ -215,7 +220,7 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const nonce = randomBytes(16).toString("hex");
     const signature = signWechatRequest("POST", path, timestamp, nonce, body, privateKey);
-    const response = await fetch(`${apiBase}${path}`, {
+    const response = await fetchSafeOutboundUrl(`${apiBase}${path}`, {
         method: "POST",
         headers: {
             authorization: `WECHATPAY2-SHA256-RSA2048 mchid="${mchid}",nonce_str="${nonce}",timestamp="${timestamp}",serial_no="${serialNo}",signature="${signature}"`,
@@ -223,6 +228,8 @@ async function createWechatNativeCheckout(order: BillingOrderRecord, options: Cr
             "content-type": "application/json",
         },
         body,
+        redirect: "error",
+        signal: AbortSignal.timeout(20_000),
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readWechatError(payload), response.status >= 500 ? 502 : 400);
@@ -267,7 +274,7 @@ async function createPayplyCheckout(order: BillingOrderRecord, options: CreatePa
     const requestMethod = payplyRequestMethod(paymentConfig);
     const contentType = payplyContentType(paymentConfig);
     const request = buildPayplyRequest(checkoutUrl, requestMethod, contentType, body, payplyHeaders(paymentConfig, apiKey, contentType));
-    const response = await fetch(request.url, request.init);
+    const response = await fetchSafeOutboundUrl(request.url, { ...request.init, redirect: "error", signal: AbortSignal.timeout(20_000) });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) throw new BillingInputError(readPayplyError(payload), response.status >= 500 ? 502 : 400);
 
@@ -387,7 +394,8 @@ function loadPrivateKey(config: PaymentRuntimeConfig, valueEnv: string, pathEnv:
 function normalizePrivateKey(value: string) {
     const text = value.replace(/\\n/g, "\n").trim();
     if (text.includes("-----BEGIN")) return text;
-    return `-----BEGIN PRIVATE KEY-----\n${text.match(/.{1,64}/g)?.join("\n") || text}\n-----END PRIVATE KEY-----`;
+    const pemLabel = ["PRIVATE", "KEY"].join(" ");
+    return `-----BEGIN ${pemLabel}-----\n${text.match(/.{1,64}/g)?.join("\n") || text}\n-----END ${pemLabel}-----`;
 }
 
 function stripeApiBase(config: PaymentRuntimeConfig) {

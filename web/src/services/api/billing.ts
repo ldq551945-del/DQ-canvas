@@ -1,3 +1,5 @@
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
+
 export type BillingProduct = {
     id: string;
     productKind: "plan" | "points";
@@ -200,6 +202,7 @@ export async function createPaymentCheckout(orderId: string, input: { provider?:
 
 async function requestBilling<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, { cache: "no-store", ...init });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => ({}))) as T & { error?: string };
     if (!response.ok) throw new Error(payload.error || "请求失败");
     return payload;
@@ -207,6 +210,7 @@ async function requestBilling<T>(url: string, init?: RequestInit) {
 
 async function requestCommerce<T>(url: string, init?: RequestInit) {
     const response = await fetch(url, { cache: "no-store", ...init });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => null)) as { code?: number; data?: T; msg?: string } | null;
     if (!response.ok || !payload || payload.code !== 0 || payload.data === undefined) throw new Error(payload?.msg || "请求失败");
     return payload.data;

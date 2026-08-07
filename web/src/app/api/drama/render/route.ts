@@ -1,5 +1,5 @@
 import { after, NextResponse } from "next/server";
-import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,9 +9,10 @@ import { readJsonBody } from "@/lib/auth/request";
 import { createDramaRenderTask, getDramaRenderTask, touchDramaRenderTask, transitionDramaRenderTask, type DramaRenderTask } from "@/lib/server/drama-render-store";
 import { normalizeDramaShotAudioMode, resolveDramaRenderAudioPlan } from "@/lib/server/drama-render-audio";
 import { ffmpegAvailable, runFfmpeg, runFfprobe } from "@/lib/server/ffmpeg";
-import { fetchInternalApi, resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { resolveInternalOrigin } from "@/lib/server/internal-origin";
+import { downloadMediaToFile } from "@/lib/server/media-download";
 import { writeReferenceMediaFile } from "@/lib/server/reference-asset-store";
-import { checkGenerationRateLimit, fetchSafeOutboundUrl, rateLimitHeaders } from "@/lib/server/security";
+import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
 import { withGenerationConcurrencyLimit } from "@/lib/server/generation-task-store";
 import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runtime-service";
 import { dramaOutputDimensions, normalizeDramaImageSize } from "@/lib/drama-image-size";
@@ -77,13 +78,13 @@ async function renderDrama(task: DramaRenderTask, shots: NormalizedShot[], sizeV
             if ((await getDramaRenderTask(task.id))?.status === "cancelled") return;
             const current = shots[index];
             const videoPath = join(workdir, `source-${index}.mp4`);
-            await downloadMedia(current.videoUrl, videoPath, origin, cookie, 300 * 1024 * 1024);
+            await downloadMediaToFile(current.videoUrl, videoPath, { origin, cookie, maxBytes: 300 * 1024 * 1024, expectedType: "video" });
             const clipPath = join(workdir, `clip-${index}.mp4`);
             const baseArgs = ["-y", "-i", videoPath];
             const audioPlan = resolveDramaRenderAudioPlan(current.audioMode, current.audioUrl, current.audioMode === "source" ? await hasAudioStream(videoPath, workdir, abortController.signal) : false);
             if (audioPlan === "voiceover") {
                 const audioPath = join(workdir, `audio-${index}.mp3`);
-                await downloadMedia(current.audioUrl, audioPath, origin, cookie, 30 * 1024 * 1024);
+                await downloadMediaToFile(current.audioUrl, audioPath, { origin, cookie, maxBytes: 30 * 1024 * 1024, expectedType: "audio" });
                 baseArgs.push(
                     "-i",
                     audioPath,
@@ -189,44 +190,6 @@ function normalizeShots(value: unknown): NormalizedShot[] {
 async function hasAudioStream(videoPath: string, cwd: string, signal: AbortSignal) {
     const result = await runFfprobe(["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_type", "-of", "default=noprint_wrappers=1:nokey=1", videoPath], { cwd, signal, timeoutMs: 30_000 });
     return result.stdout.trim() === "audio";
-}
-async function downloadMedia(url: string, path: string, origin: string, cookie: string, maxBytes: number) {
-    const internal = url.startsWith("/");
-    const target = internal ? `${origin}${url}` : url;
-    const response = internal ? await fetchInternalApi(target, { headers: cookie ? { cookie } : undefined, signal: AbortSignal.timeout(3 * 60_000) }) : await fetchExternalMedia(target);
-    if (!response.ok) throw new Error(`媒体下载失败（${response.status}）`);
-    const contentLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new Error("媒体文件超过大小限制");
-    if (!response.body) throw new Error("媒体文件为空");
-    const file = await open(path, "w");
-    let bytes = 0;
-    try {
-        const reader = response.body.getReader();
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            bytes += value.byteLength;
-            if (bytes > maxBytes) {
-                await reader.cancel();
-                throw new Error("媒体文件超过大小限制");
-            }
-            await file.write(value);
-        }
-    } finally {
-        await file.close();
-    }
-    if (!bytes) throw new Error("媒体文件为空");
-}
-async function fetchExternalMedia(initialUrl: string) {
-    let target = initialUrl;
-    for (let redirects = 0; redirects <= 3; redirects += 1) {
-        const response = await fetchSafeOutboundUrl(target, { redirect: "manual", signal: AbortSignal.timeout(3 * 60_000) });
-        if (![301, 302, 303, 307, 308].includes(response.status)) return response;
-        const location = response.headers.get("location");
-        if (!location) throw new Error("媒体重定向地址无效");
-        target = new URL(location, target).toString();
-    }
-    throw new Error("媒体重定向次数过多");
 }
 function buildServerSrt(shots: NormalizedShot[]) {
     let cursor = 0;

@@ -17,6 +17,10 @@ type WorkbenchHistoryPanelProps<T extends WorkbenchHistoryItem> = {
     onRenameLog: (log: T, title: string) => void;
     renderDetails: (log: T) => ReactNode;
     renderPreview?: (log: T) => ReactNode;
+    total?: number;
+    hasMore?: boolean;
+    loadingMore?: boolean;
+    onLoadMore?: () => void;
     compact?: boolean;
 };
 
@@ -31,6 +35,10 @@ export function WorkbenchHistoryPanel<T extends WorkbenchHistoryItem>({
     onRenameLog,
     renderDetails,
     renderPreview,
+    total = logs.length,
+    hasMore = false,
+    loadingMore = false,
+    onLoadMore,
     compact = false,
 }: WorkbenchHistoryPanelProps<T>) {
     const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
@@ -41,7 +49,7 @@ export function WorkbenchHistoryPanel<T extends WorkbenchHistoryItem>({
             {!compact ? (
                 <div className="mb-3 flex items-center justify-between gap-3">
                     <h2 className="text-base font-semibold">生成记录</h2>
-                    <Tag className="m-0">{logs.length}</Tag>
+                    <Tag className="m-0">{total}</Tag>
                 </div>
             ) : null}
             <div className="mb-4 flex flex-wrap gap-2">
@@ -72,6 +80,13 @@ export function WorkbenchHistoryPanel<T extends WorkbenchHistoryItem>({
                     />
                 ))}
                 {!logs.length ? <div className="flex min-h-16 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 sm:min-h-36 dark:border-stone-700">暂无生成记录</div> : null}
+                {hasMore && onLoadMore ? (
+                    <div className="flex justify-center pt-1">
+                        <Button size="small" loading={loadingMore} onClick={onLoadMore}>
+                            加载更多
+                        </Button>
+                    </div>
+                ) : null}
             </div>
         </>
     );
@@ -115,19 +130,13 @@ function WorkbenchHistoryCard<T extends WorkbenchHistoryItem>({
 
     return (
         <div
-            role="button"
-            tabIndex={0}
+            data-testid="workbench-history-card"
             className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
             onClick={onClick}
-            onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                onClick();
-            }}
         >
             <div className="grid min-w-0 gap-2">
                 <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-                    <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
+                    <Checkbox aria-label={`选择记录：${log.title}`} className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
                     <div className="min-w-0">
                         {editingTitle ? (
                             <Input
@@ -148,9 +157,18 @@ function WorkbenchHistoryCard<T extends WorkbenchHistoryItem>({
                             />
                         ) : (
                             <div className="flex min-w-0 items-center gap-1">
-                                <div className="truncate text-sm font-semibold leading-5" title={log.title}>
+                                <button
+                                    type="button"
+                                    className="min-w-0 truncate text-left text-sm font-semibold leading-5 outline-none focus-visible:rounded focus-visible:ring-2 focus-visible:ring-ring"
+                                    title={log.title}
+                                    aria-label={`查看生成记录：${log.title}`}
+                                    onClick={(event) => {
+                                        event.stopPropagation();
+                                        onClick();
+                                    }}
+                                >
                                     {log.title}
-                                </div>
+                                </button>
                                 <Button
                                     aria-label="编辑记录标题"
                                     type="text"

@@ -2,6 +2,7 @@ import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-st
 import type { AiTextMessage } from "@/types/ai";
 import { GenerationTaskNeedsReviewError, type GenerationTaskExecutionState } from "@/services/api/generation-task-state";
 import { refreshUserPointsIfSystem, syncUserPointsFromHeaders } from "@/services/api/points";
+import { throwIfClientSessionExpired } from "@/services/api/session-expiration";
 
 type RequestOptions = { signal?: AbortSignal; surface?: "chat" | "canvas" | "drama"; projectId?: string; conversationId?: string; runId?: string; clientRequestId?: string; sourceNodeId?: string; targetNodeId?: string };
 
@@ -37,6 +38,7 @@ export async function createTextGenerationTask(config: AiConfig, messages: AiTex
         }),
         signal: options?.signal,
     });
+    throwIfClientSessionExpired(response);
     const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;
     if (!response.ok || !payload.task) throw new Error(payload.error || "创建文本任务失败");
     return payload.task;
@@ -47,6 +49,7 @@ export async function waitForTextGenerationTask(config: AiConfig, task: TextGene
     for (;;) {
         if (Date.now() - startedAt > TEXT_TASK_TIMEOUT_MS) throw new Error("文本生成超时，请稍后重试");
         const response = await fetch(`/api/text-tasks/${encodeURIComponent(task.id)}`, { signal: options?.signal, cache: "no-store" });
+        throwIfClientSessionExpired(response);
         const payload = (await response.json().catch(() => ({}))) as TextTaskPayload;
         syncUserPointsFromHeaders(response.headers, resolveModelRequestConfig(config, task.model).apiSource);
         if (!response.ok || !payload.task) throw new Error(payload.error || "查询文本任务失败");

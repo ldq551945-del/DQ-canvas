@@ -1,9 +1,7 @@
-import type { CanvasProject } from "@/lib/canvas-project-contract";
+import type { CanvasProject, CanvasProjectMediaPreview } from "@/lib/canvas-project-contract";
+import { canvasProjectMediaPreviews } from "@/lib/canvas-project-summary";
 
-export type CreateOverviewMedia = {
-    kind: "image" | "video";
-    url: string;
-};
+export type CreateOverviewMedia = CanvasProjectMediaPreview;
 
 export type CreateOverviewProject = {
     id: string;
@@ -22,9 +20,12 @@ export type CreateOverviewTask = {
     createdAt: string;
 };
 
-export type CreateOverviewAsset = CreateOverviewMedia & {
+export type CreateOverviewAsset = {
     id: string;
+    kind: "image" | "video" | "audio";
     title: string;
+    url: string;
+    mimeType?: string;
     createdAt: string;
 };
 
@@ -35,35 +36,12 @@ export type CreateWorkbenchOverviewPayload = {
 };
 
 export function summarizeCanvasProject(project: CanvasProject): CreateOverviewProject {
-    const candidates: Array<CreateOverviewMedia & { preferred: boolean }> = [];
-    const seen = new Set<string>();
-
-    for (const node of project.nodes) {
-        const kind = node.type === "video" ? "video" : node.type === "image" || node.type === "panorama" ? "image" : undefined;
-        if (!kind || node.metadata?.status === "error") continue;
-
-        for (const value of [node.metadata?.serverUrl, node.metadata?.remoteUrl, node.metadata?.content]) {
-            const url = stableMediaUrl(value);
-            if (!url || seen.has(url)) continue;
-            seen.add(url);
-            candidates.push({ kind, url, preferred: node.metadata?.status === "success" });
-        }
-    }
-
     return {
         id: project.id,
         title: project.title,
         updatedAt: project.updatedAt,
         nodeCount: project.nodes.length,
         connectionCount: project.connections.length,
-        previews: candidates
-            .sort((left, right) => Number(right.preferred) - Number(left.preferred) || Number(right.kind === "image") - Number(left.kind === "image"))
-            .slice(0, 6)
-            .map(({ kind, url }) => ({ kind, url })),
+        previews: canvasProjectMediaPreviews(project),
     };
-}
-
-function stableMediaUrl(value: unknown) {
-    const url = typeof value === "string" ? value.trim() : "";
-    return url && !/^(data|blob):/i.test(url) ? url : "";
 }

@@ -2,22 +2,54 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 
 const MIN_TOKEN_LENGTH = 32;
+const WORKER_ENVIRONMENT_KEYS = [
+    "DQ_WORKER_TOKEN",
+    "DQ_WORKER_API_ORIGIN",
+    "DQ_GENERATION_WORKER_ID",
+    "DQ_GENERATION_WORKER_INTERVAL_MS",
+    "DQ_GENERATION_WORKER_LANES",
+    "DQ_GENERATION_WORKER_HEARTBEAT_MS",
+    "DQ_BILLING_REFUND_WORKER_INTERVAL_MS",
+    "NODE_ENV",
+    "NODE_OPTIONS",
+    "NODE_EXTRA_CA_CERTS",
+    "TZ",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "Path",
+    "SystemRoot",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+];
 
 export function generationRuntimeEnvironment({ environment = process.env, allowEphemeralToken = false } = {}) {
     const source = { ...environment };
-    const configuredToken = source.DQ_MAINTENANCE_TOKEN?.trim() || "";
-    if (configuredToken.length < MIN_TOKEN_LENGTH && !allowEphemeralToken) {
+    const configuredMaintenanceToken = source.DQ_MAINTENANCE_TOKEN?.trim() || "";
+    const configuredWorkerToken = source.DQ_WORKER_TOKEN?.trim() || "";
+    if (configuredMaintenanceToken.length < MIN_TOKEN_LENGTH && !allowEphemeralToken) {
         throw new Error("DQ_MAINTENANCE_TOKEN must contain at least 32 characters");
+    }
+    if (configuredWorkerToken.length < MIN_TOKEN_LENGTH && !allowEphemeralToken) {
+        throw new Error("DQ_WORKER_TOKEN must contain at least 32 characters");
+    }
+    if (configuredMaintenanceToken.length >= MIN_TOKEN_LENGTH && configuredWorkerToken.length >= MIN_TOKEN_LENGTH && configuredMaintenanceToken === configuredWorkerToken) {
+        throw new Error("DQ_WORKER_TOKEN must be different from DQ_MAINTENANCE_TOKEN");
     }
 
     const port = validPort(source.PORT) || 3000;
+    const maintenanceToken = configuredMaintenanceToken.length >= MIN_TOKEN_LENGTH ? configuredMaintenanceToken : randomBytes(32).toString("hex");
+    let workerToken = configuredWorkerToken.length >= MIN_TOKEN_LENGTH ? configuredWorkerToken : randomBytes(32).toString("hex");
+    while (workerToken === maintenanceToken) workerToken = randomBytes(32).toString("hex");
+    const workerOrigin = resolveGenerationWorkerOrigin({ environment: source, fallbackOrigin: `http://127.0.0.1:${port}` });
+    const appEnvironment = { ...source, DQ_MAINTENANCE_TOKEN: maintenanceToken, DQ_WORKER_TOKEN: workerToken };
+    const workerEnvironment = pickWorkerEnvironment({ ...source, DQ_WORKER_TOKEN: workerToken, DQ_WORKER_API_ORIGIN: workerOrigin });
     return {
-        environment: {
-            ...source,
-            DQ_MAINTENANCE_TOKEN: configuredToken.length >= MIN_TOKEN_LENGTH ? configuredToken : randomBytes(32).toString("hex"),
-            DQ_WORKER_API_ORIGIN: resolveGenerationWorkerOrigin({ environment: source, fallbackOrigin: `http://127.0.0.1:${port}` }),
-        },
-        ephemeralToken: configuredToken.length < MIN_TOKEN_LENGTH,
+        appEnvironment,
+        workerEnvironment,
+        ephemeralToken: configuredMaintenanceToken.length < MIN_TOKEN_LENGTH || configuredWorkerToken.length < MIN_TOKEN_LENGTH,
     };
 }
 
@@ -29,14 +61,14 @@ export function resolveGenerationWorkerOrigin({ environment = process.env, fallb
     return url.origin;
 }
 
-export function superviseGenerationRuntime({ app, workerScript, environment }) {
+export function superviseGenerationRuntime({ app, workerScript, appEnvironment, workerEnvironment }) {
     const definitions = [
-        { name: "web", command: app.command, args: app.args, cwd: app.cwd },
-        { name: "generation-worker", command: process.execPath, args: [workerScript], cwd: app.cwd },
+        { name: "web", command: app.command, args: app.args, cwd: app.cwd, environment: appEnvironment },
+        { name: "generation-worker", command: process.execPath, args: [workerScript], cwd: app.cwd, environment: workerEnvironment },
     ];
     const children = definitions.map((definition) => ({
         ...definition,
-        process: spawn(definition.command, definition.args, { cwd: definition.cwd, env: environment, stdio: "inherit" }),
+        process: spawn(definition.command, definition.args, { cwd: definition.cwd, env: definition.environment, stdio: "inherit" }),
     }));
 
     return new Promise((resolve) => {
@@ -86,6 +118,10 @@ export function superviseGenerationRuntime({ app, workerScript, environment }) {
             });
         }
     });
+}
+
+function pickWorkerEnvironment(environment) {
+    return Object.fromEntries(WORKER_ENVIRONMENT_KEYS.filter((key) => environment[key] !== undefined).map((key) => [key, environment[key]]));
 }
 
 function validPort(value) {

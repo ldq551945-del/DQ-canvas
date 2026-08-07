@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { formatAccountId } from "@/lib/account-id";
 import { BillingInputError } from "@/lib/server/billing-errors";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, postgresQuery } from "@/lib/server/database";
+import { assertInstallToken, InstallTokenError } from "@/lib/server/install-token";
 import { adjustPermanentPointsInAuthDb, walletClock } from "@/lib/server/points-wallet-service";
 import { bindReferralRelationshipAfterRegistration, normalizeReferralCode } from "@/lib/server/referral-service";
 
@@ -39,13 +40,13 @@ export async function createUser(input: { username: string; email?: string; emai
             validateUsername(username);
             validatePassword(input.password);
 
-            const firstUser = db.users.length === 0;
-            if (!firstUser && !db.settings.registrationEnabled) throw new AuthInputError("注册已关闭");
-            if (!firstUser && db.settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
+            if (db.users.length === 0) throw new AuthInputError("请先通过安装向导创建管理员", 503);
+            if (!db.settings.registrationEnabled) throw new AuthInputError("注册已关闭");
+            if (db.settings.emailRegistrationEnabled && !email) throw new AuthInputError("请填写邮箱地址");
             if (email) validateEmail(email);
             if (db.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) throw new AuthInputError("用户名已存在");
             if (email && db.users.some((user) => user.email?.toLowerCase() === email.toLowerCase())) throw new AuthInputError("邮箱已被注册");
-            if (!firstUser && db.settings.emailRegistrationEnabled) consumeEmailCode(db, { purpose: "register", email, code: input.emailCode });
+            if (db.settings.emailRegistrationEnabled) consumeEmailCode(db, { purpose: "register", email, code: input.emailCode });
 
             const now = new Date().toISOString();
             const user: StoredUser = {
@@ -55,7 +56,7 @@ export async function createUser(input: { username: string; email?: string; emai
                 email: email || undefined,
                 displayName,
                 bio: "",
-                role: firstUser ? "admin" : "user",
+                role: "user",
                 status: "active",
                 planId: resolveDefaultPlan(db.settings.entitlements).id,
                 pointsBalance: 0,
@@ -69,7 +70,6 @@ export async function createUser(input: { username: string; email?: string; emai
         referralCode
             ? {
                   afterPostgresPersist: async (user, client) => {
-                      if (user.role === "admin") return;
                       try {
                           await bindReferralRelationshipAfterRegistration(client, {
                               inviteeUserId: user.id,
@@ -86,6 +86,45 @@ export async function createUser(input: { username: string; email?: string; emai
               }
             : undefined,
     );
+}
+
+export async function createFirstAdmin(input: { username: string; email?: string; displayName?: string; password: string; installToken: unknown }) {
+    try {
+        assertInstallToken(input.installToken);
+    } catch (error) {
+        if (error instanceof InstallTokenError) throw new AuthInputError(error.message, error.status);
+        throw error;
+    }
+
+    const reservedAccountId = isPostgresDatabaseEnabled() ? await reservePostgresAccountId() : undefined;
+    return mutateAuthDb((db) => {
+        if (db.users.length !== 0) throw new AuthInputError("项目已完成安装，禁止重复创建首个管理员", 409);
+        const username = normalizeUsername(input.username);
+        const email = normalizeEmail(input.email);
+        const displayName = normalizeDisplayName(input.displayName || username);
+        validateUsername(username);
+        validatePassword(input.password);
+        if (email) validateEmail(email);
+
+        const now = new Date().toISOString();
+        const user: StoredUser = {
+            id: randomUUID(),
+            accountId: reservedAccountId || takeNextFileAccountId(db),
+            username,
+            email: email || undefined,
+            displayName,
+            bio: "",
+            role: "admin",
+            status: "active",
+            planId: resolveDefaultPlan(db.settings.entitlements).id,
+            pointsBalance: 0,
+            passwordHash: hashPassword(input.password),
+            createdAt: now,
+            updatedAt: now,
+        };
+        db.users.push(user);
+        return toPublicUser(user, db);
+    });
 }
 
 export async function createUserByAdmin(input: { username: string; email?: string; displayName?: string; password: string; role?: UserRole; status?: UserStatus; pointsBalance?: number; planId?: string }) {

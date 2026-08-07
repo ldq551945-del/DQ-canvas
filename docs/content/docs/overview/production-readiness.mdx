@@ -11,7 +11,8 @@ description: DQ-绘图 商业部署前的健康检查、调度、备份、监控
 
 - Web 全量自动化、Prettier、TypeScript、完整依赖漏洞审计、发布检查与生产构建已通过；主应用与文档站依赖审计均为 0 个告警，发布检查使用独立构建目录，不会覆盖运行中的 standalone 产物，GitHub Web/Docs 质量任务也执行相同安全门禁。Docs 的类型、索引和生产构建已通过。真实 PostgreSQL 已覆盖社区点赞、关注、拉黑、事务回滚及当前 Schema 表集合核对，但未替代多账号人工操作与生产并发。
 - 当前生产候选默认模型为空。本地符合声明式协议的 TCP 夹具已让文本、图片、视频和音频真实返回穿过应用 runtime/适配器，并覆盖异步轮询、媒体落盘、失败退款和候选切换；这些证据只证明应用协议兼容，不代表任何真实供应商账号、模型质量、额度或 SLA 已验收。
-- 七套 Compose 与 Render Blueprint 已通过结构化契约测试。五套主应用 Compose 锁定 app/Worker 同镜像、同维护令牌、Worker 命令、数据库最小权限、存活探针、持久卷、内置/外部 PostgreSQL 分界和宝塔 host 网络隔离；两套文档 Compose 锁定独立端口和发布/本地构建来源。Render 进一步锁定付费 Web/Worker、共享令牌、私网调用、`basic-256mb` PostgreSQL、10GB 持久盘和生产镜像脚本。v0.0.3 发布镜像已在一台 Linux x64 服务器暴露 Sharp 的 `libvips-cpp.so.8.18.3` 缺失，导致生成运维接口与 Worker 返回 500；生产 Dockerfile 现已显式复制当前架构原生包并在镜像构建阶段加载 Sharp。本机没有 Docker CLI，也没有 Render 账号部署证据，新镜像仍需完成 `docker compose config`、拉取与启动、两个生成运维接口、Worker 心跳、图片 WebP 预览、Blueprint 创建、宝塔安装和干净 Linux 恢复验证。
+- 完整灾备已在独立临时 PostgreSQL 和临时媒体目录完成一次真实备份/恢复演练：恢复前主动修改数据库、覆盖媒体并新增文件，恢复后数据库回到原单行数据、两类媒体内容回到恢复点、新增文件被移除，恢复前安全副本保留了变更后的数据库 dump 与媒体。该证据未接触当前业务库和数据卷，也未覆盖真实 S3 对象存储或生产主机恢复时长。
+- 七套 Compose 与 Render Blueprint 已通过结构化契约测试。五套主应用 Compose 锁定 app/Worker 同镜像、独立 Worker 令牌、Worker 命令、数据库最小权限、存活探针、持久卷、内置/外部 PostgreSQL 分界和宝塔 host 网络隔离；两套文档 Compose 锁定独立端口和发布/本地构建来源。Render 进一步锁定付费 Web/Worker、独立 Worker 令牌、私网调用、`basic-256mb` PostgreSQL、10GB 持久盘和生产镜像脚本。v0.0.3 发布镜像已在一台 Linux x64 服务器暴露 Sharp 的 `libvips-cpp.so.8.18.3` 缺失，导致生成运维接口与 Worker 返回 500；生产 Dockerfile 现已显式复制当前架构原生包、固定基础镜像 digest，并在镜像构建阶段加载 Sharp 和 HTTP 可观测性 preload。本机 Docker 构建、容器 `/api/health/live`、`x-request-id`、维护指标接口已通过；仍没有 Render 账号部署证据，新镜像仍需在干净 Linux 服务器完成 `docker compose config`、拉取与启动、Worker 心跳、图片 WebP 预览、Blueprint 创建、宝塔安装和数据卷重启恢复验证。
 - 浏览器前序回归已覆盖主要桌面、390px/430px 和浅深主题页面；新构建切换后又使用现有管理员登录态复核后台、Agent、图片、视频、Canvas、短剧、素材和计费页面，桌面与 390px 加载为 210–396ms，根节点无横向溢出且控制台无 warning/error。生产发布仍需按目标浏览器、真实账号、真实媒体和生产网络完成最终人工验收。
 
 ## 健康检查
@@ -19,6 +20,18 @@ description: DQ-绘图 商业部署前的健康检查、调度、备份、监控
 - `GET /api/health/live`：只检查 Web 进程是否能响应，Docker Compose 使用该地址，避免数据库短暂异常导致应用容器反复重启。
 - `GET /api/health/ready`：检查数据库连接、表结构、加密密钥和首个管理员；未完成安装或依赖异常时返回 HTTP `503`，用于反向代理、负载均衡和外部监控。
 - `/api/install/status`：面向安装页面的安全状态，不应作为生产告警依据。
+
+## 部署后烟测
+
+每次首次部署、升级或回滚后，在仓库的 `web` 目录执行只读烟测：
+
+```bash
+pnpm smoke:deployment -- --base-url https://store.dqin-666zj.top
+```
+
+也可以设置 `DQ_DEPLOYMENT_BASE_URL` 后直接执行 `pnpm smoke:deployment`。脚本只发送同源 `GET` 请求，检查存活、就绪、数据库、加密配置、Worker 心跳、公开 Session 字段白名单、请求 ID、品牌资源和首页、登录、注册、作品广场；任一检查失败都会以非零状态退出。使用 `--path /自定义路径` 可以追加页面检查，使用 `--json` 可以输出供部署平台保存的结构化结果。
+
+该命令通过后仍需按本页清单验收真实支付、模型生成、媒体持久化和数据卷重启恢复；HTTP 烟测不能替代这些有状态流程。
 
 ## 计划任务
 
@@ -34,12 +47,36 @@ curl -fsS -X POST \
 
 ## 备份与恢复
 
-- 后台“数据备份”导出脱敏业务数据，用于跨 Provider 恢复账号权益、非敏感设置、公共提示词和生成记录。
-- PostgreSQL 使用数据库平台或 `pg_dump` 做整库备份；支付流水、支付配置和密钥不依赖业务 JSON 备份。
-- 本地媒体目录、S3/OSS 对象和对象存储配置分别备份；不要只备份数据库后假设媒体能够恢复。
-- 至少保留每日自动备份、异地副本和定期恢复演练。备份任务成功不等于恢复可用。
+- 后台“数据备份”是 `account-config` 业务包，只用于合并恢复账号权益、非敏感设置、公共提示词和生成记录。PostgreSQL 导入在单事务和表锁内 upsert，备份中缺失的数据不会被删除；文件 Provider 任一文件写入失败会回滚全部原快照。
+- 后台业务包不包含支付全量、媒体二进制和对象存储对象，不能冒充整库灾难恢复。标记为 `backupType=disaster` 的包会被后台导入接口拒绝。
+- 完整恢复点由 `pnpm backup:disaster` 同时保存 PostgreSQL custom dump、`reference-assets`、`generation-assets` 和启用中的 S3 兼容对象。每个文件写入 SHA-256、大小和恢复点 ID，清单不保存数据库密码、加密密钥或对象存储密钥。
+- 至少保留每日自动备份、异地副本和定期恢复演练。备份任务成功不等于恢复可用；`pg_dump`/`pg_restore` 主版本必须不低于 PostgreSQL 服务端主版本。
+
+完整备份必须先停止 App 与 Worker，并把恢复点写到 `DQ_DATA_DIR` 和数据库卷以外的独立持久目录：
+
+```bash
+cd /app/web
+pnpm backup:disaster -- --output /backups/dq-2026-08-06 --confirm-offline
+```
+
+恢复前先保持 App 与 Worker 停止，使用清单中的完整恢复点 ID，并把恢复前安全副本写到恢复点和业务数据目录之外：
+
+```bash
+cd /app/web
+pnpm restore:disaster -- \
+  --input /backups/dq-2026-08-06 \
+  --safety-dir /backups/pre-restore-2026-08-06 \
+  --confirm 2026-08-06T00-00-00-000Z-0123abcd \
+  --confirm-offline
+```
+
+恢复命令先校验清单和全部哈希，再创建恢复前 PostgreSQL 与本地媒体安全副本，随后以单事务恢复数据库、原子切换本地媒体并回写对象存储。完成后先只读核对用户、订单、支付、媒体引用和对象数量，再启动 App，最后启动 Worker；安全副本在人工验收完成前不得删除。
 
 ## 监控与告警
+
+应用提供仅供内部运维调用的 `GET /api/maintenance/observability` 快照接口。请求必须使用 `DQ_MAINTENANCE_TOKEN` Bearer 令牌；该令牌不再与 Worker 共享，Worker 入口和内部模型代理使用独立的 `DQ_WORKER_TOKEN`。接口返回进程内 API 请求 P50/P95/P99、5xx、数据库连接池状态与等待、慢查询摘要、近 24 小时支付/退款统计、近 7 日生成统计，以及 `DQ_DATA_DIR` 所在文件系统容量。快照不写入 Cookie、Authorization、连接串、SQL 参数、支付原始报文或模型密钥，且响应禁止缓存。
+
+该接口是单实例进程内快照，不替代生产级长期指标存储。多实例部署必须把 stdout/stderr JSON 日志接入日志平台，并在反向代理、PostgreSQL、容器/主机和对象存储侧分别配置长期指标与告警。
 
 根据部署环境选择 Sentry、OpenTelemetry、云厂商 APM、Prometheus/Grafana 或日志平台，不要求所有部署同时安装同一套组件。上线前至少覆盖：
 

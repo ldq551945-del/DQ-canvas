@@ -419,6 +419,20 @@ export async function writePostgresPromptDbWithExecutor(db: PromptDatabase, clie
     );
 }
 
+export async function upsertPostgresPromptDbWithExecutor(db: PromptDatabase, client: QueryExecutor) {
+    const normalized = {
+        prompts: Array.isArray(db.prompts) ? db.prompts.map(normalizeStoredPrompt).filter(Boolean) : [],
+        seedSources: Array.isArray(db.seedSources) ? db.seedSources.filter(Boolean) : [],
+    };
+    const userResult = await client.query("SELECT id FROM users");
+    const userIds = new Set(userResult.rows.map((row) => dbText(row.id)));
+    await insertPostgresPromptSeedSources(client, normalized.seedSources);
+    await insertPostgresPrompts(
+        client,
+        normalized.prompts.filter((prompt) => prompt.scope !== "user" || Boolean(prompt.ownerUserId && userIds.has(prompt.ownerUserId))),
+    );
+}
+
 async function insertPostgresPromptSeedSources(db: QueryExecutor, seedSources: string[]) {
     for (const source of Array.from(new Set(seedSources))) {
         await db.query("INSERT INTO prompt_seed_sources (source) VALUES ($1) ON CONFLICT (source) DO NOTHING", [source]);
@@ -431,6 +445,19 @@ async function insertPostgresPrompts(db: QueryExecutor, prompts: StoredPrompt[])
             `
             INSERT INTO prompts (id, scope, owner_user_id, title, cover_url, prompt, tags, category, preview, github_url, source, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (id) DO UPDATE SET
+                scope = EXCLUDED.scope,
+                owner_user_id = EXCLUDED.owner_user_id,
+                title = EXCLUDED.title,
+                cover_url = EXCLUDED.cover_url,
+                prompt = EXCLUDED.prompt,
+                tags = EXCLUDED.tags,
+                category = EXCLUDED.category,
+                preview = EXCLUDED.preview,
+                github_url = EXCLUDED.github_url,
+                source = EXCLUDED.source,
+                created_at = EXCLUDED.created_at,
+                updated_at = EXCLUDED.updated_at
             `,
             [
                 prompt.id,

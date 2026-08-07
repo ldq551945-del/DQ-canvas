@@ -37,17 +37,17 @@ export function CanvasPanoramaViewer({ src, alt, reduced = false }: { src: strin
                     }}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
-                    aria-label="沉浸查看全景"
-                    title="沉浸查看全景"
+                    aria-label={reduced ? "查看全景原图" : "沉浸查看全景"}
+                    title={reduced ? "查看全景原图" : "沉浸查看全景"}
                 >
                     <Maximize2 className="size-3.5" />
-                    沉浸查看
+                    {reduced ? "查看原图" : "沉浸查看"}
                 </button>
             </div>
             <div className="contents" onClick={stopCanvasInteraction} onDoubleClick={stopCanvasInteraction} onMouseDown={stopCanvasInteraction} onPointerDown={stopCanvasInteraction} onWheel={stopCanvasInteraction} onContextMenu={stopCanvasInteraction}>
                 <Modal
                     open={open}
-                    title="全景查看"
+                    title={reduced ? "全景原图" : "全景查看"}
                     centered
                     destroyOnHidden
                     mask={{ closable: false }}
@@ -57,7 +57,7 @@ export function CanvasPanoramaViewer({ src, alt, reduced = false }: { src: strin
                     styles={{ body: { padding: 0 }, container: { background: theme.toolbar.panel, color: theme.node.text } }}
                 >
                     <div className="h-[72vh] min-h-[320px] overflow-hidden rounded-xl bg-black sm:h-[78vh]">
-                        <CanvasPanoramaSurface src={previewSrc} alt={alt} />
+                        {reduced ? <img src={previewSrc} alt={alt} draggable={false} className="h-full w-full object-contain" /> : <CanvasPanoramaSurface src={previewSrc} alt={alt} />}
                     </div>
                 </Modal>
             </div>

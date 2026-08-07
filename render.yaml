@@ -10,7 +10,9 @@ services:
       mountPath: /app/web/.data
       sizeGB: 10
     envVars:
-      - fromGroup: dq-runtime
+      - fromGroup: dq-worker-auth
+      - key: DQ_MAINTENANCE_TOKEN
+        generateValue: true
       - key: PORT
         value: 3000
       - key: NODE_OPTIONS
@@ -33,6 +35,8 @@ services:
         value: "1"
       - key: DQ_ENCRYPTION_KEY
         generateValue: true
+      - key: DQ_INSTALL_TOKEN
+        generateValue: true
       - key: NEXT_PUBLIC_SITE_URL
         sync: false
       - key: NEXT_PUBLIC_TLDRAW_LICENSE_KEY
@@ -45,7 +49,7 @@ services:
     autoDeployTrigger: off
     dockerCommand: node /app/web/scripts/generation-worker.mjs
     envVars:
-      - fromGroup: dq-runtime
+      - fromGroup: dq-worker-auth
       - key: NODE_OPTIONS
         value: --max-old-space-size=128
       - key: DQ_WORKER_API_ORIGIN
@@ -61,7 +65,7 @@ databases:
     user: dq
 
 envVarGroups:
-  - name: dq-runtime
+  - name: dq-worker-auth
     envVars:
-      - key: DQ_MAINTENANCE_TOKEN
+      - key: DQ_WORKER_TOKEN
         generateValue: true

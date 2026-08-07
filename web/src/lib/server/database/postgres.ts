@@ -1,6 +1,7 @@
 import { Client, Pool, type QueryResult, type QueryResultRow } from "pg";
 
 import { POSTGRESQL_SCHEMA_SQL } from "@/lib/server/database/schema";
+import { logStructured, normalizeSqlForLog, percentiles, stableFingerprint, type PercentileSnapshot } from "@/lib/server/observability";
 
 type DatabaseProvider = "file" | "postgres";
 
@@ -31,6 +32,7 @@ const POSTGRES_TABLES = [
     "user_coupons",
     "coupon_redemptions",
     "payment_transactions",
+    "billing_refund_jobs",
     "referral_programs",
     "referral_codes",
     "referral_relationships",
@@ -111,6 +113,9 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "payment_transactions_user_idx",
     "payment_transactions_created_idx",
     "payment_transactions_provider_trade_idx",
+    "payment_transactions_provider_payment_idx",
+    "billing_refund_jobs_due_idx",
+    "billing_refund_jobs_provider_refund_idx",
     "referral_codes_code_idx",
     "referral_relationships_inviter_idx",
     "referral_relationships_risk_idx",
@@ -171,6 +176,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "generation_tasks_user_status_idx",
     "generation_tasks_expires_idx",
     "generation_tasks_user_client_request_idx",
+    "generation_tasks_owner_upstream_idx",
     "generation_tasks_image_process_source_active_idx",
     "generation_tasks_conversation_idx",
     "generation_tasks_run_idx",
@@ -213,6 +219,7 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "user_coupons_set_updated_at",
     "coupon_redemptions_set_updated_at",
     "payment_transactions_set_updated_at",
+    "billing_refund_jobs_set_updated_at",
     "referral_programs_set_updated_at",
     "referral_codes_set_updated_at",
     "referral_relationships_set_updated_at",
@@ -236,6 +243,28 @@ const globalForPostgres = globalThis as typeof globalThis & {
     __dqPostgresPool?: Pool;
     __dqPostgresSchemaReady?: Promise<void>;
     __dqPostgresNotifications?: PostgresNotificationState;
+    __dqPostgresObservability?: PostgresObservabilityState;
+};
+
+type PostgresQuerySample = { timestamp: string; durationMs: number; fingerprint: string; sql: string; failed: boolean };
+type PostgresObservabilityState = {
+    queryCount: number;
+    queryErrors: number;
+    slowQueries: number;
+    totalDurationMs: number;
+    durationSamplesMs: number[];
+    recentSlowQueries: PostgresQuerySample[];
+    poolAcquisitions: number;
+    poolAcquisitionErrors: number;
+    poolWaitSamplesMs: number[];
+    poolErrors: number;
+};
+
+export type PostgresOperationalSnapshot = {
+    configured: boolean;
+    initialized: boolean;
+    pool: { max: number; total: number; idle: number; waiting: number; acquisitions: number; acquisitionErrors: number; waitMs: PercentileSnapshot; errors: number };
+    queries: { total: number; errors: number; slow: number; averageDurationMs: number; durationMs: PercentileSnapshot; recentSlow: PostgresQuerySample[] };
 };
 
 type PostgresNotificationListener = (payload: string) => void;
@@ -263,22 +292,30 @@ function getPostgresPool() {
     if (!connectionString) throw new Error("DATABASE_URL is required when DQ_DATABASE_PROVIDER=postgres");
 
     if (!globalForPostgres.__dqPostgresPool) {
-        globalForPostgres.__dqPostgresPool = new Pool({
+        const pool = new Pool({
             connectionString,
             max: normalizePoolMax(process.env.DQ_DATABASE_POOL_MAX),
+            connectionTimeoutMillis: normalizeDuration(process.env.DQ_DATABASE_CONNECTION_TIMEOUT_MS, 5_000, 100, 60_000),
+            idleTimeoutMillis: normalizeDuration(process.env.DQ_DATABASE_IDLE_TIMEOUT_MS, 30_000, 1_000, 600_000),
             ssl: parseBoolean(process.env.DQ_DATABASE_SSL) ? { rejectUnauthorized: false } : undefined,
         });
+        pool.on?.("error", (error) => {
+            postgresObservabilityState().poolErrors += 1;
+            logStructured("error", "postgres.pool.error", { error });
+        });
+        globalForPostgres.__dqPostgresPool = pool;
     }
 
     return globalForPostgres.__dqPostgresPool;
 }
 
 export async function postgresQuery<T extends QueryResultRow = QueryResultRow>(text: string, values?: unknown[]) {
-    return getPostgresPool().query<T>(prefixPostgresSql(text), values);
+    const sql = prefixPostgresSql(text);
+    return observePostgresQuery(sql, () => getPostgresPool().query<T>(sql, values));
 }
 
 export async function withPostgresTransaction<T>(handler: (client: QueryExecutor) => Promise<T>) {
-    const client = await getPostgresPool().connect();
+    const client = await acquirePostgresClient();
     let queryQueue = Promise.resolve();
     let queryFailed = false;
     let queryError: unknown;
@@ -287,7 +324,8 @@ export async function withPostgresTransaction<T>(handler: (client: QueryExecutor
             const pending = queryQueue.then(async () => {
                 if (queryFailed) throw queryError;
                 try {
-                    return await client.query<T>(prefixPostgresSql(text), values);
+                    const sql = prefixPostgresSql(text);
+                    return await observePostgresQuery(sql, () => client.query<T>(sql, values));
                 } catch (error) {
                     queryFailed = true;
                     queryError = error;
@@ -302,15 +340,15 @@ export async function withPostgresTransaction<T>(handler: (client: QueryExecutor
         },
     };
     try {
-        await client.query("BEGIN");
+        await observePostgresQuery("BEGIN", () => client.query("BEGIN"));
         const result = await handler(executor);
         await queryQueue;
         if (queryFailed) throw queryError;
-        await client.query("COMMIT");
+        await observePostgresQuery("COMMIT", () => client.query("COMMIT"));
         return result;
     } catch (error) {
         await queryQueue;
-        await client.query("ROLLBACK");
+        await observePostgresQuery("ROLLBACK", () => client.query("ROLLBACK"));
         throw error;
     } finally {
         client.release();
@@ -373,7 +411,7 @@ function normalizeNotificationChannel(value: string) {
 export async function ensurePostgresSchema() {
     if (globalForPostgres.__dqPostgresSchemaReady) return globalForPostgres.__dqPostgresSchemaReady;
 
-    const result = await getPostgresPool().query<{ table_name: string | null }>("SELECT to_regclass('public.dq_users')::text AS table_name");
+    const result = await postgresQuery<{ table_name: string | null }>("SELECT to_regclass('public.dq_users')::text AS table_name");
     if (!result.rows[0]?.table_name) throw new Error("PostgreSQL schema has not been initialized");
 
     return initializePostgresSchema();
@@ -381,8 +419,7 @@ export async function ensurePostgresSchema() {
 
 export async function initializePostgresSchema() {
     if (!globalForPostgres.__dqPostgresSchemaReady) {
-        globalForPostgres.__dqPostgresSchemaReady = getPostgresPool()
-            .query(prefixPostgresSql(POSTGRESQL_SCHEMA_SQL))
+        globalForPostgres.__dqPostgresSchemaReady = postgresQuery(POSTGRESQL_SCHEMA_SQL)
             .then(() => undefined)
             .catch((error) => {
                 globalForPostgres.__dqPostgresSchemaReady = undefined;
@@ -406,6 +443,118 @@ function prefixPostgresSql(sql: string) {
 function normalizePoolMax(value: string | undefined) {
     const parsed = Number(value);
     return Number.isFinite(parsed) && parsed > 0 ? Math.min(50, Math.floor(parsed)) : 10;
+}
+
+export function getPostgresOperationalSnapshot(): PostgresOperationalSnapshot {
+    const state = postgresObservabilityState();
+    const pool = globalForPostgres.__dqPostgresPool;
+    return {
+        configured: Boolean(getPostgresConnectionString()),
+        initialized: Boolean(pool),
+        pool: {
+            max: normalizePoolMax(process.env.DQ_DATABASE_POOL_MAX),
+            total: pool?.totalCount || 0,
+            idle: pool?.idleCount || 0,
+            waiting: pool?.waitingCount || 0,
+            acquisitions: state.poolAcquisitions,
+            acquisitionErrors: state.poolAcquisitionErrors,
+            waitMs: percentiles(state.poolWaitSamplesMs),
+            errors: state.poolErrors,
+        },
+        queries: {
+            total: state.queryCount,
+            errors: state.queryErrors,
+            slow: state.slowQueries,
+            averageDurationMs: state.queryCount ? Math.round(state.totalDurationMs / state.queryCount) : 0,
+            durationMs: percentiles(state.durationSamplesMs),
+            recentSlow: [...state.recentSlowQueries],
+        },
+    };
+}
+
+async function acquirePostgresClient() {
+    const startedAt = performance.now();
+    const state = postgresObservabilityState();
+    try {
+        const client = await getPostgresPool().connect();
+        state.poolAcquisitions += 1;
+        pushMetricSample(state.poolWaitSamplesMs, performance.now() - startedAt);
+        return client;
+    } catch (error) {
+        const durationMs = performance.now() - startedAt;
+        state.poolAcquisitions += 1;
+        state.poolAcquisitionErrors += 1;
+        pushMetricSample(state.poolWaitSamplesMs, durationMs);
+        logStructured("error", "postgres.pool.acquire_failed", { durationMs: Math.round(durationMs), error });
+        throw error;
+    }
+}
+
+async function observePostgresQuery<T>(sql: string, execute: () => Promise<T>) {
+    const startedAt = performance.now();
+    try {
+        const result = await execute();
+        recordPostgresQuery(sql, performance.now() - startedAt, false);
+        return result;
+    } catch (error) {
+        const durationMs = performance.now() - startedAt;
+        recordPostgresQuery(sql, durationMs, true);
+        if (!isExpectedDatabaseConfigurationError(error)) logStructured("error", "postgres.query.failed", queryLogFields(sql, durationMs, { error }));
+        throw error;
+    }
+}
+
+function recordPostgresQuery(sql: string, duration: number, failed: boolean) {
+    const state = postgresObservabilityState();
+    const durationMs = Math.max(0, Math.round(duration));
+    state.queryCount += 1;
+    state.totalDurationMs += durationMs;
+    if (failed) state.queryErrors += 1;
+    pushMetricSample(state.durationSamplesMs, durationMs);
+    if (durationMs < normalizeDuration(process.env.DQ_DATABASE_SLOW_QUERY_MS, 500, 10, 600_000)) return;
+    state.slowQueries += 1;
+    const sample = { timestamp: new Date().toISOString(), durationMs, ...queryIdentity(sql), failed };
+    state.recentSlowQueries.push(sample);
+    if (state.recentSlowQueries.length > 20) state.recentSlowQueries.splice(0, state.recentSlowQueries.length - 20);
+    logStructured("warn", "postgres.query.slow", sample);
+}
+
+function queryLogFields(sql: string, durationMs: number, extra: Record<string, unknown>) {
+    return { durationMs: Math.max(0, Math.round(durationMs)), ...queryIdentity(sql), ...extra };
+}
+
+function queryIdentity(sql: string) {
+    const normalized = normalizeSqlForLog(sql);
+    return { fingerprint: stableFingerprint(normalized), sql: normalized };
+}
+
+function postgresObservabilityState() {
+    return (globalForPostgres.__dqPostgresObservability ??= {
+        queryCount: 0,
+        queryErrors: 0,
+        slowQueries: 0,
+        totalDurationMs: 0,
+        durationSamplesMs: [],
+        recentSlowQueries: [],
+        poolAcquisitions: 0,
+        poolAcquisitionErrors: 0,
+        poolWaitSamplesMs: [],
+        poolErrors: 0,
+    });
+}
+
+function pushMetricSample(samples: number[], value: number) {
+    samples.push(Math.max(0, Math.round(value)));
+    if (samples.length > 2_000) samples.splice(0, samples.length - 2_000);
+}
+
+function normalizeDuration(value: string | undefined, fallback: number, minimum: number, maximum: number) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.max(minimum, Math.min(maximum, Math.round(parsed))) : fallback;
+}
+
+function isExpectedDatabaseConfigurationError(error: unknown) {
+    return error instanceof Error && /^DATABASE_URL is required/.test(error.message);
 }
 
 function parseBoolean(value: string | undefined) {

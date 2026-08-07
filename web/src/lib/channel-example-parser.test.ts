@@ -49,4 +49,12 @@ describe("parseChannelExampleConfig", () => {
         const result = parseChannelExampleConfig('curl https://api.example.com/v1/video/generations -d {"model":"video-v1","prompt":"test","image":"https://cdn.example.com/ref.png"}', channel, advanced);
         expect(result?.patch.advancedConfig).toMatchObject({ imageToVideoPath: "/video/generations", queryPath: "/video/generations/:task_id" });
     });
+
+    it("does not classify attacker-controlled hostnames by substring", () => {
+        const channel = { id: "one", name: "Test", baseUrl: "", apiKey: "", apiFormat: "openai", models: [], enabled: false } satisfies SystemModelChannel;
+        const sub2Api = parseChannelExampleConfig('curl https://code2alita.com.attacker.test/v1/chat/completions -d {"model":"text-v1","messages":[]}', channel, advanced);
+        const globalAiOpc = parseChannelExampleConfig('curl https://globalaiopc.com.attacker.test/v1/chat/completions -d {"model":"text-v1","messages":[]}', channel, advanced);
+        expect(sub2Api?.patch.advancedConfig?.protocol).toBe("openai");
+        expect(globalAiOpc?.patch.advancedConfig?.protocol).toBe("openai");
+    });
 });
